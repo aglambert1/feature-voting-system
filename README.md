@@ -1,2 +1,2 @@
 # feature-voting-system
-A feature voting system that using AI to seed voting repository with public information on competitor features.
+A feature voting system that can scrape specified competitors' public information to seed voting repository with potential features to evaluate customer interest.
