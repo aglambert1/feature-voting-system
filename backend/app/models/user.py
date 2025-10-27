@@ -1,0 +1,80 @@
+"""
+User model for database.
+
+This defines the structure of the 'users' table in the database.
+"""
+
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Enum
+from sqlalchemy.sql import func
+import enum
+
+from app.database import Base
+
+
+class UserRole(str, enum.Enum):
+    """
+    User roles that determine what actions a user can perform.
+
+    - ADMIN: Full access to everything
+    - VOTER: Can vote and submit ideas
+    - VIEWER: Read-only access
+    """
+    ADMIN = "admin"
+    VOTER = "voter"
+    VIEWER = "viewer"
+
+
+class User(Base):
+    """
+    User model representing a user account.
+
+    SQLAlchemy will automatically create a 'users' table with these columns.
+    Each instance of this class represents one row in the table.
+    """
+
+    # Table name in the database
+    __tablename__ = "users"
+
+    # Primary key - unique ID for each user
+    # autoincrement=True means the database automatically assigns the next number
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    # Email address - must be unique (no two users with same email)
+    # index=True makes lookups by email faster
+    email = Column(String, unique=True, index=True, nullable=False)
+
+    # Username - must be unique
+    username = Column(String, unique=True, index=True, nullable=False)
+
+    # Hashed password (we NEVER store plain text passwords!)
+    # This will be set using bcrypt hashing
+    hashed_password = Column(String, nullable=False)
+
+    # User's full name (optional)
+    full_name = Column(String, nullable=True)
+
+    # User role - defaults to VOTER
+    role = Column(Enum(UserRole), default=UserRole.VOTER, nullable=False)
+
+    # Is the account active? (can be used to disable accounts)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    # When the account was created
+    # server_default=func.now() means the database sets this automatically
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    # When the account was last updated
+    # onupdate=func.now() means this updates automatically when the row changes
+    updated_at = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False
+    )
+
+    def __repr__(self):
+        """
+        String representation of the User object (helpful for debugging).
+        """
+        return f"<User(id={self.id}, username='{self.username}', role='{self.role}')>"

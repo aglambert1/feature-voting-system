@@ -1,0 +1,36 @@
+# Core FastAPI framework
+fastapi==0.109.0
+
+# ASGI server for running FastAPI
+uvicorn[standard]==0.27.0
+
+# Database ORM (Object-Relational Mapping) - helps us work with database using Python classes
+sqlalchemy==2.0.25
+
+# Database driver for PostgreSQL
+psycopg2-binary==2.9.10
+
+# Data validation - ensures data has correct types and format
+pydantic==2.5.3
+
+# Settings management - loads environment variables
+pydantic-settings==2.1.0
+
+# JWT token creation and validation for authentication
+python-jose[cryptography]==3.3.0
+
+# Password hashing - securely stores passwords
+passlib[bcrypt]==1.7.4
+
+# Form data handling (needed for OAuth2 password flow)
+python-multipart==0.0.6
+
+# Testing framework
+pytest==7.4.4
+pytest-asyncio==0.23.3
+
+# HTTP client for testing
+httpx==0.26.0
+
+# Requests library for test_api.py script
+requests==2.32.5

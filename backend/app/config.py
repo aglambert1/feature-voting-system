@@ -1,0 +1,57 @@
+"""
+Configuration settings for the application.
+
+This file manages all configuration settings using environment variables.
+Settings are loaded from a .env file in the backend directory.
+"""
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """
+    Application settings loaded from environment variables.
+
+    Pydantic will automatically:
+    1. Load values from environment variables
+    2. Load values from .env file
+    3. Validate that values have the correct type
+    4. Provide default values where specified
+    """
+
+    # Application settings
+    app_name: str = "Feature Voting System"
+    debug: bool = True
+
+    # Database connection
+    # Format: postgresql://username:password@host:port/database_name
+    database_url: str = "sqlite:///./feature_voting.db"  # SQLite for simple start
+
+    # Security settings
+    # SECRET_KEY is used to sign JWT tokens - keep this secret!
+    # Generate a secure key with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    secret_key: str = "your-secret-key-change-this-in-production"
+    algorithm: str = "HS256"  # Algorithm for JWT encoding
+    access_token_expire_minutes: int = 30  # Tokens expire after 30 minutes
+
+    # CORS settings - controls which websites can access your API
+    # Add your frontend URL here (e.g., http://localhost:3000)
+    allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+
+    # Initial admin user settings (created automatically on first startup)
+    admin_email: str = "admin@example.com"
+    admin_username: str = "admin"
+    admin_password: str = "change-this-secure-password"
+    admin_full_name: str = "System Administrator"
+
+    # Configuration for pydantic to read from .env file
+    model_config = SettingsConfigDict(
+        env_file=".env",  # Load from .env file
+        case_sensitive=False,  # DATABASE_URL and database_url are treated the same
+        extra="ignore"  # Ignore extra environment variables
+    )
+
+
+# Create a single instance of settings to use throughout the app
+# This ensures settings are loaded once and shared everywhere
+settings = Settings()
