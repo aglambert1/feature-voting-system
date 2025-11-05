@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     # AI/LLM settings
     anthropic_api_key: str = "your-anthropic-api-key-here"
 
+    # Development mode settings for OTP bypass
+    # SECURITY WARNING: Only use in development! Never enable in production!
+    dev_otp_bypass: str = "000000"  # Fixed OTP that always works in debug mode
+    dev_return_otp: bool = True  # Return OTP in API response when debug=True
+
     # Configuration for pydantic to read from .env file
     model_config = SettingsConfigDict(
         env_file=".env",  # Load from .env file

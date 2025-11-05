@@ -22,7 +22,9 @@ from app.schemas.auth import (
     PasswordResetRequest,
     PasswordResetConfirm,
     PasswordChange,
-    MessageResponse
+    MessageResponse,
+    PasswordResetResponse,
+    DevOTPResponse
 )
 from app.utils.security import (
     hash_password,
@@ -337,7 +339,7 @@ async def activate_user(
 # =============================================================================
 
 
-@router.post("/password/reset-request", response_model=MessageResponse)
+@router.post("/password/reset-request", response_model=PasswordResetResponse)
 async def request_password_reset(
     request: PasswordResetRequest,
     db: Session = Depends(get_db)
@@ -368,6 +370,7 @@ async def request_password_reset(
     from app.models.password_reset import PasswordResetToken
     from app.utils.otp import generate_otp, get_otp_expiration
     from app.utils.email import email_service
+    from app.config import settings
     from datetime import datetime
 
     # Find user by email
@@ -377,7 +380,7 @@ async def request_password_reset(
     # Always return success, but only send email if user exists
     if not user:
         # Return success even if user doesn't exist (prevents email enumeration)
-        return MessageResponse(
+        return PasswordResetResponse(
             message="If this email is registered, you will receive a password reset code.",
             detail="Check your email for the OTP code."
         )
@@ -412,10 +415,17 @@ async def request_password_reset(
         username=user.username
     )
 
-    return MessageResponse(
+    # In development mode, return the OTP in the response for easy testing
+    response = PasswordResetResponse(
         message="If this email is registered, you will receive a password reset code.",
         detail="Check your email for the OTP code. It expires in 15 minutes."
     )
+
+    if settings.debug and settings.dev_return_otp:
+        response.dev_otp = otp
+        response.detail = f"[DEV MODE] OTP: {otp} | Expires in 15 minutes. Also logged to console."
+
+    return response
 
 
 @router.post("/password/reset-confirm", response_model=MessageResponse)
@@ -451,6 +461,7 @@ async def confirm_password_reset(
     """
     from app.models.password_reset import PasswordResetToken
     from app.utils.email import email_service
+    from app.config import settings
     from datetime import datetime
 
     # Find user by email
@@ -462,32 +473,43 @@ async def confirm_password_reset(
             detail="User not found"
         )
 
-    # Find valid OTP token
-    reset_token = db.query(PasswordResetToken).filter(
-        PasswordResetToken.user_id == user.id,
-        PasswordResetToken.token == request.otp,
-        PasswordResetToken.is_used == False
-    ).first()
+    # Development mode: Allow fixed bypass OTP
+    is_dev_bypass = False
+    if settings.debug and request.otp == settings.dev_otp_bypass:
+        is_dev_bypass = True
+        # No need to check database for dev bypass OTP
 
-    if not reset_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or already used OTP code"
-        )
+    if not is_dev_bypass:
+        # Production flow: Find valid OTP token in database
+        reset_token = db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.token == request.otp,
+            PasswordResetToken.is_used == False
+        ).first()
 
-    # Check if token has expired
-    if reset_token.is_expired():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OTP code has expired. Please request a new one."
-        )
+        if not reset_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or already used OTP code"
+            )
+
+        # Check if token has expired
+        if reset_token.is_expired():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OTP code has expired. Please request a new one."
+            )
+    else:
+        # Dev bypass mode - create dummy token reference
+        reset_token = None
 
     # Update user's password
     user.hashed_password = hash_password(request.new_password)
 
-    # Mark token as used
-    reset_token.is_used = True
-    reset_token.used_at = datetime.utcnow()
+    # Mark token as used (skip for dev bypass)
+    if reset_token:
+        reset_token.is_used = True
+        reset_token.used_at = datetime.utcnow()
 
     db.commit()
 
@@ -561,4 +583,87 @@ async def change_password(
     return MessageResponse(
         message="Password successfully changed",
         detail="Your password has been updated."
+    )
+
+
+# =============================================================================
+# DEVELOPMENT MODE ENDPOINTS
+# WARNING: These endpoints should ONLY be enabled in development mode!
+# =============================================================================
+
+
+@router.get("/dev/get-otp/{email}", response_model=DevOTPResponse)
+async def get_otp_for_email(
+    email: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get the latest OTP for a given email (DEVELOPMENT ONLY).
+
+    WARNING: This endpoint is ONLY for development/testing purposes!
+    It should be disabled in production (automatically disabled when debug=False).
+
+    This allows developers to retrieve the OTP without checking console logs
+    or setting up an email server during development.
+
+    Args:
+        email: Email address to get OTP for
+        db: Database session
+
+    Returns:
+        Latest OTP information or error message
+
+    Raises:
+        403 Forbidden: If not in debug mode
+        404 Not Found: If no OTP found for email
+    """
+    from app.config import settings
+    from app.models.password_reset import PasswordResetToken
+
+    # Security: Only allow this endpoint in development mode
+    if not settings.debug:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint is only available in development mode"
+        )
+
+    # Find user by email
+    user = db.query(User).filter(User.email == email).first()
+
+    if not user:
+        return DevOTPResponse(
+            email=email,
+            message=f"No user found with email: {email}",
+            otp=None,
+            expires_at=None
+        )
+
+    # Get the latest unused OTP for this user
+    latest_token = db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user.id,
+        PasswordResetToken.is_used == False
+    ).order_by(PasswordResetToken.created_at.desc()).first()
+
+    if not latest_token:
+        return DevOTPResponse(
+            email=email,
+            message=f"No active OTP found for {email}. Request a password reset first.",
+            otp=None,
+            expires_at=None
+        )
+
+    # Check if expired
+    if latest_token.is_expired():
+        return DevOTPResponse(
+            email=email,
+            message=f"Latest OTP has expired. Request a new password reset.",
+            otp=latest_token.token,
+            expires_at=latest_token.expires_at
+        )
+
+    return DevOTPResponse(
+        email=email,
+        message=f"Active OTP found. Fixed dev bypass OTP is also available: {settings.dev_otp_bypass}",
+        otp=latest_token.token,
+        expires_at=latest_token.expires_at
     )
