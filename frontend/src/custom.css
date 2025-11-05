@@ -1,0 +1,96 @@
+/**
+ * Custom CSS for reliable cross-browser styling
+ * This file ensures consistent spacing and layout across all browsers
+ */
+
+/* Ensure consistent box-sizing */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* Navigation spacing - guaranteed to work in all browsers */
+.nav-link {
+  margin-right: 24px;
+}
+
+.nav-user-menu {
+  margin-left: 16px;
+  padding-left: 16px;
+}
+
+.nav-username {
+  margin-right: 12px;
+}
+
+/* Main content padding */
+.main-content {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+/* Idea card spacing */
+.idea-card-inner {
+  padding: 16px;
+}
+
+.vote-section {
+  margin-right: 20px;
+}
+
+/* Responsive adjustments */
+@media (min-width: 640px) {
+  .main-content {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+
+  .idea-card-inner {
+    padding: 24px;
+  }
+
+  .nav-link {
+    margin-right: 32px;
+  }
+
+  .nav-user-menu {
+    margin-left: 24px;
+    padding-left: 24px;
+  }
+
+  .vote-section {
+    margin-right: 24px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .main-content {
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+}
+
+/* Small screen adjustments */
+@media (max-width: 640px) {
+  .nav-link {
+    margin-right: 12px;
+    font-size: 14px;
+  }
+
+  .nav-user-menu {
+    margin-left: 8px;
+    padding-left: 8px;
+  }
+
+  .nav-username {
+    margin-right: 8px;
+    font-size: 12px;
+  }
+
+  .vote-section {
+    margin-right: 12px;
+  }
+
+  .idea-card-inner {
+    padding: 12px;
+  }
+}
