@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     admin_password: str = "change-this-secure-password"
     admin_full_name: str = "System Administrator"
 
+    # AI/LLM settings
+    anthropic_api_key: str = "your-anthropic-api-key-here"
+
     # Configuration for pydantic to read from .env file
     model_config = SettingsConfigDict(
         env_file=".env",  # Load from .env file

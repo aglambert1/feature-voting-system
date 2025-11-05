@@ -7,6 +7,7 @@ This defines the structure of the 'users' table in the database.
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Enum
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 import enum
 
 from app.database import Base
@@ -72,6 +73,11 @@ class User(Base):
         onupdate=func.now(),
         nullable=False
     )
+
+    # Relationships
+    ideas = relationship("Idea", back_populates="submitter")
+    votes = relationship("Vote", back_populates="user")
+    submissions = relationship("Submission", back_populates="submitter")
 
     def __repr__(self):
         """
