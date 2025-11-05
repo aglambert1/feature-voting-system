@@ -94,3 +94,43 @@ class UserRoleUpdate(BaseModel):
     Only admins can use this to change user roles.
     """
     role: UserRole
+
+
+class PasswordResetRequest(BaseModel):
+    """
+    Schema for requesting a password reset.
+
+    User provides their email and we send them an OTP.
+    """
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    """
+    Schema for confirming password reset with OTP.
+
+    User provides the OTP they received via email and their new password.
+    """
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+
+class PasswordChange(BaseModel):
+    """
+    Schema for changing password (requires current password).
+
+    User must provide their current password to change it.
+    """
+    current_password: str
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+
+class MessageResponse(BaseModel):
+    """
+    Schema for simple message responses.
+
+    Used for success/info messages.
+    """
+    message: str
+    detail: Optional[str] = None

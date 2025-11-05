@@ -13,7 +13,17 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User
-from app.schemas.auth import UserCreate, UserLogin, UserResponse, Token, UserRoleUpdate
+from app.schemas.auth import (
+    UserCreate,
+    UserLogin,
+    UserResponse,
+    Token,
+    UserRoleUpdate,
+    PasswordResetRequest,
+    PasswordResetConfirm,
+    PasswordChange,
+    MessageResponse
+)
 from app.utils.security import (
     hash_password,
     verify_password,
@@ -320,3 +330,235 @@ async def activate_user(
     db.refresh(user)
 
     return user
+
+
+# =============================================================================
+# PASSWORD MANAGEMENT ENDPOINTS
+# =============================================================================
+
+
+@router.post("/password/reset-request", response_model=MessageResponse)
+async def request_password_reset(
+    request: PasswordResetRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Request a password reset (sends OTP to email).
+
+    This is a public endpoint - no authentication required.
+    User provides their email and receives a 6-digit OTP code.
+
+    Steps:
+    1. Find user by email
+    2. Generate 6-digit OTP
+    3. Store OTP in database with expiration (15 minutes)
+    4. Send OTP to user's email
+    5. Return success message
+
+    Args:
+        request: Password reset request with email
+        db: Database session
+
+    Returns:
+        Success message
+
+    Raises:
+        404 Not Found: If email doesn't exist (for security, we may want to return success anyway)
+    """
+    from app.models.password_reset import PasswordResetToken
+    from app.utils.otp import generate_otp, get_otp_expiration
+    from app.utils.email import email_service
+    from datetime import datetime
+
+    # Find user by email
+    user = db.query(User).filter(User.email == request.email).first()
+
+    # Security consideration: Don't reveal if email exists or not
+    # Always return success, but only send email if user exists
+    if not user:
+        # Return success even if user doesn't exist (prevents email enumeration)
+        return MessageResponse(
+            message="If this email is registered, you will receive a password reset code.",
+            detail="Check your email for the OTP code."
+        )
+
+    # Invalidate any existing unused tokens for this user
+    existing_tokens = db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user.id,
+        PasswordResetToken.is_used == False
+    ).all()
+
+    for token in existing_tokens:
+        token.is_used = True
+
+    # Generate new OTP
+    otp = generate_otp()
+    expiration = get_otp_expiration(minutes=15)
+
+    # Create password reset token
+    reset_token = PasswordResetToken(
+        user_id=user.id,
+        token=otp,
+        expires_at=expiration
+    )
+
+    db.add(reset_token)
+    db.commit()
+
+    # Send OTP via email
+    await email_service.send_password_reset_otp(
+        to_email=user.email,
+        otp=otp,
+        username=user.username
+    )
+
+    return MessageResponse(
+        message="If this email is registered, you will receive a password reset code.",
+        detail="Check your email for the OTP code. It expires in 15 minutes."
+    )
+
+
+@router.post("/password/reset-confirm", response_model=MessageResponse)
+async def confirm_password_reset(
+    request: PasswordResetConfirm,
+    db: Session = Depends(get_db)
+):
+    """
+    Confirm password reset with OTP and set new password.
+
+    This is a public endpoint - no authentication required.
+    User provides email, OTP, and new password.
+
+    Steps:
+    1. Find user by email
+    2. Find valid OTP token
+    3. Verify OTP matches and hasn't expired
+    4. Hash new password
+    5. Update user's password
+    6. Mark OTP as used
+    7. Send confirmation email
+
+    Args:
+        request: Password reset confirmation with email, OTP, and new password
+        db: Database session
+
+    Returns:
+        Success message
+
+    Raises:
+        400 Bad Request: If OTP is invalid, expired, or already used
+        404 Not Found: If email doesn't exist
+    """
+    from app.models.password_reset import PasswordResetToken
+    from app.utils.email import email_service
+    from datetime import datetime
+
+    # Find user by email
+    user = db.query(User).filter(User.email == request.email).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Find valid OTP token
+    reset_token = db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user.id,
+        PasswordResetToken.token == request.otp,
+        PasswordResetToken.is_used == False
+    ).first()
+
+    if not reset_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or already used OTP code"
+        )
+
+    # Check if token has expired
+    if reset_token.is_expired():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OTP code has expired. Please request a new one."
+        )
+
+    # Update user's password
+    user.hashed_password = hash_password(request.new_password)
+
+    # Mark token as used
+    reset_token.is_used = True
+    reset_token.used_at = datetime.utcnow()
+
+    db.commit()
+
+    # Send confirmation email
+    await email_service.send_password_changed_notification(
+        to_email=user.email,
+        username=user.username
+    )
+
+    return MessageResponse(
+        message="Password successfully reset",
+        detail="You can now log in with your new password."
+    )
+
+
+@router.post("/password/change", response_model=MessageResponse)
+async def change_password(
+    request: PasswordChange,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Change password (requires current password).
+
+    This is a protected endpoint - requires authentication.
+    User must provide their current password to change it.
+
+    Steps:
+    1. Verify current password is correct
+    2. Hash new password
+    3. Update user's password
+    4. Send confirmation email
+
+    Args:
+        request: Password change request with current and new password
+        current_user: Authenticated user (from JWT token)
+        db: Database session
+
+    Returns:
+        Success message
+
+    Raises:
+        400 Bad Request: If current password is incorrect
+    """
+    from app.utils.email import email_service
+
+    # Verify current password
+    if not verify_password(request.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+
+    # Check if new password is different from current
+    if request.current_password == request.new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from current password"
+        )
+
+    # Update password
+    current_user.hashed_password = hash_password(request.new_password)
+    db.commit()
+
+    # Send confirmation email
+    await email_service.send_password_changed_notification(
+        to_email=current_user.email,
+        username=current_user.username
+    )
+
+    return MessageResponse(
+        message="Password successfully changed",
+        detail="Your password has been updated."
+    )
