@@ -134,3 +134,30 @@ class MessageResponse(BaseModel):
     """
     message: str
     detail: Optional[str] = None
+
+
+class PasswordResetResponse(BaseModel):
+    """
+    Schema for password reset request response.
+
+    In production: Only contains message and detail.
+    In development (debug=True): Can also include the OTP for testing.
+    """
+    message: str
+    detail: Optional[str] = None
+    dev_otp: Optional[str] = Field(
+        None,
+        description="OTP code (only returned in development mode)"
+    )
+
+
+class DevOTPResponse(BaseModel):
+    """
+    Schema for development-only OTP retrieval.
+
+    WARNING: This should only be used in development environments!
+    """
+    email: str
+    otp: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    message: str
