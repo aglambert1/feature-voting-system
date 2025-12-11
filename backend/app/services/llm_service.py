@@ -2,13 +2,14 @@
 LLM Service for Claude API integration.
 
 This service handles all interactions with the Anthropic Claude API,
-including structuring freeform text into what/why/use_case format.
+including structuring freeform text into what/why/use_case format
+and providing agent execution capabilities.
 """
 
 import time
 import json
-from typing import Dict
-from anthropic import Anthropic, APIError, APITimeoutError
+from typing import Dict, Any, Optional
+from anthropic import Anthropic, APIError, APITimeoutError, RateLimitError
 
 from app.config import settings
 
@@ -133,6 +134,148 @@ Example format:
         except Exception as e:
             print(f"Unexpected error in structure_idea: {e}")
             raise Exception(f"Unexpected error during AI processing: {str(e)}")
+
+    def call_agent(
+        self,
+        agent_name: str,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Call Claude API for agent execution.
+
+        This method is designed for AI agent use cases where system prompts
+        define agent behavior and user prompts contain task details.
+
+        Args:
+            agent_name: Name of the calling agent (for logging/debugging)
+            system_prompt: System message defining agent behavior
+            user_prompt: User message with task details
+            temperature: Sampling temperature (0.0-1.0), defaults to config value
+            max_tokens: Maximum tokens in response, defaults to config value
+            model: Model to use, defaults to config value
+
+        Returns:
+            Dict with:
+                - content: The text response from Claude
+                - tokens_used: Total tokens (input + output)
+                - model: The model used
+                - stop_reason: Why generation stopped
+
+        Raises:
+            LLMServiceError: If API call fails
+        """
+        # Use config defaults if not specified
+        temperature = temperature if temperature is not None else settings.temperature_default
+        max_tokens = max_tokens if max_tokens is not None else settings.max_tokens_default
+        model = model or settings.claude_model
+
+        try:
+            message = self.client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": user_prompt
+                    }
+                ]
+            )
+
+            # Extract text content
+            content = ""
+            for block in message.content:
+                if block.type == "text":
+                    content += block.text
+
+            # Calculate tokens used
+            tokens_used = message.usage.input_tokens + message.usage.output_tokens
+
+            return {
+                "content": content,
+                "tokens_used": tokens_used,
+                "model": message.model,
+                "stop_reason": message.stop_reason
+            }
+
+        except RateLimitError:
+            # Re-raise RateLimitError so call_with_retry can handle it
+            raise
+        except APIError as e:
+            print(f"Claude API error in agent {agent_name}: {e}")
+            raise LLMServiceError(f"Claude API error: {str(e)}")
+        except Exception as e:
+            print(f"Unexpected error calling Claude for agent {agent_name}: {e}")
+            raise LLMServiceError(f"Unexpected error calling Claude: {str(e)}")
+
+    def count_tokens(self, text: str) -> int:
+        """
+        Estimate token count for text.
+
+        Uses rough approximation: 1 token ≈ 4 characters.
+        This is a quick estimation method - actual token counts may vary.
+
+        Args:
+            text: Text to count tokens for
+
+        Returns:
+            Estimated token count
+        """
+        return len(text) // 4
+
+    def call_with_retry(
+        self,
+        agent_name: str,
+        system_prompt: str,
+        user_prompt: str,
+        max_retries: int = 3,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Call Claude with automatic retry on rate limits.
+
+        Uses exponential backoff: waits 1s, 2s, 4s, etc. between retries.
+
+        Args:
+            agent_name: Name of the calling agent
+            system_prompt: System message
+            user_prompt: User message
+            max_retries: Maximum number of retry attempts
+            **kwargs: Additional arguments passed to call_agent()
+
+        Returns:
+            Same as call_agent()
+
+        Raises:
+            LLMServiceError: If all retries fail
+        """
+        for attempt in range(max_retries):
+            try:
+                return self.call_agent(
+                    agent_name=agent_name,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    **kwargs
+                )
+            except RateLimitError:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4 seconds
+                    print(f"Rate limit hit for {agent_name}, retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print(f"Rate limit hit for {agent_name}, all retries exhausted")
+                    raise LLMServiceError("Rate limit exceeded after all retries")
+
+
+class LLMServiceError(Exception):
+    """Raised when LLM service encounters an error."""
+    pass
 
 
 # Create a singleton instance for reuse

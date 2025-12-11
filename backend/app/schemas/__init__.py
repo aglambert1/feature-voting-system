@@ -14,6 +14,15 @@ from app.schemas.submission import (
     SubmissionResponse,
     SubmissionWithIdeaResponse
 )
+from app.schemas.competitor_intelligence import (
+    ProductCreate, ProductUpdate, ProductResponse, ProductListResponse,
+    SessionCreate, SessionResponse, SessionDetailResponse,
+    SessionCompetitorCreate, SessionCompetitorResponse, CompetitorUpdateSelection,
+    CompetitorFeatureCreate, CompetitorFeatureResponse, FeatureUpdateSelection, FeatureRequestDetail,
+    GeneratedIdeaCreate, GeneratedIdeaUpdate, GeneratedIdeaResponse, IdeaApprovalUpdate, IdeaSubmitToVoting,
+    AgentLogCreate, AgentLogResponse,
+    SessionSummary, ProductDashboard
+)
 
 __all__ = [
     # Auth schemas
@@ -39,4 +48,12 @@ __all__ = [
     "SubmissionCreate",
     "SubmissionResponse",
     "SubmissionWithIdeaResponse",
+    # Competitor Intelligence schemas
+    "ProductCreate", "ProductUpdate", "ProductResponse", "ProductListResponse",
+    "SessionCreate", "SessionResponse", "SessionDetailResponse",
+    "SessionCompetitorCreate", "SessionCompetitorResponse", "CompetitorUpdateSelection",
+    "CompetitorFeatureCreate", "CompetitorFeatureResponse", "FeatureUpdateSelection", "FeatureRequestDetail",
+    "GeneratedIdeaCreate", "GeneratedIdeaUpdate", "GeneratedIdeaResponse", "IdeaApprovalUpdate", "IdeaSubmitToVoting",
+    "AgentLogCreate", "AgentLogResponse",
+    "SessionSummary", "ProductDashboard",
 ]

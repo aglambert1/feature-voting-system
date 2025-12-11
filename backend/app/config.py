@@ -46,6 +46,9 @@ class Settings(BaseSettings):
 
     # AI/LLM settings
     anthropic_api_key: str = "your-anthropic-api-key-here"
+    claude_model: str = "claude-sonnet-4-5-20250929"  # Default model for agents
+    max_tokens_default: int = 4000  # Default max tokens for agent responses
+    temperature_default: float = 0.7  # Default temperature for agent calls
 
     # Development mode settings for OTP bypass
     # SECURITY WARNING: Only use in development! Never enable in production!

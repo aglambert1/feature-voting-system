@@ -1,0 +1,18 @@
+"""
+AI Agents package.
+
+This package contains the base agent framework and all specialized agents
+for the competitor intelligence system.
+"""
+
+from app.agents.base_agent import BaseAgent, AgentExecutionError
+from app.agents.test_agents import EchoAgent, StructuredOutputAgent
+from app.agents.product_analyzer import ProductAnalyzerAgent
+
+__all__ = [
+    "BaseAgent",
+    "AgentExecutionError",
+    "EchoAgent",
+    "StructuredOutputAgent",
+    "ProductAnalyzerAgent",
+]

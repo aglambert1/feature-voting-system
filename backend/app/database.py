@@ -62,6 +62,13 @@ def init_db():
     This creates tables for all models that inherit from Base.
     In production, you'd use migrations (Alembic) instead.
     """
+    # Import all models so they are registered with Base.metadata
+    # This must happen before create_all() is called
+    import app.models.user  # noqa: F401
+    import app.models.idea  # noqa: F401
+    import app.models.vote  # noqa: F401
+    import app.models.competitor_intelligence  # noqa: F401
+
     Base.metadata.create_all(bind=engine)
 
 

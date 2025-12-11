@@ -26,6 +26,17 @@ class UserRole(str, enum.Enum):
     VIEWER = "viewer"
 
 
+class ProductAccessMode(str, enum.Enum):
+    """
+    Default product access mode for a user.
+
+    - SINGLE_USER: User can only see products they created
+    - TEAM_WIDE: User can see all products (team collaboration mode)
+    """
+    SINGLE_USER = "single_user"
+    TEAM_WIDE = "team_wide"
+
+
 class User(Base):
     """
     User model representing a user account.
@@ -57,6 +68,14 @@ class User(Base):
 
     # User role - defaults to VOTER
     role = Column(Enum(UserRole), default=UserRole.VOTER, nullable=False)
+
+    # Product access mode - defaults to SINGLE_USER (only see own products)
+    # Set to TEAM_WIDE to allow viewing all products in team collaboration mode
+    default_product_access = Column(
+        Enum(ProductAccessMode),
+        default=ProductAccessMode.SINGLE_USER,
+        nullable=False
+    )
 
     # Is the account active? (can be used to disable accounts)
     is_active = Column(Boolean, default=True, nullable=False)

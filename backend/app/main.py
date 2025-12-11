@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db, create_initial_admin
-from app.api import auth, ideas, votes, submissions
+from app.api import auth, ideas, votes, submissions, products, sessions
 
 
 # Create the FastAPI application instance
@@ -42,6 +42,8 @@ app.include_router(auth.router)
 app.include_router(ideas.router)
 app.include_router(votes.router)
 app.include_router(submissions.router)
+app.include_router(products.router)
+app.include_router(sessions.router)
 
 
 @app.on_event("startup")

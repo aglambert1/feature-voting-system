@@ -1,0 +1,353 @@
+"""
+Competitor Intelligence models for database.
+
+This defines the database structure for the CI system that analyzes
+competitor products and generates feature ideas.
+"""
+
+from datetime import datetime
+from sqlalchemy import (
+    Column, Integer, String, Text, Boolean, DateTime, ForeignKey,
+    DECIMAL, UniqueConstraint, JSON, Enum
+)
+from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
+import enum
+
+from app.database import Base
+
+
+class ProductPermissionLevel(str, enum.Enum):
+    """
+    Permission levels for product access.
+
+    - VIEW: Can view product and analyses
+    - EDIT: Can modify product, run analyses
+    - ADMIN: Can delete product, manage permissions
+    """
+    VIEW = "view"
+    EDIT = "edit"
+    ADMIN = "admin"
+
+
+class CIProduct(Base):
+    """
+    Product being analyzed for competitive intelligence.
+
+    Products are shared team resources with permission-based access.
+    Audit fields track who created/modified the product, but ownership
+    is managed through the ProductPermission table.
+    """
+    __tablename__ = "ci_products"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_name = Column(String(255), nullable=False, unique=True, index=True)
+    product_description = Column(Text, nullable=False)
+    product_category = Column(String(100))
+    structured_product_data = Column(JSON)
+
+    # Source information - tracks where description came from
+    product_source_type = Column(String(50), default="text")
+    product_source_data = Column(JSON)  # Store {"url": "..."} or {"filename": "..."}
+
+    # Audit tracking (who did what, not ownership)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    last_modified_by_user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    last_analyzed_by_user_id = Column(Integer, ForeignKey("users.id"), index=True)
+
+    # Analysis versioning
+    analysis_version = Column(Integer, default=0)
+    last_analyzed_at = Column(DateTime)
+    analysis_count = Column(Integer, default=0)
+
+    status = Column(String(50), default="active", index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    sessions = relationship("CompetitorAnalysisSession", back_populates="product", cascade="all, delete-orphan")
+    competitors = relationship("ProductCompetitor", back_populates="product", cascade="all, delete-orphan")
+    generated_ideas = relationship("CompetitorGeneratedIdea", back_populates="product")
+    agent_logs = relationship("AgentExecutionLog", back_populates="product")
+    permissions = relationship("ProductPermission", back_populates="product", cascade="all, delete-orphan")
+    analysis_history = relationship("ProductAnalysisHistory", back_populates="product", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<CIProduct(id={self.id}, name='{self.product_name}', created_by={self.created_by_user_id})>"
+
+
+class CompetitorAnalysisSession(Base):
+    """
+    A single analysis session for a product.
+
+    Each time a user runs competitor analysis, a new session is created.
+    Sessions can be "full" (new analysis) or "differential" (compare to previous).
+    """
+    __tablename__ = "competitor_analysis_sessions"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    session_number = Column(Integer, nullable=False)
+    session_name = Column(String(255))
+    analysis_type = Column(String(50), nullable=False, default="full")
+    comparison_to_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), index=True)
+    product_source_type = Column(String(50), nullable=False)
+    product_source_data = Column(JSON)
+    analyzed_product_structure = Column(JSON)
+    status = Column(String(50), nullable=False, default="active", index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    completed_at = Column(DateTime)
+
+    # Relationships
+    product = relationship("CIProduct", back_populates="sessions")
+    session_competitors = relationship("SessionCompetitor", back_populates="session", cascade="all, delete-orphan")
+    generated_ideas = relationship("CompetitorGeneratedIdea", back_populates="session")
+    agent_logs = relationship("AgentExecutionLog", back_populates="session")
+
+    def __repr__(self):
+        return f"<CompetitorAnalysisSession(id={self.id}, product_id={self.product_id}, session_number={self.session_number})>"
+
+
+class ProductCompetitor(Base):
+    """
+    Persistent record of a competitor for a product.
+
+    Tracks competitors discovered across multiple analysis sessions.
+    """
+    __tablename__ = "product_competitors"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
+    competitor_name = Column(String(255), nullable=False)
+    competitor_url = Column(String(500))
+    first_discovered_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=False)
+    last_seen_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"))
+    status = Column(String(50), nullable=False, default="active", index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    product = relationship("CIProduct", back_populates="competitors")
+    features = relationship("ProductCompetitorFeature", back_populates="competitor", cascade="all, delete-orphan")
+    session_instances = relationship("SessionCompetitor", back_populates="product_competitor")
+
+    __table_args__ = (
+        UniqueConstraint('product_id', 'competitor_name', name='unique_product_competitor'),
+    )
+
+    def __repr__(self):
+        return f"<ProductCompetitor(id={self.id}, name='{self.competitor_name}', product_id={self.product_id})>"
+
+
+class SessionCompetitor(Base):
+    """
+    Competitor discovered in a specific analysis session.
+
+    Links to persistent ProductCompetitor if it's a known competitor,
+    or represents a new discovery.
+    """
+    __tablename__ = "session_competitors"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_competitor_id = Column(Integer, ForeignKey("product_competitors.id"), index=True)
+    competitor_name = Column(String(255), nullable=False)
+    competitor_url = Column(String(500))
+    ai_summary = Column(Text)
+    discovery_source = Column(String(50), nullable=False)
+    is_new_discovery = Column(Boolean, default=False, index=True)
+    selected_by_user = Column(Boolean, default=False, index=True)
+    discovery_rank = Column(Integer)
+    status_change = Column(String(50))
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    # Relationships
+    session = relationship("CompetitorAnalysisSession", back_populates="session_competitors")
+    product_competitor = relationship("ProductCompetitor", back_populates="session_instances")
+    features = relationship("CompetitorFeature", back_populates="session_competitor", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<SessionCompetitor(id={self.id}, name='{self.competitor_name}', session_id={self.session_id})>"
+
+
+class ProductCompetitorFeature(Base):
+    """
+    Persistent record of a feature from a competitor.
+
+    Tracks features across multiple analysis sessions.
+    """
+    __tablename__ = "product_competitor_features"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_competitor_id = Column(Integer, ForeignKey("product_competitors.id", ondelete="CASCADE"), nullable=False, index=True)
+    feature_name = Column(String(255), nullable=False)
+    feature_description = Column(Text)
+    feature_category = Column(String(100))
+    first_discovered_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=False)
+    last_seen_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"))
+    status = Column(String(50), nullable=False, default="active", index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    competitor = relationship("ProductCompetitor", back_populates="features")
+    session_instances = relationship("CompetitorFeature", back_populates="product_feature")
+
+    def __repr__(self):
+        return f"<ProductCompetitorFeature(id={self.id}, name='{self.feature_name}', competitor_id={self.product_competitor_id})>"
+
+
+class CompetitorFeature(Base):
+    """
+    Feature extracted from a competitor in a specific session.
+
+    Links to persistent ProductCompetitorFeature if it's a known feature,
+    or represents a new discovery.
+    """
+    __tablename__ = "competitor_features"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    session_competitor_id = Column(Integer, ForeignKey("session_competitors.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_feature_id = Column(Integer, ForeignKey("product_competitor_features.id"), index=True)
+    feature_name = Column(String(255), nullable=False)
+    feature_description = Column(Text)
+    feature_category = Column(String(100))
+    extraction_confidence = Column(DECIMAL(3, 2))
+    source_url = Column(String(500))
+    raw_context = Column(Text)
+    change_type = Column(String(50), index=True)
+    change_description = Column(Text)
+    comparison_to_feature_id = Column(Integer, ForeignKey("competitor_features.id"))
+    selected_by_user = Column(Boolean, default=False, index=True)
+    detail_requested = Column(Boolean, default=False)
+    expanded_description = Column(Text)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    # Relationships
+    session_competitor = relationship("SessionCompetitor", back_populates="features")
+    product_feature = relationship("ProductCompetitorFeature", back_populates="session_instances")
+    generated_idea = relationship("CompetitorGeneratedIdea", back_populates="feature", uselist=False)
+
+    def __repr__(self):
+        return f"<CompetitorFeature(id={self.id}, name='{self.feature_name}', session_competitor_id={self.session_competitor_id})>"
+
+
+class CompetitorGeneratedIdea(Base):
+    """
+    AI-generated idea based on a competitor feature.
+
+    These ideas can be edited by users and then submitted to the main ideas table.
+    """
+    __tablename__ = "competitor_generated_ideas"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    feature_id = Column(Integer, ForeignKey("competitor_features.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("ci_products.id"), nullable=False, index=True)
+    idea_what = Column(Text, nullable=False)
+    idea_why = Column(Text, nullable=False)
+    idea_use_case = Column(Text, nullable=False)
+    is_differential = Column(Boolean, default=False)
+    user_edited = Column(Boolean, default=False)
+    user_approved = Column(Boolean, default=False)
+    submitted_to_ideas = Column(Boolean, default=False, index=True)
+    final_idea_id = Column(Integer, ForeignKey("ideas.id"))
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    edited_at = Column(DateTime)
+
+    # Relationships
+    feature = relationship("CompetitorFeature", back_populates="generated_idea")
+    session = relationship("CompetitorAnalysisSession", back_populates="generated_ideas")
+    product = relationship("CIProduct", back_populates="generated_ideas")
+
+    def __repr__(self):
+        return f"<CompetitorGeneratedIdea(id={self.id}, feature_id={self.feature_id}, submitted={self.submitted_to_ideas})>"
+
+
+class AgentExecutionLog(Base):
+    """
+    Log of AI agent executions for debugging and monitoring.
+
+    Tracks all AI operations, token usage, and errors.
+    """
+    __tablename__ = "agent_execution_logs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), index=True)
+    product_id = Column(Integer, ForeignKey("ci_products.id"), index=True)
+    agent_name = Column(String(100), nullable=False, index=True)
+    stage = Column(String(50), nullable=False)
+    input_data = Column(JSON)
+    output_data = Column(JSON)
+    llm_tokens_used = Column(Integer)
+    execution_time_ms = Column(Integer)
+    status = Column(String(50), nullable=False, index=True)
+    error_message = Column(Text)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    # Relationships
+    session = relationship("CompetitorAnalysisSession", back_populates="agent_logs")
+    product = relationship("CIProduct", back_populates="agent_logs")
+
+    def __repr__(self):
+        return f"<AgentExecutionLog(id={self.id}, agent='{self.agent_name}', status='{self.status}')>"
+
+
+class ProductPermission(Base):
+    """
+    Permission grants for product access.
+
+    Defines which users can access which products and at what level.
+    Creators get implicit ADMIN access without needing a row in this table.
+    """
+    __tablename__ = "product_permissions"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    permission_level = Column(Enum(ProductPermissionLevel), nullable=False)
+    granted_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    granted_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    # Relationships
+    product = relationship("CIProduct", back_populates="permissions")
+
+    __table_args__ = (
+        UniqueConstraint('product_id', 'user_id', name='unique_product_user_permission'),
+    )
+
+    def __repr__(self):
+        return f"<ProductPermission(product_id={self.product_id}, user_id={self.user_id}, level='{self.permission_level}')>"
+
+
+class ProductAnalysisHistory(Base):
+    """
+    History of product analyses.
+
+    Tracks each time a product is analyzed, creating a versioned history.
+    This allows users to see how the product analysis has evolved over time.
+    """
+    __tablename__ = "product_analysis_history"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
+    analysis_version = Column(Integer, nullable=False)
+    analyzed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    product_description = Column(Text, nullable=False)
+    product_source_type = Column(String(50), nullable=False)
+    product_source_data = Column(JSON)
+    analyzed_structure = Column(JSON)
+    tokens_used = Column(Integer)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    # Relationships
+    product = relationship("CIProduct", back_populates="analysis_history")
+
+    __table_args__ = (
+        UniqueConstraint('product_id', 'analysis_version', name='unique_product_analysis_version'),
+    )
+
+    def __repr__(self):
+        return f"<ProductAnalysisHistory(product_id={self.product_id}, version={self.analysis_version})>"
