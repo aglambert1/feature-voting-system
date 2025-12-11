@@ -12,14 +12,14 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getIdeas } from '../services/api';
 import IdeaCard from '../components/IdeaCard';
+import Navigation from '../components/Navigation';
 
 const IdeasPage = () => {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
+  const { user } = useAuth();
 
   // State
   const [ideas, setIdeas] = useState([]);
@@ -61,58 +61,10 @@ const IdeasPage = () => {
     await fetchIdeas();
   };
 
-  /**
-   * Handle logout
-   */
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-  };
-
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Navigation Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            {/* Logo/Title */}
-            <div className="flex items-center">
-              <h1 className="text-2xl font-bold text-gray-900">
-                Feature Voting
-              </h1>
-            </div>
-
-            {/* Navigation Links */}
-            <nav className="flex items-center flex-wrap">
-              <Link
-                to="/ideas"
-                className="nav-link text-gray-700 hover:text-gray-900 font-medium"
-              >
-                Browse Ideas
-              </Link>
-              <Link
-                to="/submit"
-                className="nav-link text-gray-700 hover:text-gray-900 font-medium"
-              >
-                Submit Idea
-              </Link>
-
-              {/* User Menu */}
-              <div className="nav-user-menu flex items-center border-l border-gray-300">
-                <span className="nav-username text-gray-600">
-                  {user?.username || user?.email}
-                </span>
-                <button
-                  onClick={handleLogout}
-                  className="text-gray-700 hover:text-gray-900 font-medium"
-                >
-                  Logout
-                </button>
-              </div>
-            </nav>
-          </div>
-        </div>
-      </header>
+      <Navigation />
 
       {/* Main Content */}
       <main className="main-content max-w-7xl mx-auto py-8">

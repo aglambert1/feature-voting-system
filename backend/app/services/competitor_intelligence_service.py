@@ -1,0 +1,351 @@
+"""
+Competitor Intelligence Service for orchestrating competitor discovery and management.
+
+This service coordinates:
+- Competitor research via AI web search
+- Differential analysis comparing with previous sessions
+- Competitor confirmation and selection
+"""
+
+from typing import List, Dict, Optional
+from uuid import UUID
+from sqlalchemy.orm import Session
+from app.models.competitor_intelligence import (
+    CompetitorAnalysisSession,
+    ProductCompetitor,
+    SessionCompetitor
+)
+from app.agents.competitor_researcher import (
+    CompetitorResearcherAgent,
+    DifferentialAnalysisAgent
+)
+from app.services.llm_service import LLMService
+
+
+class CompetitorIntelligenceService:
+    """Service for competitor intelligence operations"""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    async def discover_competitors(
+        self,
+        session_id: UUID,
+        llm_service: LLMService
+    ) -> Dict:
+        """
+        Discover competitors for a session.
+
+        If session has comparison enabled, performs differential analysis.
+        """
+        # Get session
+        session = self.db.query(CompetitorAnalysisSession).filter(
+            CompetitorAnalysisSession.id == session_id
+        ).first()
+
+        if not session:
+            raise ValueError("Session not found")
+
+        # Get product info for research
+        product_data = session.analyzed_product_structure
+
+        # Run competitor research
+        researcher = CompetitorResearcherAgent(
+            db=self.db,
+            llm_service=llm_service,
+            session_id=session_id,
+            product_id=session.product_id
+        )
+
+        research_result = researcher.execute({
+            'product_name': product_data.get('product_name'),
+            'product_category': product_data.get('product_category'),
+            'core_features': product_data.get('core_features', []),
+            'target_users': product_data.get('target_users'),
+            'competitor_search_keywords': product_data.get('competitor_search_keywords', [])
+        })
+
+        # If differential analysis, compare with previous
+        if session.analysis_type == "differential" and session.comparison_to_session_id:
+            previous_competitors = self._get_previous_competitors(
+                session.comparison_to_session_id
+            )
+
+            differential_agent = DifferentialAnalysisAgent(
+                db=self.db,
+                llm_service=llm_service,
+                session_id=session_id,
+                product_id=session.product_id
+            )
+
+            comparison_result = differential_agent.execute({
+                'current_competitors': research_result['competitors'],
+                'previous_competitors': previous_competitors,
+                'product_name': product_data.get('product_name')
+            })
+
+            # Store competitors with status
+            stored_competitors = self._store_competitors_with_status(
+                session_id=session_id,
+                product_id=session.product_id,
+                competitors_data=comparison_result['competitors']
+            )
+
+            return {
+                'competitors': stored_competitors,
+                'change_summary': comparison_result['summary'],
+                'research_summary': research_result.get('research_summary'),
+                'has_comparison': True
+            }
+
+        else:
+            # Store competitors without status
+            stored_competitors = self._store_competitors_without_status(
+                session_id=session_id,
+                product_id=session.product_id,
+                competitors_data=research_result['competitors']
+            )
+
+            return {
+                'competitors': stored_competitors,
+                'change_summary': None,
+                'research_summary': research_result.get('research_summary'),
+                'has_comparison': False
+            }
+
+    def _get_previous_competitors(self, previous_session_id: UUID) -> List[Dict]:
+        """Get competitors from previous session"""
+        competitors = self.db.query(SessionCompetitor).filter(
+            SessionCompetitor.session_id == previous_session_id,
+            SessionCompetitor.selected_by_user == True
+        ).all()
+
+        return [
+            {
+                'id': str(comp.id),
+                'name': comp.competitor_name,
+                'url': comp.competitor_url,
+                'summary': comp.ai_summary
+            }
+            for comp in competitors
+        ]
+
+    def _store_competitors_with_status(
+        self,
+        session_id: UUID,
+        product_id: int,
+        competitors_data: List[Dict]
+    ) -> List[Dict]:
+        """Store competitors with change status from differential analysis"""
+        stored = []
+
+        for comp_data in competitors_data:
+            # Get or create product-level competitor
+            product_competitor = self._get_or_create_product_competitor(
+                product_id=product_id,
+                competitor_name=comp_data['name'],
+                competitor_url=comp_data['url'],
+                session_id=session_id
+            )
+
+            # Create session-specific competitor
+            session_competitor = SessionCompetitor(
+                session_id=session_id,
+                product_competitor_id=product_competitor.id,
+                competitor_name=comp_data['name'],
+                competitor_url=comp_data['url'],
+                ai_summary=comp_data.get('summary'),
+                discovery_source='ai_search',
+                is_new_discovery=(comp_data['status'] == 'new'),
+                selected_by_user=False,  # User will select later
+                status_change=comp_data['status']
+            )
+
+            self.db.add(session_competitor)
+            self.db.commit()
+            self.db.refresh(session_competitor)
+
+            stored.append({
+                'id': str(session_competitor.id),
+                'name': comp_data['name'],
+                'url': comp_data['url'],
+                'summary': comp_data.get('summary'),
+                'relevance_score': comp_data.get('relevance_score'),
+                'status': comp_data['status'],
+                'status_explanation': comp_data.get('status_explanation'),
+                'significance': comp_data.get('significance'),
+                'selected': False
+            })
+
+        return stored
+
+    def _store_competitors_without_status(
+        self,
+        session_id: UUID,
+        product_id: int,
+        competitors_data: List[Dict]
+    ) -> List[Dict]:
+        """Store competitors without change status (first analysis)"""
+        stored = []
+
+        for comp_data in competitors_data:
+            # Get or create product-level competitor
+            product_competitor = self._get_or_create_product_competitor(
+                product_id=product_id,
+                competitor_name=comp_data['name'],
+                competitor_url=comp_data['url'],
+                session_id=session_id
+            )
+
+            # Create session-specific competitor
+            session_competitor = SessionCompetitor(
+                session_id=session_id,
+                product_competitor_id=product_competitor.id,
+                competitor_name=comp_data['name'],
+                competitor_url=comp_data['url'],
+                ai_summary=comp_data.get('summary'),
+                discovery_source='ai_search',
+                is_new_discovery=True,
+                selected_by_user=False,
+                status_change=None
+            )
+
+            self.db.add(session_competitor)
+            self.db.commit()
+            self.db.refresh(session_competitor)
+
+            stored.append({
+                'id': str(session_competitor.id),
+                'name': comp_data['name'],
+                'url': comp_data['url'],
+                'summary': comp_data.get('summary'),
+                'relevance_score': comp_data.get('relevance_score'),
+                'selected': False
+            })
+
+        return stored
+
+    def _get_or_create_product_competitor(
+        self,
+        product_id: int,
+        competitor_name: str,
+        competitor_url: str,
+        session_id: UUID
+    ) -> ProductCompetitor:
+        """Get existing or create new product-level competitor"""
+        # Try to find existing by name
+        existing = self.db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id == product_id,
+            ProductCompetitor.competitor_name == competitor_name
+        ).first()
+
+        if existing:
+            # Update last_seen
+            existing.last_seen_session_id = session_id
+            existing.status = "active"
+            self.db.commit()
+            return existing
+
+        # Create new
+        product_competitor = ProductCompetitor(
+            product_id=product_id,
+            competitor_name=competitor_name,
+            competitor_url=competitor_url,
+            first_discovered_session_id=session_id,
+            last_seen_session_id=session_id,
+            status="active"
+        )
+
+        self.db.add(product_competitor)
+        self.db.commit()
+        self.db.refresh(product_competitor)
+
+        return product_competitor
+
+    async def confirm_competitors(
+        self,
+        session_id: UUID,
+        selected_ids: List[UUID],
+        custom_competitors: Optional[List[Dict]] = None
+    ) -> Dict:
+        """
+        User confirms which competitors to analyze.
+
+        Args:
+            session_id: The session ID
+            selected_ids: IDs of session_competitors to include
+            custom_competitors: Additional competitors added manually
+        """
+        # Update selected competitors
+        self.db.query(SessionCompetitor).filter(
+            SessionCompetitor.session_id == session_id
+        ).update({"selected_by_user": False})
+
+        if selected_ids:
+            self.db.query(SessionCompetitor).filter(
+                SessionCompetitor.id.in_(selected_ids)
+            ).update({"selected_by_user": True}, synchronize_session=False)
+
+        # Add custom competitors
+        if custom_competitors:
+            session = self.db.query(CompetitorAnalysisSession).filter(
+                CompetitorAnalysisSession.id == session_id
+            ).first()
+
+            for custom in custom_competitors:
+                product_competitor = self._get_or_create_product_competitor(
+                    product_id=session.product_id,
+                    competitor_name=custom['name'],
+                    competitor_url=custom.get('url', ''),
+                    session_id=session_id
+                )
+
+                session_competitor = SessionCompetitor(
+                    session_id=session_id,
+                    product_competitor_id=product_competitor.id,
+                    competitor_name=custom['name'],
+                    competitor_url=custom.get('url', ''),
+                    ai_summary=custom.get('summary', 'User-added competitor'),
+                    discovery_source='user_added',
+                    is_new_discovery=True,
+                    selected_by_user=True,
+                    status_change=None
+                )
+
+                self.db.add(session_competitor)
+
+        self.db.commit()
+
+        # Get count of selected
+        selected_count = self.db.query(SessionCompetitor).filter(
+            SessionCompetitor.session_id == session_id,
+            SessionCompetitor.selected_by_user == True
+        ).count()
+
+        return {
+            'confirmed': True,
+            'selected_count': selected_count
+        }
+
+    async def get_session_competitors(
+        self,
+        session_id: UUID
+    ) -> List[Dict]:
+        """Get all competitors for a session"""
+        competitors = self.db.query(SessionCompetitor).filter(
+            SessionCompetitor.session_id == session_id
+        ).all()
+
+        return [
+            {
+                'id': str(comp.id),
+                'name': comp.competitor_name,
+                'url': comp.competitor_url,
+                'summary': comp.ai_summary,
+                'discovery_source': comp.discovery_source,
+                'is_new_discovery': comp.is_new_discovery,
+                'selected': comp.selected_by_user,
+                'status_change': comp.status_change
+            }
+            for comp in competitors
+        ]
