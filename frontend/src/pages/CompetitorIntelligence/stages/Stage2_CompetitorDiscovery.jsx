@@ -172,11 +172,23 @@ const Stage2_CompetitorDiscovery = ({
   return (
     <div>
       <div className="flex justify-between items-start mb-6">
-        <div>
+        <div className="flex-1">
           <h2 className="text-2xl font-bold mb-2">Competitor Discovery</h2>
-          <p className="text-gray-600">{researchSummary}</p>
+          <p className="text-gray-600 mb-2">{researchSummary}</p>
+          {competitors.length > 0 && (
+            <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <div className="flex items-start">
+                <svg className="w-5 h-5 text-amber-600 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+                <div className="text-sm text-amber-800">
+                  <strong>Note:</strong> Competitors are suggested based on AI knowledge. Please review and verify URLs before proceeding. Deselect any competitors with incorrect information.
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-        <div className="text-sm text-gray-600">
+        <div className="text-sm text-gray-600 ml-4">
           {selectedCount} of {competitors.length} selected
         </div>
       </div>
@@ -200,16 +212,42 @@ const Stage2_CompetitorDiscovery = ({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        {competitors.map((competitor) => (
-          <CompetitorCard
-            key={competitor.id}
-            competitor={competitor}
-            onToggle={() => toggleCompetitor(competitor.id)}
-            showStatus={hasPreviousAnalysis}
-          />
-        ))}
-      </div>
+      {competitors.length === 0 ? (
+        <div className="text-center py-12 px-4 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300 mb-6">
+          <svg className="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M12 12h.01M12 12h.01M12 12h.01M12 12h.01" />
+          </svg>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No Competitors Found</h3>
+          <p className="text-gray-600 mb-4 max-w-md mx-auto">
+            The AI couldn't identify verified competitors based on its knowledge. This might be a very niche product or may need more specific details.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Add Competitors Manually
+            </button>
+            <button
+              onClick={onBack}
+              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+            >
+              Refine Product Description
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          {competitors.map((competitor) => (
+            <CompetitorCard
+              key={competitor.id}
+              competitor={competitor}
+              onToggle={() => toggleCompetitor(competitor.id)}
+              showStatus={hasPreviousAnalysis}
+            />
+          ))}
+        </div>
+      )}
 
       <div className="flex justify-between">
         <button
