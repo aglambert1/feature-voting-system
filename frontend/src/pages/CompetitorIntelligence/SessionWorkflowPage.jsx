@@ -12,6 +12,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import Navigation from '../../components/Navigation';
 import Stage2_CompetitorDiscovery from './stages/Stage2_CompetitorDiscovery';
+import Stage3_FeatureExtraction from './stages/Stage3_FeatureExtraction';
 
 export default function SessionWorkflowPage() {
   const { productId, sessionId } = useParams();
@@ -81,6 +82,15 @@ export default function SessionWorkflowPage() {
   const handleStage2Complete = () => {
     // Move to Stage 3 (feature analysis)
     setCurrentStage(3);
+  };
+
+  const handleStage3Complete = () => {
+    // Move to Stage 4 (idea generation)
+    setCurrentStage(4);
+  };
+
+  const handleBackToStage2 = () => {
+    setCurrentStage(2);
   };
 
   const handleBack = () => {
@@ -189,33 +199,12 @@ export default function SessionWorkflowPage() {
           )}
 
           {currentStage === 3 && (
-            <div className="text-center py-12">
-              <div className="mb-4">
-                <svg
-                  className="mx-auto h-16 w-16 text-gray-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                  />
-                </svg>
-              </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                Stage 3: Competitor Feature Analysis
-              </h3>
-              <p className="text-gray-600 mb-4">Coming soon...</p>
-              <button
-                onClick={() => setCurrentStage(2)}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-              >
-                ← Back to Stage 2
-              </button>
-            </div>
+            <Stage3_FeatureExtraction
+              sessionId={session.id.toString()}
+              hasPreviousAnalysis={session.analysis_type === 'differential'}
+              onComplete={handleStage3Complete}
+              onBack={handleBackToStage2}
+            />
           )}
 
           {currentStage === 4 && (

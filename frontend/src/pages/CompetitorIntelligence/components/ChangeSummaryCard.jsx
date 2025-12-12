@@ -1,13 +1,18 @@
 /**
  * ChangeSummaryCard Component
  *
- * Displays differential analysis summary showing NEW/CONTINUING/DISAPPEARED
- * competitors and significant changes in the competitive landscape.
+ * Displays differential analysis summary showing changes.
+ * Supports both competitor changes (NEW/CONTINUING/DISAPPEARED) and
+ * feature changes (NEW/MODIFIED/UNCHANGED/REMOVED).
  */
 
 import PropTypes from 'prop-types';
 
-const ChangeSummaryCard = ({ changeSummary }) => {
+const ChangeSummaryCard = ({ changeSummary, changeStats, title }) => {
+  // Support both formats: changeSummary (competitors) and changeStats (features)
+  const isFeatureStats = !!changeStats;
+  const displayTitle = title || (isFeatureStats ? 'Feature Change Summary' : 'Competitive Landscape Changes');
+
   return (
     <div className="mb-6 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
       <div className="flex items-start mb-4">
@@ -24,35 +29,72 @@ const ChangeSummaryCard = ({ changeSummary }) => {
         </svg>
         <div className="flex-1">
           <h3 className="text-lg font-semibold text-gray-900 mb-2">
-            Competitive Landscape Changes
+            {displayTitle}
           </h3>
           <p className="text-sm text-gray-700 mb-4">
             Comparing with previous analysis
           </p>
 
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <div className="bg-white rounded-lg p-3 text-center">
-              <div className="text-2xl font-bold text-green-600">
-                {changeSummary.new_count}
+          {isFeatureStats ? (
+            // Feature stats format
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div className="bg-white rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-gray-900">
+                  {changeStats.total}
+                </div>
+                <div className="text-xs text-gray-600">Total Features</div>
               </div>
-              <div className="text-xs text-gray-600">New Competitors</div>
-            </div>
-            <div className="bg-white rounded-lg p-3 text-center">
-              <div className="text-2xl font-bold text-blue-600">
-                {changeSummary.continuing_count}
+              <div className="bg-white rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-green-600">
+                  {changeStats.new || 0}
+                </div>
+                <div className="text-xs text-gray-600">New</div>
               </div>
-              <div className="text-xs text-gray-600">Continuing</div>
-            </div>
-            <div className="bg-white rounded-lg p-3 text-center">
-              <div className="text-2xl font-bold text-red-600">
-                {changeSummary.disappeared_count}
+              <div className="bg-white rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-orange-600">
+                  {changeStats.modified || 0}
+                </div>
+                <div className="text-xs text-gray-600">Modified</div>
               </div>
-              <div className="text-xs text-gray-600">Disappeared</div>
+              <div className="bg-white rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-red-600">
+                  {changeStats.removed || 0}
+                </div>
+                <div className="text-xs text-gray-600">Removed</div>
+              </div>
+              <div className="bg-white rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-gray-600">
+                  {changeStats.unchanged || 0}
+                </div>
+                <div className="text-xs text-gray-600">Unchanged</div>
+              </div>
             </div>
-          </div>
+          ) : (
+            // Competitor stats format
+            <div className="grid grid-cols-3 gap-4 mb-4">
+              <div className="bg-white rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-green-600">
+                  {changeSummary.new_count}
+                </div>
+                <div className="text-xs text-gray-600">New Competitors</div>
+              </div>
+              <div className="bg-white rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-blue-600">
+                  {changeSummary.continuing_count}
+                </div>
+                <div className="text-xs text-gray-600">Continuing</div>
+              </div>
+              <div className="bg-white rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-red-600">
+                  {changeSummary.disappeared_count}
+                </div>
+                <div className="text-xs text-gray-600">Disappeared</div>
+              </div>
+            </div>
+          )}
 
-          {changeSummary.significant_changes.length > 0 && (
-            <div>
+          {changeSummary && changeSummary.significant_changes && changeSummary.significant_changes.length > 0 && (
+            <div className="mt-4">
               <h4 className="font-medium text-gray-900 mb-2">
                 Significant Changes:
               </h4>
@@ -73,12 +115,22 @@ const ChangeSummaryCard = ({ changeSummary }) => {
 };
 
 ChangeSummaryCard.propTypes = {
+  // Competitor format
   changeSummary: PropTypes.shape({
-    new_count: PropTypes.number.isRequired,
-    continuing_count: PropTypes.number.isRequired,
-    disappeared_count: PropTypes.number.isRequired,
-    significant_changes: PropTypes.arrayOf(PropTypes.string).isRequired,
-  }).isRequired,
+    new_count: PropTypes.number,
+    continuing_count: PropTypes.number,
+    disappeared_count: PropTypes.number,
+    significant_changes: PropTypes.arrayOf(PropTypes.string),
+  }),
+  // Feature format
+  changeStats: PropTypes.shape({
+    total: PropTypes.number,
+    new: PropTypes.number,
+    modified: PropTypes.number,
+    unchanged: PropTypes.number,
+    removed: PropTypes.number,
+  }),
+  title: PropTypes.string,
 };
 
 export default ChangeSummaryCard;
