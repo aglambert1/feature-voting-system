@@ -8,7 +8,7 @@ and providing agent execution capabilities.
 
 import time
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Callable
 from anthropic import Anthropic, APIError, APITimeoutError, RateLimitError
 
 from app.config import settings
@@ -271,6 +271,156 @@ Example format:
                 else:
                     print(f"Rate limit hit for {agent_name}, all retries exhausted")
                     raise LLMServiceError("Rate limit exceeded after all retries")
+
+    def call_agent_with_tools(
+        self,
+        agent_name: str,
+        system_prompt: str,
+        user_prompt: str,
+        tools: List[Dict[str, Any]],
+        tool_executor: Callable[[str, Dict[str, Any]], Any],
+        max_iterations: int = 5,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Call Claude with tool use capability.
+
+        Implements the tool-use loop:
+        1. Send request with tool definitions
+        2. If Claude requests a tool, execute it
+        3. Send results back to Claude
+        4. Repeat until Claude responds without requesting tools
+
+        Args:
+            agent_name: Name of the calling agent
+            system_prompt: System message defining agent behavior
+            user_prompt: User message with task details
+            tools: List of tool definitions (Claude-compatible format)
+            tool_executor: Function that executes tools: (tool_name, tool_input) -> result
+            max_iterations: Maximum tool use cycles to prevent infinite loops
+            **kwargs: Additional arguments for call_agent (temperature, max_tokens, model)
+
+        Returns:
+            Dict with final response and metadata
+
+        Example tool definition:
+            {
+                "name": "web_search",
+                "description": "Search the web for information",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"}
+                    },
+                    "required": ["query"]
+                }
+            }
+        """
+        temperature = kwargs.get('temperature') or settings.temperature_default
+        max_tokens = kwargs.get('max_tokens') or settings.max_tokens_default
+        model = kwargs.get('model') or settings.claude_model
+
+        # Message history for the conversation
+        messages = [{"role": "user", "content": user_prompt}]
+        total_tokens = 0
+        iterations = 0
+
+        try:
+            while iterations < max_iterations:
+                iterations += 1
+                print(f"[{agent_name}] Tool use iteration {iterations}/{max_iterations}")
+
+                # Call Claude with tools
+                response = self.client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system_prompt,
+                    tools=tools,
+                    messages=messages
+                )
+
+                # Track tokens
+                total_tokens += response.usage.input_tokens + response.usage.output_tokens
+
+                # Check stop reason
+                if response.stop_reason == "end_turn":
+                    # Claude is done - extract final text response
+                    content = ""
+                    for block in response.content:
+                        if block.type == "text":
+                            content += block.text
+
+                    return {
+                        "content": content,
+                        "tokens_used": total_tokens,
+                        "model": response.model,
+                        "stop_reason": response.stop_reason,
+                        "tool_calls": iterations - 1  # Number of tool calls made
+                    }
+
+                elif response.stop_reason == "tool_use":
+                    # Claude wants to use a tool
+                    print(f"[{agent_name}] Claude requested tool use")
+
+                    # Add Claude's response to message history
+                    messages.append({
+                        "role": "assistant",
+                        "content": response.content
+                    })
+
+                    # Execute all tool uses requested in this turn
+                    tool_results = []
+                    for block in response.content:
+                        if block.type == "tool_use":
+                            tool_name = block.name
+                            tool_input = block.input
+                            tool_use_id = block.id
+
+                            print(f"[{agent_name}] Executing tool: {tool_name} with input: {tool_input}")
+
+                            try:
+                                # Execute the tool
+                                result = tool_executor(tool_name, tool_input)
+
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_use_id,
+                                    "content": json.dumps(result) if not isinstance(result, str) else result
+                                })
+
+                                print(f"[{agent_name}] Tool {tool_name} executed successfully")
+
+                            except Exception as e:
+                                print(f"[{agent_name}] Tool execution error: {e}")
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_use_id,
+                                    "content": f"Error executing tool: {str(e)}",
+                                    "is_error": True
+                                })
+
+                    # Add tool results to message history
+                    messages.append({
+                        "role": "user",
+                        "content": tool_results
+                    })
+
+                else:
+                    # Unexpected stop reason
+                    print(f"[{agent_name}] Unexpected stop reason: {response.stop_reason}")
+                    raise LLMServiceError(f"Unexpected stop reason: {response.stop_reason}")
+
+            # Max iterations reached
+            print(f"[{agent_name}] Max iterations reached without completion")
+            raise LLMServiceError(f"Max tool use iterations ({max_iterations}) exceeded")
+
+        except APIError as e:
+            print(f"Claude API error in agent {agent_name}: {e}")
+            raise LLMServiceError(f"Claude API error: {str(e)}")
+        except Exception as e:
+            print(f"Unexpected error in tool use for agent {agent_name}: {e}")
+            raise LLMServiceError(f"Tool use error: {str(e)}")
 
 
 class LLMServiceError(Exception):

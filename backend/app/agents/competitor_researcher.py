@@ -9,6 +9,7 @@ This module provides two AI agents:
 from typing import Dict, Any, Type, List
 from pydantic import BaseModel, Field, HttpUrl
 from app.agents.base_agent import BaseAgent
+from app.services.search_service import get_search_service
 
 
 class CompetitorResult(BaseModel):
@@ -47,18 +48,83 @@ class CompetitorResearcherAgent(BaseAgent):
 
     Uses product information to search for and identify competitors.
     Returns ranked list of competitors with relevance scores.
+    Supports hybrid approach: training knowledge + web search.
     """
 
+    def __init__(self, *args, **kwargs):
+        """Initialize agent with search service."""
+        super().__init__(*args, **kwargs)
+        self.search_service = get_search_service()
+
+    def get_tools(self) -> List[Dict[str, Any]]:
+        """Provide web search tool if available."""
+        if self.search_service.is_available():
+            return [self.search_service.get_tool_definition()]
+        return []
+
+    def execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> Any:
+        """Execute web search tool."""
+        if tool_name == "web_search":
+            query = tool_input.get("query", "")
+            max_results = tool_input.get("max_results", 10)
+
+            print(f"[CompetitorResearcher] Searching web for: {query}")
+            results = self.search_service.search(query, max_results)
+
+            # Format results for Claude
+            if not results:
+                return "No search results found for this query."
+
+            formatted = []
+            for i, result in enumerate(results, 1):
+                formatted.append(
+                    f"{i}. **{result.get('title', 'Untitled')}**\n"
+                    f"   URL: {result.get('url', 'N/A')}\n"
+                    f"   {result.get('snippet', 'No description available')}"
+                )
+
+            return "\n\n".join(formatted)
+        else:
+            raise ValueError(f"Unknown tool: {tool_name}")
+
     def get_system_prompt(self) -> str:
-        return """You are a Competitor Research agent specializing in market intelligence.
+        has_search = self.search_service.is_available()
 
-Your role is to identify competing products based ONLY on your existing training knowledge.
+        if has_search:
+            return """You are a Competitor Research agent specializing in market intelligence.
 
-CRITICAL: YOU DO NOT HAVE SEARCH TOOLS
-- You do NOT have access to web search, browser tools, or real-time internet data
-- Do NOT use <search> tags or attempt to search - this will cause errors
-- ONLY use your existing knowledge from training data
-- Provide JSON responses directly without any search attempts
+Your role is to identify competing products using a HYBRID APPROACH:
+1. Start with your existing training knowledge for well-known competitors
+2. Use the web_search tool to find current/emerging competitors and verify information
+
+SEARCH STRATEGY:
+- Use targeted searches like "[product category] competitors", "[product type] alternatives"
+- Search for specific features or use cases to find similar products
+- Verify URLs and company information through search results
+- Combine knowledge from multiple searches for comprehensive results
+
+RESPONSE REQUIREMENTS:
+1. Aim for 5-10 high-quality competitors (direct competitors preferred)
+2. All URLs must be real, verified from search results or training knowledge
+3. Prioritize direct competitors (serve the same market/needs) over adjacent products
+4. Score relevance objectively (1.0 = direct competitor, 0.5 = adjacent market)
+5. Provide clear, accurate summaries based on search results
+6. If searches return no relevant results, rely on training knowledge
+7. If neither search nor knowledge helps, return empty list with explanation
+
+IMPORTANT:
+- Never invent or hallucinate companies, URLs, or information
+- Only include competitors you can verify through search or training knowledge
+- Return ONLY valid JSON - no markdown, no extra text
+
+Always respond with valid JSON matching the schema."""
+        else:
+            # Fallback to knowledge-only mode if search unavailable
+            return """You are a Competitor Research agent specializing in market intelligence.
+
+Your role is to identify competing products based on your existing training knowledge.
+
+IMPORTANT: Web search is currently unavailable, so use ONLY your training knowledge.
 
 RESPONSE REQUIREMENTS:
 1. Only suggest competitors you have VERIFIED knowledge of (real companies/products from your training)
@@ -70,10 +136,10 @@ RESPONSE REQUIREMENTS:
 7. Score relevance objectively (1.0 = direct competitor, 0.5 = adjacent market)
 
 HONESTY REQUIREMENT:
-- If you cannot find verified competitors in your knowledge, return: {{"competitors": [], "research_summary": "Unable to identify verified competitors for this product based on available knowledge. This may be a very niche product or the description may need more details."}}
+- If you cannot find verified competitors in your knowledge, return: {{"competitors": [], "research_summary": "Unable to identify verified competitors for this product based on available knowledge. Web search is currently unavailable."}}
 - Only return competitors you're confident are real and have accurate URLs
 
-Always respond with ONLY valid JSON - no search tags, no explanations, just JSON."""
+Always respond with ONLY valid JSON - no explanations, just JSON."""
 
     def build_user_prompt(self, input_data: Dict[str, Any]) -> str:
         product_name = input_data.get('product_name', '')
@@ -82,46 +148,85 @@ Always respond with ONLY valid JSON - no search tags, no explanations, just JSON
         target_users = input_data.get('target_users', '')
         search_keywords = input_data.get('competitor_search_keywords', [])
 
-        prompt = f"""Based on your existing training knowledge, list competing products for this target product:
+        has_search = self.search_service.is_available()
+
+        if has_search:
+            # Hybrid prompt - encourage search use
+            prompt = f"""Find competing products for this target product:
+
+**Target Product:** {product_name}
+**Category:** {product_category}
+**Key Features:** {', '.join(core_features) if core_features else 'Not specified'}
+**Target Users:** {target_users}
+**Suggested Keywords:** {', '.join(search_keywords) if search_keywords else 'Not provided'}
+
+YOUR TASK:
+1. **Start with knowledge**: Think of well-known competitors you know from training
+2. **Use web search**: Search for "{product_category} competitors", "{product_category} alternatives", or similar queries
+3. **Verify & compile**: Combine knowledge + search results into a comprehensive list
+4. **Aim for quality**: 5-10 direct competitors preferred over a long list
+
+SEARCH SUGGESTIONS:
+- "{product_category} competitors"
+- "{product_category} alternatives to {product_name}"
+- "best {product_category} tools"
+- Feature-specific searches if relevant (e.g., "{', '.join(core_features[:2]) if core_features else 'features'}")
+
+REQUIREMENTS:
+- All URLs must be real and verifiable (from search results or training knowledge)
+- Prioritize DIRECT competitors (same market, same needs) - score 0.8-1.0
+- Include adjacent products only if highly relevant - score 0.5-0.7
+- Provide clear, accurate summaries based on what you learn
+- If searches return nothing useful, rely on training knowledge
+- If neither helps, return empty list with honest explanation
+
+Return JSON format:
+{{
+  "competitors": [
+    {{
+      "name": "Company/Product Name",
+      "url": "https://verified-url.com",
+      "summary": "2-3 sentences about what they do and competitive positioning",
+      "relevance_score": 0.9
+    }}
+  ],
+  "research_summary": "Brief summary of competitive landscape"
+}}"""
+        else:
+            # Knowledge-only prompt
+            prompt = f"""Based on your training knowledge, list competing products for this target product:
 
 **Target Product:** {product_name}
 **Category:** {product_category}
 **Key Features:** {', '.join(core_features) if core_features else 'Not specified'}
 **Target Users:** {target_users}
 
-CRITICAL REMINDER: Do NOT use search tools or <search> tags - you don't have them. Use ONLY your training knowledge.
+IMPORTANT: Web search is unavailable - use ONLY your training knowledge.
 
-Your task - provide a direct JSON response:
+YOUR TASK:
 1. List ONLY competitors you have verified knowledge of from training
-2. Use real companies/products with accurate URLs you know exist
-3. If you don't know any verified competitors, return empty list with explanation
+2. Use real companies/products with accurate URLs you're confident about
+3. If you don't know verified competitors, return empty list with explanation
 
-STRICT REQUIREMENTS:
+REQUIREMENTS:
 - Only include competitors you're 100% CERTAIN are real
-- URLs must be real websites from your knowledge - NO invented/guessed URLs
+- URLs must be real websites from your knowledge - NO invented URLs
 - If uncertain about ANY detail, EXCLUDE that competitor entirely
 - Focus on well-known products (direct competitors preferred)
-- No search attempts, no <query> tags - just direct JSON response
 
-Return ONLY this JSON structure (no other text):
+Return JSON format:
 {{
   "competitors": [
     {{
       "name": "Actual Company/Product Name",
       "url": "https://real-verified-url.com",
-      "summary": "2-3 sentences about what they do and how they compete",
+      "summary": "2-3 sentences about what they do",
       "relevance_score": 0.9
     }}
   ],
-  "research_summary": "Brief landscape summary OR 'No verified competitors found based on available knowledge'"
-}}
+  "research_summary": "Brief landscape summary OR 'Unable to find verified competitors - web search unavailable'"
+}}"""
 
-If you don't know verified competitors, return:
-{{
-  "competitors": [],
-  "research_summary": "Unable to identify verified competitors for this product. May be very niche or need more specific category details."
-}}
-"""
         return prompt
 
     def get_output_schema(self) -> Type[BaseModel]:

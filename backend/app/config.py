@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     max_tokens_default: int = 4000  # Default max tokens for agent responses
     temperature_default: float = 0.7  # Default temperature for agent calls
 
+    # Search API settings (for competitor research)
+    brave_api_key: str = "your-brave-api-key-here"  # Get free key at https://brave.com/search/api/
+    enable_web_search: bool = True  # Enable web search for competitor discovery
+
     # Development mode settings for OTP bypass
     # SECURITY WARNING: Only use in development! Never enable in production!
     dev_otp_bypass: str = "000000"  # Fixed OTP that always works in debug mode

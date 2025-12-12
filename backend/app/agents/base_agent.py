@@ -6,7 +6,7 @@ providing automatic execution logging, error handling, and structured I/O.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Type
+from typing import Dict, Any, Optional, Type, List
 import json
 import time
 from sqlalchemy.orm import Session
@@ -119,6 +119,39 @@ class BaseAgent(ABC):
         """
         pass
 
+    def get_tools(self) -> List[Dict[str, Any]]:
+        """
+        Optional: Define tools that this agent can use.
+
+        Override this method to provide tool definitions for tool-enabled agents.
+        If this returns a non-empty list, the agent will use Claude's tool use API.
+
+        Returns:
+            List of tool definitions (Claude API format), or empty list if no tools
+        """
+        return []
+
+    def execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> Any:
+        """
+        Optional: Execute a tool by name.
+
+        Override this method to handle tool execution.
+        Only called if get_tools() returns a non-empty list.
+
+        Args:
+            tool_name: Name of the tool to execute
+            tool_input: Input parameters for the tool
+
+        Returns:
+            Tool execution result (will be sent back to Claude)
+
+        Raises:
+            NotImplementedError: If tool execution is not implemented
+        """
+        raise NotImplementedError(
+            f"Agent {self.agent_name} defined tools but did not implement execute_tool()"
+        )
+
     def execute(
         self,
         input_data: Dict[str, Any],
@@ -161,14 +194,32 @@ class BaseAgent(ABC):
                 system_prompt = self.get_system_prompt()
                 user_prompt = self.build_user_prompt(input_data)
 
-                # Call LLM
-                response = self.llm_service.call_agent(
-                    agent_name=self.agent_name,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
+                # Check if agent uses tools
+                tools = self.get_tools()
+                print(f"[{self.agent_name}] get_tools() returned: {len(tools)} tools")
+
+                # Call LLM (with or without tools)
+                if tools:
+                    # Use tool-enabled call
+                    print(f"[{self.agent_name}] Using tool-enabled execution with {len(tools)} tools")
+                    response = self.llm_service.call_agent_with_tools(
+                        agent_name=self.agent_name,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        tools=tools,
+                        tool_executor=self.execute_tool,
+                        temperature=temperature,
+                        max_tokens=max_tokens
+                    )
+                else:
+                    # Standard call without tools
+                    response = self.llm_service.call_agent(
+                        agent_name=self.agent_name,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens
+                    )
 
                 # Parse and validate output
                 output_data = self._parse_and_validate_output(response['content'])
@@ -274,12 +325,13 @@ class BaseAgent(ABC):
 
     def _extract_json(self, content: str) -> str:
         """
-        Extract JSON from LLM response, handling markdown code blocks.
+        Extract JSON from LLM response, handling markdown code blocks and explanatory text.
 
         Supports:
         - ```json ... ```
         - ``` ... ```
         - Raw JSON
+        - Explanatory text before JSON
 
         Args:
             content: Raw response content
@@ -290,13 +342,30 @@ class BaseAgent(ABC):
         content = content.strip()
 
         # Check for markdown code block
-        if content.startswith("```json"):
-            content = content[7:]  # Remove ```json
-        elif content.startswith("```"):
-            content = content[3:]  # Remove ```
+        if "```json" in content:
+            # Find and extract content between ```json and ```
+            start = content.find("```json") + 7
+            end = content.find("```", start)
+            if end != -1:
+                content = content[start:end]
+        elif "```" in content:
+            # Find and extract content between ``` and ```
+            start = content.find("```") + 3
+            end = content.find("```", start)
+            if end != -1:
+                content = content[start:end]
 
-        if content.endswith("```"):
-            content = content[:-3]  # Remove trailing ```
+        content = content.strip()
+
+        # If content still has explanatory text before JSON, find the first { or [
+        if not content.startswith("{") and not content.startswith("["):
+            # Find first occurrence of { or [
+            json_start = min(
+                (content.find("{") if content.find("{") != -1 else len(content)),
+                (content.find("[") if content.find("[") != -1 else len(content))
+            )
+            if json_start < len(content):
+                content = content[json_start:]
 
         return content.strip()
 
