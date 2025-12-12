@@ -98,7 +98,7 @@ class FeatureExtractionService:
             product_id=session_competitor.session.product_id
         )
 
-        agent_result = await agent.execute({
+        agent_result = agent.execute({
             'competitor_name': session_competitor.competitor_name,
             'competitor_url': session_competitor.competitor_url,
             'previous_features': previous_features

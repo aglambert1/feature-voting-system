@@ -11,6 +11,7 @@ Products must be created and analyzed BEFORE creating a session.
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from uuid import UUID
 from pydantic import BaseModel
 
 from app.schemas.competitor_intelligence import SessionCreate

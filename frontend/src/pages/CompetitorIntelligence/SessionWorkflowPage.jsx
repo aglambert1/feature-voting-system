@@ -7,7 +7,7 @@
  * - Stage 4: Comparison & Idea Generation (future)
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import Navigation from '../../components/Navigation';
@@ -18,22 +18,27 @@ export default function SessionWorkflowPage() {
   const { productId, sessionId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const initializingRef = useRef(false);
 
   const [session, setSession] = useState(null);
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [currentStage, setCurrentStage] = useState(2); // Start at Stage 2
-  const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
-    // Only initialize once - prevent double-init when navigate() changes sessionId
-    if (!initialized) {
+    // Only initialize once - prevent double-init in React StrictMode
+    if (!initializingRef.current) {
       initializeSession();
     }
-  }, [productId, sessionId, initialized]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productId, sessionId]);
 
   const initializeSession = async () => {
+    // Use ref for synchronous race condition protection
+    if (initializingRef.current) return;
+    initializingRef.current = true;
+
     try {
       setLoading(true);
       setError(null);
@@ -57,7 +62,6 @@ export default function SessionWorkflowPage() {
         // (For now, default to stage 2)
         setCurrentStage(2);
         setLoading(false); // Transition to stage UI
-        setInitialized(true); // Mark as initialized
       } else {
         // Create new session
         const createResponse = await api.post('/competitor-intelligence/sessions', {
@@ -71,7 +75,6 @@ export default function SessionWorkflowPage() {
         setSession(createResponse.data);
         setCurrentStage(2);
         setLoading(false); // Transition to stage UI immediately
-        setInitialized(true); // Mark as initialized
 
         // Update URL to include session ID
         navigate(
@@ -83,7 +86,6 @@ export default function SessionWorkflowPage() {
       console.error('Session initialization error:', err);
       setError(err.response?.data?.detail || 'Failed to initialize session');
       setLoading(false); // Stop loading on error
-      setInitialized(true); // Mark as initialized even on error
     }
   };
 

@@ -8,7 +8,6 @@ This service coordinates:
 """
 
 from typing import List, Dict, Optional
-from uuid import UUID
 from sqlalchemy.orm import Session
 from app.models.competitor_intelligence import (
     CompetitorAnalysisSession,
@@ -30,7 +29,7 @@ class CompetitorIntelligenceService:
 
     async def discover_competitors(
         self,
-        session_id: UUID,
+        session_id: int,
         llm_service: LLMService
     ) -> Dict:
         """
@@ -113,7 +112,7 @@ class CompetitorIntelligenceService:
                 'has_comparison': False
             }
 
-    def _get_previous_competitors(self, previous_session_id: UUID) -> List[Dict]:
+    def _get_previous_competitors(self, previous_session_id: int) -> List[Dict]:
         """Get competitors from previous session"""
         competitors = self.db.query(SessionCompetitor).filter(
             SessionCompetitor.session_id == previous_session_id,
@@ -132,7 +131,7 @@ class CompetitorIntelligenceService:
 
     def _store_competitors_with_status(
         self,
-        session_id: UUID,
+        session_id: int,
         product_id: int,
         competitors_data: List[Dict]
     ) -> List[Dict]:
@@ -181,7 +180,7 @@ class CompetitorIntelligenceService:
 
     def _store_competitors_without_status(
         self,
-        session_id: UUID,
+        session_id: int,
         product_id: int,
         competitors_data: List[Dict]
     ) -> List[Dict]:
@@ -230,7 +229,7 @@ class CompetitorIntelligenceService:
         product_id: int,
         competitor_name: str,
         competitor_url: str,
-        session_id: UUID
+        session_id: int
     ) -> ProductCompetitor:
         """Get existing or create new product-level competitor"""
         # Try to find existing by name
@@ -264,8 +263,8 @@ class CompetitorIntelligenceService:
 
     async def confirm_competitors(
         self,
-        session_id: UUID,
-        selected_ids: List[UUID],
+        session_id: int,
+        selected_ids: List[int],
         custom_competitors: Optional[List[Dict]] = None
     ) -> Dict:
         """
@@ -329,7 +328,7 @@ class CompetitorIntelligenceService:
 
     async def get_session_competitors(
         self,
-        session_id: UUID
+        session_id: int
     ) -> List[Dict]:
         """Get all competitors for a session"""
         competitors = self.db.query(SessionCompetitor).filter(

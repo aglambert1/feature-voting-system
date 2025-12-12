@@ -30,9 +30,9 @@ class FeatureExtractionOutput(BaseModel):
     competitor_name: str
     features: List[ExtractedFeature] = Field(
         ...,
-        min_length=10,
+        min_length=3,
         max_length=30,
-        description="Extracted features"
+        description="Extracted features (extract 10-25 when possible, minimum 3)"
     )
     extraction_summary: str = Field(
         ...,
@@ -81,24 +81,39 @@ class FeatureExtractorAgent(BaseAgent):
         return """You are a Feature Extraction agent specializing in competitive intelligence.
 
 Your role is to thoroughly research a competitor's product and extract their features.
+Extract features that you can confidently identify - don't guess or extrapolate.
+
+**MULTI-URL RESEARCH STRATEGY:**
+Use a systematic approach to research multiple pages of the competitor website:
+1. **Homepage** - Understand core product positioning and main features
+2. **Features/Product Page** - Detailed feature descriptions and capabilities
+3. **Pricing Page** - Pricing tiers, editions, and feature differences
+4. **Documentation/Help Center** - Technical specifications and detailed info
+5. **Blog/Release Notes** - Recent features, updates, and improvements
+
+For each feature, record the specific source URL where you found it (not just homepage).
 
 You can operate in two modes:
 
 **FRESH EXTRACTION MODE:**
-- Extract 15-25 distinct features or capabilities
-- Focus on tangible features, not marketing language
+- Research multiple pages systematically to extract distinct features
+- Target 10-25 features if available, but extract minimum 3 verified features
+- Focus on tangible, verifiable features found across product pages
 - Categorize features logically
-- Assign confidence scores based on information clarity
+- Assign confidence scores based on information clarity and certainty
+- Always specify the exact source_url where you found each feature
+- It's okay to extract fewer features if you can't verify more
 
 **COMPARATIVE ANALYSIS MODE:**
-- Extract current features as above
+- Extract current features using multi-page research as above
 - Compare with previous features to identify changes
 - Categorize each feature as: NEW, MODIFIED, UNCHANGED, or REMOVED
 - Explain what changed for modified features
 - Be precise about actual changes vs. minor wording differences
 
 Always respond with valid JSON matching the specified schema.
-Focus on facts and capabilities, not subjective marketing claims."""
+Focus on facts, verifiable capabilities across multiple sources.
+Never hallucinate features to reach a target count."""
 
     def build_user_prompt(self, input_data: Dict[str, Any]) -> str:
         competitor_name = input_data.get('competitor_name', '')
@@ -117,30 +132,43 @@ Research the competitor and compare with previous analysis:
 **Previous Features (from last analysis):**
 {self._format_previous_features(previous_features)}
 
+**MULTI-PAGE RESEARCH STRATEGY:**
+Systematically research multiple pages to track changes:
+1. Homepage - Check positioning changes
+2. Features/Product page - Compare detailed feature lists
+3. Pricing page - Check for tier/feature changes
+4. Documentation - Look for new technical capabilities
+5. Blog/Release notes - Identify recently added features
+
 **Your Tasks:**
-1. Research {competitor_url} and extract current features
+1. Systematically research {competitor_url} across multiple pages for current features
 2. For each feature, compare with previous features to determine:
    - **NEW**: Feature not present in previous analysis
-   - **MODIFIED**: Feature changed (description, category, or capability)
+   - **MODIFIED**: Feature changed (description, category, capability, or availability)
    - **UNCHANGED**: Feature remains the same
-   - **REMOVED**: Previous feature no longer found
+   - **REMOVED**: Previous feature no longer found or documented
 
 3. For each current feature, provide:
    - name: Concise feature name (2-5 words)
    - description: Clear description (1-2 sentences)
    - category: Logical category (e.g., "Core Functionality", "Integration", "Analytics")
    - confidence: 0.0-1.0 based on information clarity
-   - source_url: Specific page where found
+   - source_url: Specific page where found (e.g., /features, /pricing, /docs - NOT just homepage)
    - change_type: "new", "modified", "unchanged", or "removed"
    - change_description: Brief explanation of what changed (for modified features)
    - previous_feature_id: ID of matching previous feature (if applicable)
 
 4. Provide summary counts:
-   - total_features
-   - new_features
-   - modified_features
-   - unchanged_features
-   - removed_features
+   - total_features: Total current features found
+   - new_features: Features newly added
+   - modified_features: Features that changed
+   - unchanged_features: Features that stayed the same
+   - removed_features: Previous features no longer present
+
+IMPORTANT:
+- Research multiple pages, not just the homepage
+- Always record specific source_url where each feature is found
+- Be precise about actual changes vs. minor wording differences
 
 Return the results EXACTLY in this JSON format:
 {{
@@ -182,18 +210,32 @@ Research and extract features from:
 **Competitor:** {competitor_name}
 **Website:** {competitor_url}
 
+**MULTI-PAGE RESEARCH STRATEGY:**
+Systematically research multiple pages to get a complete picture:
+1. Homepage - Understand the product's core positioning
+2. Features/Product page - Detailed feature descriptions
+3. Pricing page - Different tiers and their feature sets
+4. Documentation/Help center - Technical capabilities
+5. Blog/Release notes - Recent features and improvements
+
 **Your Tasks:**
-1. Thoroughly research {competitor_url} to understand their product
-2. Extract 15-25 distinct features or capabilities
+1. Systematically research {competitor_url} across multiple pages
+2. Extract distinct features or capabilities you can verify (target 10-25 if available, minimum 3)
 3. For each feature, provide:
    - name: Concise feature name (2-5 words)
    - description: Clear description (1-2 sentences)
    - category: Logical category (e.g., "Core Functionality", "Integration", "Analytics", "Pricing Model")
    - confidence: 0.0-1.0 based on how clearly documented the feature is
-   - source_url: Specific page where you found this feature
+   - source_url: Specific page where you found this feature (e.g., /features, /pricing, /docs - NOT just homepage)
    - raw_context: Optional snippet of relevant text
 
 4. Also provide extraction_summary: Brief summary of what you found
+
+IMPORTANT:
+- Only extract features you can verify across the product pages
+- Don't guess or make up features to reach a target number
+- Always record the specific source_url where you found each feature
+- Research multiple pages, not just the homepage
 
 Return the results EXACTLY in this JSON format:
 {{
@@ -242,7 +284,7 @@ Guidelines:
     def get_stage(self) -> str:
         return "feature_extraction"
 
-    async def execute(
+    def execute(
         self,
         input_data: Dict[str, Any],
         temperature: float = 0.7,
@@ -260,7 +302,7 @@ Guidelines:
         else:
             self._output_schema = FeatureExtractionOutput
 
-        return await super().execute(input_data, temperature, max_tokens, max_retries)
+        return super().execute(input_data, temperature, max_tokens, max_retries)
 
 
 # ============================================================================
