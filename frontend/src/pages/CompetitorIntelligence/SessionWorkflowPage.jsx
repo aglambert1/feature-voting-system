@@ -52,6 +52,7 @@ export default function SessionWorkflowPage() {
         // Determine stage based on session status
         // (For now, default to stage 2)
         setCurrentStage(2);
+        setLoading(false); // Transition to stage UI
       } else {
         // Create new session
         const createResponse = await api.post('/competitor-intelligence/sessions', {
@@ -64,6 +65,7 @@ export default function SessionWorkflowPage() {
 
         setSession(createResponse.data);
         setCurrentStage(2);
+        setLoading(false); // Transition to stage UI immediately
 
         // Update URL to include session ID
         navigate(
@@ -74,8 +76,7 @@ export default function SessionWorkflowPage() {
     } catch (err) {
       console.error('Session initialization error:', err);
       setError(err.response?.data?.detail || 'Failed to initialize session');
-    } finally {
-      setLoading(false);
+      setLoading(false); // Stop loading on error
     }
   };
 
