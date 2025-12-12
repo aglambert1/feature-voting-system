@@ -99,7 +99,7 @@ class SessionService:
             comparison_to_session_id=comparison_to_session_id,
             product_source_type="text",  # Legacy field - not critical
             product_source_data=None,
-            omew=product.structured_product_data,
+            analyzed_product_structure=product.structured_product_data,
             status="active"
         )
 
