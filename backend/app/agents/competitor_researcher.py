@@ -13,8 +13,8 @@ from app.agents.base_agent import BaseAgent
 
 class CompetitorResult(BaseModel):
     """Single competitor discovery result"""
-    name: str = Field(..., description="Competitor product name")
-    url: HttpUrl = Field(..., description="Primary website URL")
+    name: str = Field(..., description="Competitor product name", validation_alias="product_name")
+    url: HttpUrl = Field(..., description="Primary website URL", validation_alias="website")
     summary: str = Field(..., description="2-3 sentence summary of what they do")
     relevance_score: float = Field(
         ...,
@@ -22,6 +22,9 @@ class CompetitorResult(BaseModel):
         le=1.0,
         description="How directly they compete (0.0-1.0)"
     )
+
+    class Config:
+        populate_by_name = True
 
 
 class CompetitorResearchOutput(BaseModel):
@@ -88,7 +91,7 @@ Guidelines:
 - Verify URLs are valid and current
 - Be objective with relevance scores (1.0 = direct competitor, 0.5 = adjacent market)
 
-Return the results EXACTLY in this JSON format:
+CRITICAL: You MUST return results in this EXACT JSON format with ALL required fields:
 {{
   "competitors": [
     {{
@@ -100,6 +103,12 @@ Return the results EXACTLY in this JSON format:
   ],
   "research_summary": "2-3 sentences describing the overall competitive landscape"
 }}
+
+REQUIRED FIELDS (all must be included):
+- name: The competitor's product/company name
+- url: Full website URL (must start with http:// or https://)
+- summary: 2-3 sentence description
+- relevance_score: Number between 0.0 and 1.0
 """
         return prompt
 
