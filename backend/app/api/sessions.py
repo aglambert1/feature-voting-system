@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from app.schemas.competitor_intelligence import SessionCreate
 from app.services.session_service import SessionService
 from app.services.competitor_intelligence_service import CompetitorIntelligenceService
+from app.services.feature_extraction_service import FeatureExtractionService
 from app.services.llm_service import llm_service
 from app.utils.security import get_current_active_user
 from app.database import get_db
@@ -389,6 +390,163 @@ async def confirm_competitors(
         session_id=session_id,
         selected_ids=data.selected_ids,
         custom_competitors=data.custom_competitors
+    )
+
+    return result
+
+
+# ============================================================================
+# Feature Extraction Endpoints (Stage 3)
+# ============================================================================
+
+class SelectFeaturesRequest(BaseModel):
+    """Schema for selecting features"""
+    feature_ids: List[int]
+
+
+@router.post("/{session_id}/extract-features")
+async def extract_features(
+    session_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Extract features from selected competitors (Stage 3).
+
+    Analyzes each selected competitor's website/data to extract features.
+    If session has comparison enabled, detects changes from previous analysis.
+
+    Args:
+        session_id: Session ID
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Dict containing:
+        - status: Extraction status
+        - total_competitors: Number of competitors being analyzed
+        - comparison_mode: Whether change detection is enabled
+
+    Raises:
+        404: If session not found
+        400: If no competitors selected
+    """
+    service = FeatureExtractionService(db)
+
+    try:
+        result = await service.extract_features_for_session(
+            session_id=session_id,
+            llm_service=llm_service
+        )
+
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+
+@router.get("/{session_id}/features")
+async def get_session_features(
+    session_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all extracted features for a session.
+
+    Returns features grouped by competitor with change tracking data.
+
+    Args:
+        session_id: Session ID
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Dict containing:
+        - features_by_competitor: List of competitors with their features
+        - change_stats: Summary of changes (if comparison enabled)
+    """
+    service = FeatureExtractionService(db)
+
+    result = await service.get_session_features(session_id)
+
+    return result
+
+
+@router.get("/features/{feature_id}/details")
+async def get_feature_details(
+    feature_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get expanded details for a specific feature.
+
+    Uses AI to provide detailed explanation of the feature including
+    technical details, use cases, benefits, and limitations.
+
+    Args:
+        feature_id: Feature ID
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Dict containing:
+        - feature_id: Feature ID
+        - expanded_description: Detailed description
+        - technical_details: Technical information
+        - use_cases: List of use cases
+        - benefits: List of benefits
+        - limitations: List of limitations (if any)
+        - cached: Whether details were previously retrieved
+
+    Raises:
+        404: If feature not found
+    """
+    service = FeatureExtractionService(db)
+
+    try:
+        result = await service.expand_feature_details(
+            feature_id=feature_id,
+            llm_service=llm_service
+        )
+
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+
+
+@router.post("/{session_id}/select-features")
+async def select_features(
+    session_id: int,
+    data: SelectFeaturesRequest = Body(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Select features for idea generation (Stage 3 → Stage 4).
+
+    User chooses which extracted features to use for generating ideas.
+
+    Args:
+        session_id: Session ID
+        data: List of feature IDs to select
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Confirmation with selected count
+    """
+    service = FeatureExtractionService(db)
+
+    result = await service.select_features(
+        session_id=session_id,
+        feature_ids=data.feature_ids
     )
 
     return result
