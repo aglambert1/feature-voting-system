@@ -30,14 +30,14 @@ class CompetitorResult(BaseModel):
 class CompetitorResearchOutput(BaseModel):
     """Output schema for Competitor Researcher Agent"""
     competitors: List[CompetitorResult] = Field(
-        ...,
-        description="List of discovered competitors",
-        min_items=5,
-        max_items=20
+        default=[],
+        description="List of discovered competitors (empty if none found)",
+        min_items=0,
+        max_items=15
     )
     research_summary: str = Field(
         ...,
-        description="Brief summary of competitive landscape"
+        description="Brief summary of competitive landscape or explanation if no competitors found"
     )
 
 
@@ -52,15 +52,20 @@ class CompetitorResearcherAgent(BaseAgent):
     def get_system_prompt(self) -> str:
         return """You are a Competitor Research agent specializing in market intelligence.
 
-Your role is to discover competing products based on a target product's description.
+Your role is to identify competing products based on a target product's description.
 
-You must:
-1. Identify direct competitors (products serving the same market/needs)
-2. Prioritize active, established products over defunct or tangential ones
-3. Provide accurate URLs and concise summaries
-4. Score relevance objectively (1.0 = direct competitor, 0.5 = adjacent market)
+CRITICAL INSTRUCTIONS:
+1. Only suggest competitors you have VERIFIED knowledge of (real companies/products)
+2. URLs MUST be real, active websites - verify they exist in your knowledge
+3. If you cannot identify any verified competitors, return an empty competitors list
+4. Never invent or hallucinate fictional companies or URLs
+5. Focus on well-known, established products you're confident about
+6. Prioritize direct competitors (products serving the same market/needs)
+7. Score relevance objectively (1.0 = direct competitor, 0.5 = adjacent market)
 
-Focus on quality over quantity. Return 10-15 most relevant competitors.
+HONESTY REQUIREMENT:
+- If you cannot find verified competitors, return: {{"competitors": [], "research_summary": "Unable to identify verified competitors for this product based on available knowledge. This may be a very niche product or the description may need more details."}}
+- Only return competitors you're confident are real and have accurate URLs
 
 Always respond with valid JSON matching the specified schema."""
 
@@ -71,42 +76,47 @@ Always respond with valid JSON matching the specified schema."""
         target_users = input_data.get('target_users', '')
         search_keywords = input_data.get('competitor_search_keywords', [])
 
-        prompt = f"""Research and identify competing products for the following:
+        prompt = f"""Identify competing products for the following based on your verified knowledge:
 
 **Target Product:** {product_name}
 **Category:** {product_category}
-**Key Features:** {', '.join(core_features)}
+**Key Features:** {', '.join(core_features) if core_features else 'Not specified'}
 **Target Users:** {target_users}
-**Search Keywords:** {', '.join(search_keywords)}
+**Search Keywords:** {', '.join(search_keywords) if search_keywords else 'Not specified'}
 
 Your task:
-1. Use web search to discover 10-15 competing products
-2. For each competitor, provide the required information
-3. Also provide a brief research_summary describing the competitive landscape
+1. Identify ONLY competitors you have verified knowledge of (real companies/products)
+2. Provide accurate information for each competitor
+3. If you cannot identify verified competitors, return an empty list with an explanation
 
-Guidelines:
+STRICT REQUIREMENTS:
+- Only include competitors you're CERTAIN are real companies/products
+- URLs must be real, active websites from your knowledge - NO fictional URLs
+- If uncertain about any competitor, EXCLUDE it from results
 - Focus on DIRECT competitors (same market, same user needs)
-- Prefer established, active products
-- Include variety (large players and emerging competitors)
-- Verify URLs are valid and current
+- Prefer well-known, established products
 - Be objective with relevance scores (1.0 = direct competitor, 0.5 = adjacent market)
 
-CRITICAL: You MUST return results in this EXACT JSON format with ALL required fields:
+If you cannot identify verified competitors:
+- Return empty competitors list
+- Explain why in research_summary (e.g., "niche product", "insufficient details", etc.)
+
+CRITICAL: You MUST return results in this EXACT JSON format:
 {{
   "competitors": [
     {{
-      "name": "Competitor Product Name",
-      "url": "https://www.example.com",
-      "summary": "2-3 sentences explaining what this competitor does and how it competes",
+      "name": "Real Competitor Name",
+      "url": "https://www.realcompany.com",
+      "summary": "2-3 sentences explaining what this competitor does",
       "relevance_score": 0.9
     }}
   ],
-  "research_summary": "2-3 sentences describing the overall competitive landscape"
+  "research_summary": "Brief summary of competitive landscape OR explanation if no competitors found"
 }}
 
-REQUIRED FIELDS (all must be included):
-- name: The competitor's product/company name
-- url: Full website URL (must start with http:// or https://)
+REQUIRED FIELDS:
+- name: The competitor's product/company name (MUST BE REAL)
+- url: Full website URL (MUST BE REAL, not invented)
 - summary: 2-3 sentence description
 - relevance_score: Number between 0.0 and 1.0
 """
