@@ -25,6 +25,7 @@ export default function SessionWorkflowPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [currentStage, setCurrentStage] = useState(2); // Start at Stage 2
+  const [stage2State, setStage2State] = useState(null); // Stage 2 state cache for back navigation
 
   useEffect(() => {
     // Only initialize once - prevent double-init in React StrictMode
@@ -63,16 +64,44 @@ export default function SessionWorkflowPage() {
         setCurrentStage(2);
         setLoading(false); // Transition to stage UI
       } else {
+        // Fetch previous sessions to check for ones with competitors
+        let previousSessionId = null;
+        try {
+          const sessionsResponse = await api.get(`/competitor-intelligence/sessions/products/${productId}/sessions`);
+          const sessions = sessionsResponse.data || [];
+          console.log('[SessionWorkflow] Previous sessions:', sessions);
+
+          // Find the most recent session with selected competitors
+          for (const session of sessions) {
+            if (session.competitors_count > 0) {
+              previousSessionId = session.id;
+              console.log('[SessionWorkflow] Found previous session with competitors:', previousSessionId, 'count:', session.competitors_count);
+              break;
+            }
+          }
+
+          if (!previousSessionId) {
+            console.log('[SessionWorkflow] No previous session with competitors found');
+          }
+        } catch (err) {
+          console.error('Failed to fetch previous sessions:', err);
+          // Continue anyway - we'll just do fresh discovery
+        }
+
         // Create new session
         const createResponse = await api.post('/competitor-intelligence/sessions', {
           product_id: parseInt(productId),
           session_name: `${productResponse.data.product_name} - Session ${new Date().toLocaleDateString()}`,
           product_source_type: productResponse.data.product_source_type || 'text',
           product_source_data: productResponse.data.product_source_data || null,
-          enable_comparison: searchParams.get('compare') === 'true'
+          enable_comparison: searchParams.get('compare') === 'true',
+          previous_session_id: previousSessionId  // Pass to Stage2 for competitor reuse check
         });
 
-        setSession(createResponse.data);
+        setSession({
+          ...createResponse.data,
+          _previousSessionId: previousSessionId  // Store for Stage2 to use
+        });
         setCurrentStage(2);
         setLoading(false); // Transition to stage UI immediately
 
@@ -206,6 +235,9 @@ export default function SessionWorkflowPage() {
               hasPreviousAnalysis={session.analysis_type === 'differential'}
               onComplete={handleStage2Complete}
               onBack={handleBack}
+              savedState={stage2State}
+              onStateChange={setStage2State}
+              previousSessionId={session._previousSessionId}
             />
           )}
 

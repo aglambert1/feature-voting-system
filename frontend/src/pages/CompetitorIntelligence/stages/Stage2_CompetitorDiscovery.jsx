@@ -17,23 +17,78 @@ const Stage2_CompetitorDiscovery = ({
   hasPreviousAnalysis,
   onComplete,
   onBack,
+  savedState,
+  onStateChange,
+  previousSessionId,
 }) => {
-  const [mode, setMode] = useState('loading');
-  const [competitors, setCompetitors] = useState([]);
-  const [changeSummary, setChangeSummary] = useState(null);
-  const [researchSummary, setResearchSummary] = useState('');
+  const [mode, setMode] = useState(savedState?.mode || 'loading');
+  const [competitors, setCompetitors] = useState(savedState?.competitors || []);
+  const [changeSummary, setChangeSummary] = useState(savedState?.changeSummary || null);
+  const [researchSummary, setResearchSummary] = useState(savedState?.researchSummary || '');
   const [error, setError] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [discoveryInitiated, setDiscoveryInitiated] = useState(false);
+  const [discoveryInitiated, setDiscoveryInitiated] = useState(!!savedState);
+  const [existingCompetitors, setExistingCompetitors] = useState([]);
+
+  // Persist state changes to parent
+  useEffect(() => {
+    if (onStateChange) {
+      onStateChange({
+        mode,
+        competitors,
+        changeSummary,
+        researchSummary
+      });
+    }
+  }, [mode, competitors, changeSummary, researchSummary, onStateChange]);
 
   useEffect(() => {
-    // Only discover once - prevent double discovery in React StrictMode
-    if (!discoveryInitiated) {
+    // Only fetch if we don't have saved state
+    if (!savedState && !discoveryInitiated) {
       setDiscoveryInitiated(true);
+      checkExistingCompetitors();
+    }
+  }, [savedState, discoveryInitiated]);
+
+  const checkExistingCompetitors = async () => {
+    // Check if there's a previous session with competitors to reuse
+    console.log('[Stage2] Checking existing competitors. previousSessionId:', previousSessionId);
+
+    if (!previousSessionId) {
+      // No previous session - proceed with discovery
+      console.log('[Stage2] No previousSessionId, starting discovery');
+      discoverCompetitors();
+      return;
+    }
+
+    try {
+      // Fetch competitors from previous session
+      console.log('[Stage2] Fetching competitors from previous session:', previousSessionId);
+      const response = await api.get(
+        `/competitor-intelligence/sessions/${previousSessionId}/competitors`
+      );
+
+      const existingComps = response.data.competitors || [];
+      const selectedComps = existingComps.filter(c => c.selected);
+      console.log('[Stage2] Found', existingComps.length, 'competitors,', selectedComps.length, 'selected');
+
+      if (selectedComps.length > 0) {
+        // Show choice UI with competitors from previous session
+        console.log('[Stage2] Showing choice UI with existing competitors');
+        setExistingCompetitors(existingComps);
+        setMode('choice');
+      } else {
+        // No selected competitors in previous session - auto-discover
+        console.log('[Stage2] No selected competitors, starting discovery');
+        discoverCompetitors();
+      }
+    } catch (err) {
+      // If fetching fails, fall back to discovery
+      console.error('[Stage2] Failed to check existing competitors:', err);
       discoverCompetitors();
     }
-  }, [discoveryInitiated]);
+  };
 
   const discoverCompetitors = async () => {
     try {
@@ -57,6 +112,15 @@ const Stage2_CompetitorDiscovery = ({
       setError(err.response?.data?.detail || 'Failed to discover competitors');
       setMode('error');
     }
+  };
+
+  const handleUseExisting = () => {
+    setCompetitors(existingCompetitors);
+    setMode('reviewing');
+  };
+
+  const handleRediscover = () => {
+    discoverCompetitors();
   };
 
   const toggleCompetitor = (competitorId) => {
@@ -167,6 +231,117 @@ const Stage2_CompetitorDiscovery = ({
     );
   }
 
+  if (mode === 'choice') {
+    const selectedCount = existingCompetitors.filter(c => c.selected).length;
+    const previewCompetitors = existingCompetitors.filter(c => c.selected).slice(0, 3);
+
+    return (
+      <div>
+        <h2 className="text-2xl font-bold mb-4">Competitor Discovery</h2>
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-start">
+            <svg className="w-6 h-6 text-blue-600 mr-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+            </svg>
+            <div className="text-sm text-blue-800">
+              <strong>Existing Competitors Found:</strong> You have {selectedCount} competitor{selectedCount !== 1 ? 's' : ''} from a previous analysis session.
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4 mb-6">
+          {/* Use Existing Option */}
+          <div className="border-2 border-gray-200 rounded-lg p-6 hover:border-blue-300 transition-colors">
+            <div className="flex items-start justify-between mb-3">
+              <div className="flex items-center">
+                <svg className="w-6 h-6 text-blue-600 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Use Existing Competitors ({selectedCount})
+                </h3>
+              </div>
+            </div>
+            <p className="text-gray-600 mb-4">
+              Continue with your previously selected competitors without running a new discovery.
+            </p>
+
+            {/* Preview */}
+            {previewCompetitors.length > 0 && (
+              <div className="mb-4 space-y-2">
+                {previewCompetitors.map(comp => (
+                  <div key={comp.id} className="flex items-center text-sm">
+                    <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                    <span className="font-medium">{comp.name}</span>
+                    {comp.status_change && (
+                      <span className="ml-2 text-xs text-gray-500">({comp.status_change})</span>
+                    )}
+                  </div>
+                ))}
+                {selectedCount > 3 && (
+                  <div className="text-sm text-gray-500 ml-4">
+                    ... and {selectedCount - 3} more
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button
+              onClick={handleUseExisting}
+              className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+            >
+              Continue with Existing →
+            </button>
+          </div>
+
+          {/* Discover New Option */}
+          <div className="border-2 border-gray-200 rounded-lg p-6 hover:border-blue-300 transition-colors">
+            <div className="flex items-start justify-between mb-3">
+              <div className="flex items-center">
+                <svg className="w-6 h-6 text-blue-600 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Discover New Competitors
+                </h3>
+              </div>
+            </div>
+            <p className="text-gray-600 mb-4">
+              Run AI-powered discovery to find competitors in the current competitive landscape.
+              {hasPreviousAnalysis && (
+                <span className="block mt-1 text-sm">
+                  Will perform differential analysis to identify NEW/CONTINUING/DISAPPEARED competitors.
+                </span>
+              )}
+            </p>
+            <div className="mb-4 flex items-center text-sm text-gray-500">
+              <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Takes 30-60 seconds
+            </div>
+
+            <button
+              onClick={handleRediscover}
+              className="w-full px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 font-medium"
+            >
+              Run New Discovery
+            </button>
+          </div>
+        </div>
+
+        <div className="flex justify-start">
+          <button
+            onClick={onBack}
+            className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+          >
+            ← Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const selectedCount = competitors.filter((c) => c.selected).length;
 
   return (
@@ -203,12 +378,18 @@ const Stage2_CompetitorDiscovery = ({
         </div>
       )}
 
-      <div className="mb-6">
+      <div className="mb-6 flex gap-3">
         <button
           onClick={() => setShowAddModal(true)}
           className="px-4 py-2 border border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50"
         >
           + Add Custom Competitor
+        </button>
+        <button
+          onClick={discoverCompetitors}
+          className="px-4 py-2 border border-gray-600 text-gray-600 rounded-lg hover:bg-gray-50"
+        >
+          🔄 Re-discover Competitors
         </button>
       </div>
 
@@ -280,6 +461,9 @@ Stage2_CompetitorDiscovery.propTypes = {
   hasPreviousAnalysis: PropTypes.bool.isRequired,
   onComplete: PropTypes.func.isRequired,
   onBack: PropTypes.func.isRequired,
+  savedState: PropTypes.object,
+  onStateChange: PropTypes.func,
+  previousSessionId: PropTypes.number,
 };
 
 export default Stage2_CompetitorDiscovery;

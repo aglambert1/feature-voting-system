@@ -188,7 +188,8 @@ def list_product_sessions(
                 "analysis_type": s.analysis_type,
                 "status": s.status,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
-                "completed_at": s.completed_at.isoformat() if s.completed_at else None
+                "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+                "competitors_count": len([c for c in s.session_competitors if c.selected])
             }
             for s in sessions
         ]
