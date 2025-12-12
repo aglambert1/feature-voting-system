@@ -14,8 +14,8 @@ from app.agents.base_agent import BaseAgent
 class CompetitorResult(BaseModel):
     """Single competitor discovery result"""
     name: str = Field(..., description="Competitor product name", validation_alias="product_name")
-    url: HttpUrl = Field(..., description="Primary website URL", validation_alias="website")
-    summary: str = Field(..., description="2-3 sentence summary of what they do")
+    url: HttpUrl = Field(default="https://example.com", description="Primary website URL", validation_alias="website")
+    summary: str = Field(default="Competitive product", description="2-3 sentence summary of what they do")
     relevance_score: float = Field(
         ...,
         ge=0.0,
