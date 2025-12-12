@@ -24,10 +24,14 @@ export default function SessionWorkflowPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [currentStage, setCurrentStage] = useState(2); // Start at Stage 2
+  const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
-    initializeSession();
-  }, [productId, sessionId]);
+    // Only initialize once - prevent double-init when navigate() changes sessionId
+    if (!initialized) {
+      initializeSession();
+    }
+  }, [productId, sessionId, initialized]);
 
   const initializeSession = async () => {
     try {
@@ -53,6 +57,7 @@ export default function SessionWorkflowPage() {
         // (For now, default to stage 2)
         setCurrentStage(2);
         setLoading(false); // Transition to stage UI
+        setInitialized(true); // Mark as initialized
       } else {
         // Create new session
         const createResponse = await api.post('/competitor-intelligence/sessions', {
@@ -66,6 +71,7 @@ export default function SessionWorkflowPage() {
         setSession(createResponse.data);
         setCurrentStage(2);
         setLoading(false); // Transition to stage UI immediately
+        setInitialized(true); // Mark as initialized
 
         // Update URL to include session ID
         navigate(
@@ -77,6 +83,7 @@ export default function SessionWorkflowPage() {
       console.error('Session initialization error:', err);
       setError(err.response?.data?.detail || 'Failed to initialize session');
       setLoading(false); // Stop loading on error
+      setInitialized(true); // Mark as initialized even on error
     }
   };
 
