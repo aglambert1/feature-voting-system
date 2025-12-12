@@ -193,6 +193,9 @@ class BaseAgent(ABC):
                     continue
 
             except json.JSONDecodeError as e:
+                # Log the raw response content for debugging
+                raw_content = response.get('content', '') if 'response' in locals() else 'No response'
+                print(f"[BaseAgent] JSON decode error. Raw content (first 500 chars): {raw_content[:500]}")
                 last_error = f"Invalid JSON response: {str(e)}"
                 if attempt < max_retries - 1:
                     continue

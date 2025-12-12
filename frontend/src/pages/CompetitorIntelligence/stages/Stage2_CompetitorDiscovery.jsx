@@ -25,10 +25,15 @@ const Stage2_CompetitorDiscovery = ({
   const [error, setError] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [discoveryInitiated, setDiscoveryInitiated] = useState(false);
 
   useEffect(() => {
-    discoverCompetitors();
-  }, []);
+    // Only discover once - prevent double discovery in React StrictMode
+    if (!discoveryInitiated) {
+      setDiscoveryInitiated(true);
+      discoverCompetitors();
+    }
+  }, [discoveryInitiated]);
 
   const discoverCompetitors = async () => {
     try {
