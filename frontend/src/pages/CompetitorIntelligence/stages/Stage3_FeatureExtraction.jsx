@@ -103,8 +103,11 @@ const Stage3_FeatureExtraction = ({
         <h3 className="text-lg font-medium text-gray-900 mb-2">
           Extracting Features...
         </h3>
-        <p className="text-gray-600">
+        <p className="text-gray-600 mb-2">
           AI is analyzing competitors and extracting features
+        </p>
+        <p className="text-sm text-gray-500">
+          ⏱️ This typically takes 1-3 minutes depending on number of competitors
         </p>
       </div>
     );

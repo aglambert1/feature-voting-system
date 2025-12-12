@@ -120,8 +120,11 @@ const Stage2_CompetitorDiscovery = ({
         <h3 className="text-lg font-medium text-gray-900 mb-2">
           Discovering Competitors...
         </h3>
-        <p className="text-gray-600">
+        <p className="text-gray-600 mb-2">
           AI is researching the competitive landscape
+        </p>
+        <p className="text-sm text-gray-500">
+          ⏱️ This typically takes 30-60 seconds
         </p>
       </div>
     );

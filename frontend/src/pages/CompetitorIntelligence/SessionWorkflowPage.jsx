@@ -103,7 +103,8 @@ export default function SessionWorkflowPage() {
         <Navigation />
         <div className="flex flex-col justify-center items-center h-64">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
-          <p className="text-gray-600">Initializing session...</p>
+          <p className="text-gray-600 font-medium">Creating analysis session...</p>
+          <p className="text-sm text-gray-500 mt-2">This should only take a moment</p>
         </div>
       </div>
     );
