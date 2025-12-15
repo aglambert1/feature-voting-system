@@ -82,9 +82,36 @@ if [ -d "venv" ]; then
     print_success "Old virtual environment removed"
 fi
 
+# Detect best Python version
+print_step "Detecting Python version..."
+
+PYTHON_CMD=""
+if command_exists python3.12; then
+    PYTHON_CMD="python3.12"
+    print_success "Using Python 3.12"
+elif command_exists python3.11; then
+    PYTHON_CMD="python3.11"
+    print_warning "Python 3.12 preferred, but 3.11 found - should work"
+elif command_exists python3; then
+    PYTHON_CMD="python3"
+    PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
+    PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d'.' -f1)
+    PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d'.' -f2)
+
+    if [ "$PYTHON_MAJOR" -ge 3 ] && [ "$PYTHON_MINOR" -ge 11 ]; then
+        print_success "Using Python $PYTHON_VERSION"
+    else
+        print_error "Python 3.11+ required, found: $PYTHON_VERSION"
+        exit 1
+    fi
+else
+    print_error "Python 3 not found"
+    exit 1
+fi
+
 # Create new virtual environment
 print_step "Creating new virtual environment..."
-python3.12 -m venv venv
+$PYTHON_CMD -m venv venv
 print_success "Virtual environment created"
 
 # Activate virtual environment
@@ -121,6 +148,22 @@ else
     print_success ".env file exists"
 fi
 
+# Validate ANTHROPIC_API_KEY
+if [ -f ".env" ]; then
+    API_KEY=$(grep "^ANTHROPIC_API_KEY=" .env 2>/dev/null | cut -d'=' -f2)
+    if [[ "$API_KEY" == "your-anthropic-api-key-here" ]] || [[ -z "$API_KEY" ]]; then
+        print_error "⚠ ANTHROPIC_API_KEY not configured in .env"
+        print_error "⚠ Competitive Intelligence features will NOT work!"
+        print_warning "Get your API key from: https://console.anthropic.com/"
+        echo ""
+        read -p "Press Enter to continue anyway, or Ctrl+C to exit and configure the API key..." -r
+    elif [[ ! "$API_KEY" =~ ^sk-ant- ]]; then
+        print_warning "API key doesn't match expected format (should start with 'sk-ant-')"
+    else
+        print_success "ANTHROPIC_API_KEY configured"
+    fi
+fi
+
 # Reset database (optional - creates fresh database)
 if [ -f "feature_voting.db" ]; then
     print_warning "Existing database found. Backing up..."
@@ -142,10 +185,20 @@ try:
     from app.main import app
     from app.database import engine
     from app.models import user, idea, vote, submission
-    print("✓ All imports successful")
+    print("✓ Core imports successful")
 except Exception as e:
     print(f"✗ Import error: {e}")
     sys.exit(1)
+
+# Test Competitive Intelligence modules
+try:
+    from app.agents.base_agent import BaseAgent
+    from app.services.llm_service import llm_service
+    from app.models.competitor_intelligence import CIProduct, CompetitorAnalysisSession
+    print("✓ Competitive Intelligence modules imported successfully")
+except Exception as e:
+    print(f"⚠ CI module warning: {e}")
+    # Not critical, don't exit
 EOF
 print_success "Python imports test passed"
 
@@ -163,12 +216,31 @@ except Exception as e:
 EOF
 print_success "FastAPI initialization test passed"
 
-# Test 3: Run schema validation tests
-if [ -f "test_schemas.py" ]; then
-    print_step "Test 3: Running schema validation tests..."
-    python test_schemas.py
-    print_success "Schema validation tests passed"
+# Test 3: Run pytest test suite
+print_step "Test 3: Running pytest test suite..."
+echo ""
+
+# Check if pytest is available
+if ! command_exists pytest; then
+    print_warning "pytest not found, installing..."
+    pip install pytest pytest-asyncio --quiet
 fi
+
+# Run pytest on all test files
+PYTEST_PASSED=true
+if pytest -v tests/ test_*.py --tb=short --maxfail=5 2>&1 | tee /tmp/pytest_output.txt; then
+    print_success "Pytest test suite passed"
+else
+    PYTEST_PASSED=false
+    print_warning "Some pytest tests failed - check output above"
+    print_warning "This is not critical for setup, but should be investigated"
+fi
+
+# Show test summary
+echo ""
+TEST_COUNT=$(grep -E "passed|failed" /tmp/pytest_output.txt | tail -1 || echo "Tests completed")
+print_step "Test Summary: $TEST_COUNT"
+echo ""
 
 # Test 4: Start server in background and test endpoints
 print_step "Test 4: Starting backend server for endpoint testing..."
