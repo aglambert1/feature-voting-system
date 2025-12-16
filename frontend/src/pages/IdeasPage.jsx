@@ -24,7 +24,7 @@ const IdeasPage = () => {
 
   // State
   const [ideas, setIdeas] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);  // Don't show loading until product selected
   const [error, setError] = useState('');
   const [products, setProducts] = useState([]);
   const [selectedProductId, setSelectedProductId] = useState(null);
@@ -116,13 +116,23 @@ const IdeasPage = () => {
             </p>
           </div>
 
-          {/* Submit Button */}
-          <Link
-            to="/submit"
-            className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-3 rounded-lg shadow-sm transition-colors"
-          >
-            Submit New Idea
-          </Link>
+          {/* Submit Button - disabled if no products */}
+          {!loadingProducts && hasProducts ? (
+            <Link
+              to="/submit"
+              className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-3 rounded-lg shadow-sm transition-colors"
+            >
+              Submit New Idea
+            </Link>
+          ) : (
+            <button
+              disabled
+              className="bg-gray-300 text-gray-500 font-medium px-6 py-3 rounded-lg shadow-sm cursor-not-allowed"
+              title="Create a product first to submit ideas"
+            >
+              Submit New Idea
+            </button>
+          )}
         </div>
 
         {/* Empty State - No Products */}
