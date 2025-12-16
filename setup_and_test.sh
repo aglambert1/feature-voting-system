@@ -292,6 +292,74 @@ else
     print_error "Ideas endpoint (/ideas) - Status: $HTTP_STATUS"
 fi
 
+# Test product-centric workflow (product creation → idea creation)
+print_step "Testing product-centric idea workflow..."
+
+# Login as admin to get token
+print_step "Authenticating as admin..."
+LOGIN_RESPONSE=$(curl -s -X POST http://127.0.0.1:8000/auth/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=${ADMIN_USERNAME}&password=${ADMIN_PASSWORD}")
+
+ACCESS_TOKEN=$(echo "$LOGIN_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('access_token', ''))" 2>/dev/null)
+
+if [ -n "$ACCESS_TOKEN" ]; then
+  print_success "Admin login successful"
+
+  # Test product creation
+  print_step "Creating test product..."
+  PRODUCT_RESPONSE=$(curl -s -X POST http://127.0.0.1:8000/product-intelligence/products \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "product_name": "Test Product",
+      "product_description": "A test product for setup validation",
+      "product_url": "https://example.com"
+    }')
+
+  PRODUCT_ID=$(echo "$PRODUCT_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', ''))" 2>/dev/null)
+
+  if [ -n "$PRODUCT_ID" ]; then
+    print_success "Product created successfully (ID: $PRODUCT_ID)"
+
+    # Test idea creation with product_id
+    print_step "Creating test idea with product_id..."
+    IDEA_RESPONSE=$(curl -s -X POST http://127.0.0.1:8000/ideas/ \
+      -H "Authorization: Bearer $ACCESS_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"title\": \"Test Idea\",
+        \"what_description\": \"A test idea for validation\",
+        \"why_description\": \"To ensure product-centric ideas work\",
+        \"use_case_description\": \"During automated testing\",
+        \"product_id\": $PRODUCT_ID
+      }")
+
+    IDEA_ID=$(echo "$IDEA_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', ''))" 2>/dev/null)
+
+    if [ -n "$IDEA_ID" ]; then
+      print_success "Idea created successfully with product_id (ID: $IDEA_ID)"
+
+      # Test filtering ideas by product
+      print_step "Testing idea filtering by product_id..."
+      FILTER_RESPONSE=$(curl -s http://127.0.0.1:8000/ideas/?product_id=$PRODUCT_ID)
+      FILTERED_COUNT=$(echo "$FILTER_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('total', 0))" 2>/dev/null)
+
+      if [ "$FILTERED_COUNT" -gt 0 ]; then
+        print_success "Product filtering works (found $FILTERED_COUNT idea(s) for product $PRODUCT_ID)"
+      else
+        print_warning "Product filtering may have issues"
+      fi
+    else
+      print_warning "Idea creation with product_id may have issues"
+    fi
+  else
+    print_warning "Product creation may have issues"
+  fi
+else
+  print_warning "Could not obtain admin token, skipping product-centric tests"
+fi
+
 print_success "All API endpoint tests passed"
 
 # Stop backend server
@@ -397,5 +465,21 @@ echo ""
 echo -e "${YELLOW}Backend will run at:${NC} http://localhost:8000"
 echo -e "${YELLOW}Frontend will run at:${NC} http://localhost:5173"
 echo -e "${YELLOW}API docs available at:${NC} http://localhost:8000/docs"
+echo ""
+
+################################################################################
+# DATABASE CLEANUP
+################################################################################
+
+# Clean up test database to leave system in fresh state
+print_step "Cleaning up test database..."
+cd "${BACKEND_DIR}"
+if [ -f "feature_voting.db" ]; then
+    rm -f feature_voting.db
+    print_success "Test database removed - system ready for fresh start"
+else
+    print_step "No test database found (already clean)"
+fi
+
 echo ""
 echo -e "${GREEN}Happy coding! 🚀${NC}"
