@@ -16,7 +16,9 @@ from app.database import get_db
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.vote import Vote
 from app.models.user import User
+from app.models.competitor_intelligence import CIProduct, ProductPermissionLevel
 from app.schemas.idea import IdeaCreate, IdeaResponse, IdeaListItem, IdeaListResponse, VoteCount
+from app.services.permission_service import PermissionService
 from app.utils.security import get_current_active_user, get_current_user
 
 
@@ -135,32 +137,72 @@ def create_idea(
 def list_ideas(
     skip: int = 0,
     limit: int = 100,
+    product_id: Optional[int] = None,
+    current_user: Optional[User] = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    List all active ideas with vote counts.
+    List all active ideas with vote counts, optionally filtered by product.
 
-    This is a public endpoint (no authentication required).
+    Requires authentication to enforce product permissions.
     Ideas are sorted by score (highest first).
 
     Args:
         skip: Number of items to skip (pagination)
         limit: Maximum number of items to return
+        product_id: Optional product ID to filter by
+        current_user: Current authenticated user (optional for backward compatibility)
         db: Database session
 
     Returns:
         List of ideas with vote counts
-    """
-    # Get all active ideas
-    ideas = db.query(Idea).filter(
-        Idea.status == IdeaStatus.ACTIVE
-    ).all()
 
-    # Build list items with vote counts
+    Raises:
+        403 Forbidden: If user lacks VIEW permission on specified product
+        404 Not Found: If product doesn't exist
+    """
+    # Build base query for active ideas
+    query = db.query(Idea).filter(Idea.status == IdeaStatus.ACTIVE)
+
+    # Filter by product if specified
+    if product_id is not None:
+        # Validate product exists
+        product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product with id {product_id} not found"
+            )
+
+        # Check user has VIEW permission on product
+        if current_user:
+            permission_service = PermissionService(db)
+            if not permission_service.can_access_product(
+                user_id=current_user.id,
+                product_id=product_id,
+                required_level=ProductPermissionLevel.VIEW
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have permission to view ideas for this product"
+                )
+
+        query = query.filter(Idea.product_id == product_id)
+
+    ideas = query.all()
+
+    # Build list items with vote counts and product info
     idea_items = []
     for idea in ideas:
         vote_counts = get_vote_counts(db, idea.id)
         user_vote = None  # TODO: Add optional auth to show user's votes
+
+        # Get product name
+        product_name = None
+        if idea.product_id:
+            product = db.query(CIProduct).filter(CIProduct.id == idea.product_id).first()
+            if product:
+                product_name = product.product_name
 
         idea_items.append(IdeaListItem(
             id=idea.id,
@@ -170,6 +212,8 @@ def list_ideas(
             use_case_description=idea.use_case_description,
             category=idea.category,
             created_at=idea.created_at,
+            product_id=idea.product_id,
+            product_name=product_name,
             vote_counts=vote_counts,
             user_vote=user_vote
         ))

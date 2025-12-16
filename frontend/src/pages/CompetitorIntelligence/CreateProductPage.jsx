@@ -78,12 +78,12 @@ export default function CreateProductPage() {
 
       console.log('[CreateProduct] Sending to API:', formData);
       // Create product (Stage 0)
-      const response = await api.post('/competitor-intelligence/products', formData);
+      const response = await api.post('/product-intelligence/products', formData);
       console.log('[CreateProduct] API response:', response.data);
       const productId = response.data.id;
 
       // Navigate to analyze page
-      navigate(`/competitor-intelligence/products/${productId}/analyze`);
+      navigate(`/product-intelligence/products/${productId}/analyze`);
     } catch (err) {
       setError(err.message || err.data?.detail || 'Failed to create product');
     } finally {
@@ -92,7 +92,7 @@ export default function CreateProductPage() {
   };
 
   const handleCancel = () => {
-    navigate('/competitor-intelligence');
+    navigate('/product-intelligence');
   };
 
   return (

@@ -62,7 +62,7 @@ export default function AnalyzeProductPage() {
   const fetchProduct = async () => {
     try {
       setLoading(true);
-      const response = await api.get(`/competitor-intelligence/products/${productId}`);
+      const response = await api.get(`/product-intelligence/products/${productId}`);
       setProduct(response.data);
     } catch (err) {
       setError(err.message || err.data?.detail || 'Failed to load product');
@@ -92,7 +92,7 @@ export default function AnalyzeProductPage() {
 
       // Analyze product (Stage 1) with updated description
       const response = await api.post(
-        `/competitor-intelligence/products/${productId}/analyze`,
+        `/product-intelligence/products/${productId}/analyze`,
         payload
       );
 
@@ -126,11 +126,11 @@ export default function AnalyzeProductPage() {
   };
 
   const handleContinue = () => {
-    navigate(`/competitor-intelligence/products/${productId}`);
+    navigate(`/product-intelligence/products/${productId}`);
   };
 
   const handleSkip = () => {
-    navigate(`/competitor-intelligence/products/${productId}`);
+    navigate(`/product-intelligence/products/${productId}`);
   };
 
   if (loading) {
@@ -164,7 +164,7 @@ export default function AnalyzeProductPage() {
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6">
           <button
-            onClick={() => navigate(`/competitor-intelligence/products/${productId}`)}
+            onClick={() => navigate(`/product-intelligence/products/${productId}`)}
             className="text-blue-600 hover:text-blue-800 mb-4 font-medium"
           >
             ← Back to Product

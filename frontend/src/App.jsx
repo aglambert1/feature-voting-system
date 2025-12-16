@@ -72,9 +72,9 @@ function App() {
             }
           />
 
-          {/* Competitor Intelligence routes */}
+          {/* Product Intelligence routes */}
           <Route
-            path="/competitor-intelligence"
+            path="/product-intelligence"
             element={
               <ProtectedRoute>
                 <ProductListPage />
@@ -82,7 +82,7 @@ function App() {
             }
           />
           <Route
-            path="/competitor-intelligence/products/create"
+            path="/product-intelligence/products/create"
             element={
               <ProtectedRoute>
                 <CreateProductPage />
@@ -90,7 +90,7 @@ function App() {
             }
           />
           <Route
-            path="/competitor-intelligence/products/:productId"
+            path="/product-intelligence/products/:productId"
             element={
               <ProtectedRoute>
                 <ProductDetailPage />
@@ -98,7 +98,7 @@ function App() {
             }
           />
           <Route
-            path="/competitor-intelligence/products/:productId/analyze"
+            path="/product-intelligence/products/:productId/analyze"
             element={
               <ProtectedRoute>
                 <AnalyzeProductPage />
@@ -106,7 +106,7 @@ function App() {
             }
           />
           <Route
-            path="/competitor-intelligence/products/:productId/sessions/:sessionId"
+            path="/product-intelligence/products/:productId/sessions/:sessionId"
             element={
               <ProtectedRoute>
                 <SessionWorkflowPage />
@@ -114,7 +114,7 @@ function App() {
             }
           />
           <Route
-            path="/competitor-intelligence/products/:productId/sessions"
+            path="/product-intelligence/products/:productId/sessions"
             element={
               <ProtectedRoute>
                 <SessionWorkflowPage />

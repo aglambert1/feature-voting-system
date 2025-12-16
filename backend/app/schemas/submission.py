@@ -53,6 +53,7 @@ class SubmissionCreate(BaseModel):
     why_description: str = Field(..., min_length=10)
     use_case_description: str = Field(..., min_length=10)
     category: Optional[str] = Field(None, max_length=100)
+    product_id: int = Field(..., description="Product ID (required)")
 
     # AI-generated version (before user edits)
     ai_structured_version: Optional[dict] = Field(

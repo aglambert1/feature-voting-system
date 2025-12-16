@@ -71,6 +71,18 @@ const IdeaCard = ({ idea, onVoteUpdate }) => {
               {idea.title}
             </h3>
 
+            {/* Product Badge */}
+            {idea.product_name && (
+              <div className="mb-3">
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                  <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
+                  </svg>
+                  {idea.product_name}
+                </span>
+              </div>
+            )}
+
             {/* What Description - truncated or full */}
             <div className="mb-3">
               <p className="text-gray-700">

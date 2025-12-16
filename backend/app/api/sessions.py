@@ -26,8 +26,8 @@ from app.models.user import User
 
 
 router = APIRouter(
-    prefix="/competitor-intelligence/sessions",
-    tags=["Competitor Intelligence - Sessions"]
+    prefix="/product-intelligence/sessions",
+    tags=["Product Intelligence - Sessions"]
 )
 
 

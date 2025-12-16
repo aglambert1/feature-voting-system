@@ -61,6 +61,7 @@ class Idea(Base):
     # Source tracking
     source_type = Column(Enum(SourceType), nullable=False, default=SourceType.MANUAL)
     submitter_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Null for competitor ideas
+    product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
 
     # Categorization
     category = Column(String(100), nullable=True)
@@ -76,6 +77,7 @@ class Idea(Base):
     submitter = relationship("User", back_populates="ideas")
     votes = relationship("Vote", back_populates="idea", cascade="all, delete-orphan")
     submission = relationship("Submission", back_populates="idea", uselist=False, cascade="all, delete-orphan")
+    product = relationship("CIProduct", backref="ideas")
 
     def __repr__(self):
         return f"<Idea(id={self.id}, title='{self.title}', source='{self.source_type}')>"

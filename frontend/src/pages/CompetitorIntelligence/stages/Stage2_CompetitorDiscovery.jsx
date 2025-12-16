@@ -59,7 +59,7 @@ const Stage2_CompetitorDiscovery = ({
     try {
       // Try to fetch competitors from the current session first
       const currentSessionResponse = await api.get(
-        `/competitor-intelligence/sessions/${sessionId}/competitors`
+        `/product-intelligence/sessions/${sessionId}/competitors`
       );
 
       const currentComps = currentSessionResponse.data.competitors || [];
@@ -98,7 +98,7 @@ const Stage2_CompetitorDiscovery = ({
       console.log('[Stage2] Copying competitors from previous session:', previousSessionId, 'to current session:', sessionId);
 
       const copyResponse = await api.post(
-        `/competitor-intelligence/sessions/${sessionId}/copy-competitors/${previousSessionId}`
+        `/product-intelligence/sessions/${sessionId}/copy-competitors/${previousSessionId}`
       );
 
       console.log('[Stage2] Copy result:', copyResponse.data);
@@ -108,7 +108,7 @@ const Stage2_CompetitorDiscovery = ({
         // Competitors were copied (or already existed), fetch and display them
         console.log('[Stage2] Fetching copied competitors from current session');
         const currentSessionResponse = await api.get(
-          `/competitor-intelligence/sessions/${sessionId}/competitors`
+          `/product-intelligence/sessions/${sessionId}/competitors`
         );
 
         const copiedComps = currentSessionResponse.data.competitors || [];
@@ -143,7 +143,7 @@ const Stage2_CompetitorDiscovery = ({
     try {
       setMode('loading');
       const response = await api.post(
-        `/competitor-intelligence/sessions/${sessionId}/discover-competitors`
+        `/product-intelligence/sessions/${sessionId}/discover-competitors`
       );
 
       // Sort competitors by relevance score (highest first)
@@ -224,7 +224,7 @@ const Stage2_CompetitorDiscovery = ({
 
     try {
       await api.post(
-        `/competitor-intelligence/sessions/${sessionId}/confirm-competitors`,
+        `/product-intelligence/sessions/${sessionId}/confirm-competitors`,
         {
           selected_ids: selectedIds,
           custom_competitors: customCompetitors.length > 0 ? customCompetitors : null,

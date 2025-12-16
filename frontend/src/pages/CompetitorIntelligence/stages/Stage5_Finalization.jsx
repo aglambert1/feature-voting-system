@@ -33,7 +33,7 @@ const Stage5_Finalization = ({
     setLoading(true);
     try {
       const response = await api.get(
-        `/competitor-intelligence/sessions/${sessionId}/generated-ideas`
+        `/product-intelligence/sessions/${sessionId}/generated-ideas`
       );
       const allIdeas = response.data.ideas || [];
       const approved = allIdeas.filter((idea) => idea.user_approved);
@@ -51,7 +51,7 @@ const Stage5_Finalization = ({
     setError(null);
     try {
       const response = await api.post(
-        `/competitor-intelligence/sessions/${sessionId}/finalize`
+        `/product-intelligence/sessions/${sessionId}/finalize`
       );
 
       if (response.data.status === 'success') {
@@ -99,7 +99,7 @@ const Stage5_Finalization = ({
               View Ideas in Voting System
             </button>
             <button
-              onClick={() => navigate('/competitor-intelligence')}
+              onClick={() => navigate('/product-intelligence')}
               className="bg-gray-200 text-gray-700 px-6 py-3 rounded-lg hover:bg-gray-300"
             >
               Start New Analysis

@@ -23,7 +23,7 @@ export default function ProductListPage() {
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const response = await api.get('/competitor-intelligence/products');
+      const response = await api.get('/product-intelligence/products');
       setProducts(response.data);
     } catch (err) {
       setError(err.message || err.data?.detail || 'Failed to load products');
@@ -33,11 +33,11 @@ export default function ProductListPage() {
   };
 
   const handleNewProduct = () => {
-    navigate('/competitor-intelligence/products/create');
+    navigate('/product-intelligence/products/create');
   };
 
   const handleViewProduct = (productId) => {
-    navigate(`/competitor-intelligence/products/${productId}`);
+    navigate(`/product-intelligence/products/${productId}`);
   };
 
   if (loading) {
@@ -58,7 +58,7 @@ export default function ProductListPage() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900">
-            Competitor Intelligence
+            Product Intelligence
           </h1>
           <button
             onClick={handleNewProduct}

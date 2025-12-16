@@ -22,6 +22,7 @@ class IdeaCreate(BaseModel):
     why_description: str = Field(..., min_length=10, description="Why is it valuable?")
     use_case_description: str = Field(..., min_length=10, description="How would it be used?")
     category: Optional[str] = Field(None, max_length=100, description="Optional category")
+    product_id: int = Field(..., description="Product ID (required)")
 
 
 class VoteCount(BaseModel):
@@ -52,6 +53,8 @@ class IdeaResponse(BaseModel):
     status: IdeaStatus
     created_at: datetime
     updated_at: datetime
+    product_id: int
+    product_name: Optional[str] = None
 
     # Vote counts (aggregated)
     vote_counts: VoteCount
@@ -76,6 +79,8 @@ class IdeaListItem(BaseModel):
     use_case_description: Optional[str] = None
     category: Optional[str]
     created_at: datetime
+    product_id: int
+    product_name: Optional[str] = None
 
     # Vote counts
     vote_counts: VoteCount
