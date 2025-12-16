@@ -57,7 +57,7 @@ const Stage3_FeatureExtraction = ({
     try {
       // Check which selected competitors have extractable features
       const response = await api.get(
-        `/competitor-intelligence/sessions/${sessionId}/competitors/feature-availability`
+        `/product-intelligence/sessions/${sessionId}/competitors/feature-availability`
       );
 
       const { competitors_with_features, total_selected, with_features } = response.data;
@@ -97,12 +97,12 @@ const Stage3_FeatureExtraction = ({
 
       // Start extraction with reuse parameter
       await api.post(
-        `/competitor-intelligence/sessions/${sessionId}/extract-features?reuse_existing=${reuseExisting}`
+        `/product-intelligence/sessions/${sessionId}/extract-features?reuse_existing=${reuseExisting}`
       );
 
       // Load extracted features
       const response = await api.get(
-        `/competitor-intelligence/sessions/${sessionId}/features`
+        `/product-intelligence/sessions/${sessionId}/features`
       );
 
       setFeaturesByCompetitor(response.data.features_by_competitor || []);
@@ -148,7 +148,7 @@ const Stage3_FeatureExtraction = ({
 
     try {
       await api.post(
-        `/competitor-intelligence/sessions/${sessionId}/select-features`,
+        `/product-intelligence/sessions/${sessionId}/select-features`,
         { feature_ids: selectedIds }
       );
 

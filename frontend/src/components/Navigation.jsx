@@ -21,6 +21,12 @@ export default function Navigation() {
           {/* Main navigation links - horizontal on medium+ screens */}
           <div className="hidden md:flex items-center space-x-1 lg:space-x-2">
             <a
+              href="/product-intelligence"
+              className="text-gray-700 hover:text-blue-600 hover:bg-blue-50 px-2 lg:px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
+            >
+              Products
+            </a>
+            <a
               href="/ideas"
               className="text-gray-700 hover:text-blue-600 hover:bg-blue-50 px-2 lg:px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
             >
@@ -31,12 +37,6 @@ export default function Navigation() {
               className="text-gray-700 hover:text-blue-600 hover:bg-blue-50 px-2 lg:px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
             >
               Submit Idea
-            </a>
-            <a
-              href="/competitor-intelligence"
-              className="text-gray-700 hover:text-blue-600 hover:bg-blue-50 px-2 lg:px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
-            >
-              Competitor Intel
             </a>
             {isAdmin && (
               <a
@@ -150,6 +150,12 @@ export default function Navigation() {
 
         {/* Mobile menu - vertical layout for small/medium screens */}
         <div className="md:hidden border-t border-gray-200 pt-2 pb-3 space-y-1">
+          <a
+            href="/product-intelligence"
+            className="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+          >
+            Products
+          </a>
           <a
             href="/ideas"
             className="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors"

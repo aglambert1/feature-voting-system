@@ -36,7 +36,7 @@ const Stage4_IdeaGeneration = ({
     setLoading(true);
     try {
       const response = await api.get(
-        `/competitor-intelligence/sessions/${sessionId}/generated-ideas`
+        `/product-intelligence/sessions/${sessionId}/generated-ideas`
       );
       setIdeas(response.data.ideas || []);
     } catch (err) {
@@ -55,7 +55,7 @@ const Stage4_IdeaGeneration = ({
     setError(null);
     try {
       const response = await api.post(
-        `/competitor-intelligence/sessions/${sessionId}/generate-ideas`
+        `/product-intelligence/sessions/${sessionId}/generate-ideas`
       );
       setIdeas(response.data.ideas || []);
     } catch (err) {
@@ -83,7 +83,7 @@ const Stage4_IdeaGeneration = ({
   const saveEdit = async (ideaId) => {
     try {
       await api.put(
-        `/competitor-intelligence/sessions/generated-ideas/${ideaId}`,
+        `/product-intelligence/sessions/generated-ideas/${ideaId}`,
         editForm
       );
       await loadGeneratedIdeas();
@@ -97,7 +97,7 @@ const Stage4_IdeaGeneration = ({
   const toggleApproval = async (ideaId, currentApproval) => {
     try {
       await api.post(
-        '/competitor-intelligence/sessions/generated-ideas/approve',
+        '/product-intelligence/sessions/generated-ideas/approve',
         {
           idea_ids: [ideaId],
           approved: !currentApproval

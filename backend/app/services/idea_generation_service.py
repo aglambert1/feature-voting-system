@@ -338,6 +338,7 @@ class IdeaGenerationService:
                 why_description=generated_idea.idea_why,
                 use_case_description=generated_idea.idea_use_case,
                 category=feature.feature_category if feature else None,
+                product_id=session.product_id,  # Associate with session's product
                 source_type=SourceType.COMPETITOR,
                 submitter_id=None,  # Competitor-sourced ideas have no submitter
                 status=IdeaStatus.ACTIVE

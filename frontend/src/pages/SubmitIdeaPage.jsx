@@ -15,10 +15,11 @@
  *   - "Start Over" button
  */
 
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { structureText, submitIdea } from '../services/api';
+import api from '../services/api';
 import Navigation from '../components/Navigation';
 
 const SubmitIdeaPage = () => {
@@ -37,10 +38,43 @@ const SubmitIdeaPage = () => {
     use_case_description: '',
   });
 
+  // Product selection
+  const [products, setProducts] = useState([]);
+  const [selectedProductId, setSelectedProductId] = useState(null);
+  const [hasProducts, setHasProducts] = useState(true);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+
   // UI state
   const [isStructuring, setIsStructuring] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  // Fetch products on mount
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+
+  /**
+   * Fetch products from API
+   */
+  const fetchProducts = async () => {
+    try {
+      setLoadingProducts(true);
+      const response = await api.get('/product-intelligence/products');
+      setProducts(response.data || []);
+      setHasProducts(response.data.length > 0);
+
+      // Auto-select if only one product
+      if (response.data.length === 1) {
+        setSelectedProductId(response.data[0].id);
+      }
+    } catch (err) {
+      console.error('Error fetching products:', err);
+      setHasProducts(false);
+    } finally {
+      setLoadingProducts(false);
+    }
+  };
 
   /**
    * Handle "Structure with AI" button click
@@ -94,6 +128,10 @@ const SubmitIdeaPage = () => {
    */
   const handleSubmit = async () => {
     // Validation
+    if (!selectedProductId) {
+      setError('Please select a product');
+      return;
+    }
     if (!structuredData.title.trim()) {
       setError('Title is required');
       return;
@@ -122,6 +160,7 @@ const SubmitIdeaPage = () => {
         what_description: structuredData.what_description,
         why_description: structuredData.why_description,
         use_case_description: structuredData.use_case_description,
+        product_id: selectedProductId,
       });
 
       // Success - redirect to ideas page
@@ -171,8 +210,66 @@ const SubmitIdeaPage = () => {
           </div>
         )}
 
+        {/* Empty State - No Products */}
+        {!loadingProducts && !hasProducts && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div className="text-center py-8">
+              <svg
+                className="mx-auto h-12 w-12 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
+                />
+              </svg>
+              <h3 className="mt-4 text-lg font-medium text-gray-900">
+                No products available
+              </h3>
+              <p className="mt-2 text-gray-600">
+                You need to create a product before submitting ideas
+              </p>
+              <Link
+                to="/product-intelligence"
+                className="mt-6 inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-3 rounded-lg"
+              >
+                Create Your First Product
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* Product Selection */}
+        {!loadingProducts && hasProducts && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Select Product *
+            </label>
+            <select
+              value={selectedProductId || ''}
+              onChange={(e) => setSelectedProductId(parseInt(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              required
+            >
+              <option value="">-- Choose a product --</option>
+              {products.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.product_name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-sm text-gray-500">
+              All ideas must be associated with a product
+            </p>
+          </div>
+        )}
+
         {/* Step 1: Freeform Input */}
-        {step === 1 && (
+        {!loadingProducts && hasProducts && selectedProductId && step === 1 && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h3 className="text-xl font-semibold text-gray-900 mb-4">
               Step 1: Describe Your Idea
@@ -248,7 +345,7 @@ const SubmitIdeaPage = () => {
         )}
 
         {/* Step 2: Structured Editing */}
-        {step === 2 && (
+        {!loadingProducts && hasProducts && selectedProductId && step === 2 && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h3 className="text-xl font-semibold text-gray-900 mb-4">
               Step 2: Review and Edit

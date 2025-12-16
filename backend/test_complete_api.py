@@ -127,12 +127,69 @@ def test_complete_api():
         pprint(response.json())
 
     # =======================================================================
-    # SECTION 2: IDEAS
+    # SECTION 2: PRODUCT MANAGEMENT
     # =======================================================================
-    print_section("SECTION 2: IDEAS MANAGEMENT")
+    print_section("SECTION 2: PRODUCT MANAGEMENT")
 
-    # Test 2.1: List ideas (empty or existing)
-    print_test("2.1", "List all ideas")
+    # Test 2.1: Create a product
+    print_test("2.1", "Create a product for testing ideas")
+    product_data = {
+        "product_name": "Test Application",
+        "product_description": "A sample application for testing the feature voting system",
+        "product_url": "https://example.com"
+    }
+
+    response = requests.post(
+        f"{BASE_URL}/product-intelligence/products",
+        json=product_data,
+        headers=headers
+    )
+
+    if response.status_code == 201:
+        print("✓ Product created successfully!")
+        test_product = response.json()
+        product_id = test_product['id']
+        print(f"  Product ID: {product_id}")
+        print(f"  Product name: {test_product['product_name']}")
+    else:
+        print(f"✗ Failed: {response.status_code}")
+        pprint(response.json())
+        return
+
+    # Test 2.2: List all products
+    print_test("2.2", "List all products")
+    response = requests.get(f"{BASE_URL}/product-intelligence/products", headers=headers)
+
+    if response.status_code == 200:
+        print("✓ Successfully retrieved products")
+        products = response.json()
+        print(f"  Total products: {len(products)}")
+        if products:
+            print(f"  First product: {products[0]['product_name']}")
+    else:
+        print(f"✗ Failed: {response.status_code}")
+        pprint(response.json())
+
+    # Test 2.3: Get single product
+    print_test("2.3", "Get product by ID")
+    response = requests.get(f"{BASE_URL}/product-intelligence/products/{product_id}", headers=headers)
+
+    if response.status_code == 200:
+        print("✓ Successfully retrieved product")
+        product = response.json()
+        print(f"  Name: {product['product_name']}")
+        print(f"  Description: {product['product_description'][:50]}...")
+    else:
+        print(f"✗ Failed: {response.status_code}")
+        pprint(response.json())
+
+    # =======================================================================
+    # SECTION 3: IDEAS MANAGEMENT
+    # =======================================================================
+    print_section("SECTION 3: IDEAS MANAGEMENT")
+
+    # Test 3.1: List ideas (empty or existing)
+    print_test("3.1", "List all ideas")
     response = requests.get(f"{BASE_URL}/ideas/")
 
     if response.status_code == 200:
@@ -145,14 +202,32 @@ def test_complete_api():
         print(f"✗ Failed: {response.status_code}")
         pprint(response.json())
 
-    # Test 2.2: Create a new idea
-    print_test("2.2", "Create new idea (protected)")
+    # Test 3.2: Try to create idea without product_id (should fail)
+    print_test("3.2", "Try to create idea without product_id (should fail)")
+    invalid_idea = {
+        "title": "Invalid Idea",
+        "what_description": "This should fail validation",
+        "why_description": "Missing required product_id field",
+        "use_case_description": "Should return 422 validation error"
+    }
+
+    response = requests.post(f"{BASE_URL}/ideas/", json=invalid_idea, headers=headers)
+
+    if response.status_code == 422:
+        print("✓ Validation working! Missing product_id rejected")
+        print(f"  Error: Field required for 'product_id'")
+    else:
+        print(f"⚠ Warning: Idea created without product_id! Status: {response.status_code}")
+
+    # Test 3.3: Create a new idea with product_id
+    print_test("3.3", "Create new idea with product_id (protected)")
     idea_data = {
         "title": "Dark Mode Toggle",
         "what_description": "A toggle switch in the settings panel that enables dark mode for the entire application",
         "why_description": "Improves usability at night and reduces eye strain for users who work in low-light environments",
         "use_case_description": "User opens settings, finds the appearance section, and toggles dark mode on or off",
-        "category": "UI/UX"
+        "category": "UI/UX",
+        "product_id": product_id
     }
 
     response = requests.post(f"{BASE_URL}/ideas/", json=idea_data, headers=headers)
@@ -163,6 +238,7 @@ def test_complete_api():
         idea_id = created_idea['id']
         print(f"  Idea ID: {idea_id}")
         print(f"  Title: {created_idea['title']}")
+        print(f"  Product ID: {created_idea['product_id']}")
         print(f"  Category: {created_idea['category']}")
         print(f"  Initial score: {created_idea['vote_counts']['score']}")
     else:
@@ -170,8 +246,8 @@ def test_complete_api():
         pprint(response.json())
         return
 
-    # Test 2.3: Get single idea
-    print_test("2.3", "Get single idea by ID")
+    # Test 3.4: Get single idea
+    print_test("3.4", "Get single idea by ID")
     response = requests.get(f"{BASE_URL}/ideas/{idea_id}")
 
     if response.status_code == 200:
@@ -179,6 +255,7 @@ def test_complete_api():
         idea = response.json()
         print(f"  Title: {idea['title']}")
         print(f"  What: {idea['what_description'][:60]}...")
+        print(f"  Product ID: {idea['product_id']}")
         print(f"  Upvotes: {idea['vote_counts']['upvotes']}")
         print(f"  Downvotes: {idea['vote_counts']['downvotes']}")
         print(f"  Score: {idea['vote_counts']['score']}")
@@ -186,8 +263,22 @@ def test_complete_api():
         print(f"✗ Failed: {response.status_code}")
         pprint(response.json())
 
-    # Test 2.4: Try to create idea without auth (should fail)
-    print_test("2.4", "Try to create idea without authentication (should fail)")
+    # Test 3.5: Filter ideas by product_id
+    print_test("3.5", "Filter ideas by product_id")
+    response = requests.get(f"{BASE_URL}/ideas/?product_id={product_id}")
+
+    if response.status_code == 200:
+        print("✓ Successfully filtered ideas by product")
+        ideas_data = response.json()
+        print(f"  Ideas for product {product_id}: {ideas_data['total']}")
+        if ideas_data['ideas']:
+            print(f"  All ideas have product_id: {all(i['product_id'] == product_id for i in ideas_data['ideas'])}")
+    else:
+        print(f"✗ Failed: {response.status_code}")
+        pprint(response.json())
+
+    # Test 3.6: Try to create idea without auth (should fail)
+    print_test("3.6", "Try to create idea without authentication (should fail)")
     response = requests.post(f"{BASE_URL}/ideas/", json=idea_data)
 
     if response.status_code == 401:
@@ -197,12 +288,12 @@ def test_complete_api():
         print(f"⚠ Warning: Endpoint accessible without auth!")
 
     # =======================================================================
-    # SECTION 3: VOTING
+    # SECTION 4: VOTING
     # =======================================================================
-    print_section("SECTION 3: VOTING SYSTEM")
+    print_section("SECTION 4: VOTING SYSTEM")
 
-    # Test 3.1: Upvote an idea
-    print_test("3.1", "Upvote an idea")
+    # Test 4.1: Upvote an idea
+    print_test("4.1", "Upvote an idea")
     vote_data = {"vote_value": 1}
     response = requests.post(
         f"{BASE_URL}/ideas/{idea_id}/vote",
@@ -221,8 +312,8 @@ def test_complete_api():
         print(f"✗ Failed: {response.status_code}")
         pprint(response.json())
 
-    # Test 3.2: Change vote to downvote
-    print_test("3.2", "Change vote to downvote")
+    # Test 4.2: Change vote to downvote
+    print_test("4.2", "Change vote to downvote")
     vote_data = {"vote_value": -1}
     response = requests.post(
         f"{BASE_URL}/ideas/{idea_id}/vote",
@@ -240,8 +331,8 @@ def test_complete_api():
         print(f"✗ Failed: {response.status_code}")
         pprint(response.json())
 
-    # Test 3.3: Try invalid vote value (should fail)
-    print_test("3.3", "Try invalid vote value (should fail)")
+    # Test 4.3: Try invalid vote value (should fail)
+    print_test("4.3", "Try invalid vote value (should fail)")
     vote_data = {"vote_value": 5}
     response = requests.post(
         f"{BASE_URL}/ideas/{idea_id}/vote",
@@ -255,8 +346,8 @@ def test_complete_api():
     else:
         print(f"⚠ Warning: Invalid vote was accepted!")
 
-    # Test 3.4: Try to vote without auth (should fail)
-    print_test("3.4", "Try to vote without authentication (should fail)")
+    # Test 4.4: Try to vote without auth (should fail)
+    print_test("4.4", "Try to vote without authentication (should fail)")
     vote_data = {"vote_value": 1}
     response = requests.post(
         f"{BASE_URL}/ideas/{idea_id}/vote",
@@ -268,8 +359,8 @@ def test_complete_api():
     else:
         print(f"⚠ Warning: Voting allowed without auth!")
 
-    # Test 3.5: Verify vote persists
-    print_test("3.5", "Verify vote persists")
+    # Test 4.5: Verify vote persists
+    print_test("4.5", "Verify vote persists")
     response = requests.get(f"{BASE_URL}/ideas/{idea_id}", headers=headers)
 
     if response.status_code == 200:
@@ -285,12 +376,12 @@ def test_complete_api():
         print(f"✗ Failed to verify: {response.status_code}")
 
     # =======================================================================
-    # SECTION 4: SUBMISSIONS (AI Integration)
+    # SECTION 5: SUBMISSIONS (AI Integration)
     # =======================================================================
-    print_section("SECTION 4: AI-POWERED SUBMISSIONS")
+    print_section("SECTION 5: AI-POWERED SUBMISSIONS")
 
-    # Test 4.1: Check if API key is configured
-    print_test("4.1", "Check AI service availability")
+    # Test 5.1: Check if API key is configured
+    print_test("5.1", "Check AI service availability")
     # We'll try to structure text - if it fails, we'll skip AI tests
     test_text = "I want a feature to export my data to CSV so I can analyze it in Excel"
 
@@ -316,9 +407,9 @@ def test_complete_api():
     else:
         print(f"⚠ Unexpected response: {response.status_code}")
 
-    # Test 4.2: Submit structured idea (if AI is available)
+    # Test 5.2: Submit structured idea (if AI is available)
     if ai_available:
-        print_test("4.2", "Submit complete idea with AI tracking")
+        print_test("5.2", "Submit complete idea with AI tracking and product_id")
         submission_data = {
             "original_freeform_text": test_text,
             "title": structured['title'],
@@ -326,6 +417,7 @@ def test_complete_api():
             "why_description": structured['why_description'],
             "use_case_description": structured['use_case_description'],
             "category": "Data Export",
+            "product_id": product_id,
             "ai_structured_version": structured,
             "structuring_time_seconds": int(structured['processing_time'])
         }
@@ -347,8 +439,8 @@ def test_complete_api():
             print(f"✗ Failed: {response.status_code}")
             pprint(response.json())
 
-    # Test 4.3: Try to structure without auth (should fail)
-    print_test("4.3", "Try to structure text without authentication (should fail)")
+    # Test 5.3: Try to structure without auth (should fail)
+    print_test("5.3", "Try to structure text without authentication (should fail)")
     response = requests.post(
         f"{BASE_URL}/submissions/structure",
         json=structure_request
@@ -360,12 +452,12 @@ def test_complete_api():
         print(f"⚠ Warning: Structuring allowed without auth!")
 
     # =======================================================================
-    # SECTION 5: LIST AND VERIFY
+    # SECTION 6: LIST AND VERIFY
     # =======================================================================
-    print_section("SECTION 5: FINAL VERIFICATION")
+    print_section("SECTION 6: FINAL VERIFICATION")
 
-    # Test 5.1: List all ideas and verify our ideas exist
-    print_test("5.1", "List all ideas and verify created ideas")
+    # Test 6.1: List all ideas and verify our ideas exist
+    print_test("6.1", "List all ideas and verify created ideas")
     response = requests.get(f"{BASE_URL}/ideas/")
 
     if response.status_code == 200:
@@ -375,20 +467,22 @@ def test_complete_api():
         if ideas_data['ideas']:
             print("\n  Top 3 ideas by score:")
             for i, idea in enumerate(ideas_data['ideas'][:3], 1):
-                print(f"  {i}. {idea['title']} (Score: {idea['vote_counts']['score']})")
+                print(f"  {i}. {idea['title']} (Product: {idea.get('product_name', idea['product_id'])}, Score: {idea['vote_counts']['score']})")
         else:
             print("  No ideas found in database")
     else:
         print(f"✗ Failed: {response.status_code}")
 
-    # Test 5.2: Summary of what was tested
-    print_test("5.2", "Test Summary")
+    # Test 6.2: Summary of what was tested
+    print_test("6.2", "Test Summary")
     print("✓ Authentication: Register, Login, JWT tokens")
-    print("✓ Ideas: Create, List, Get single, Authorization")
+    print("✓ Products: Create, List, Get single")
+    print("✓ Ideas: Create with product_id, List, Get single, Filter by product, Authorization")
     print("✓ Votes: Upvote, Downvote, Change vote, Validation")
     print("✓ Security: Unauthorized access prevention")
+    print("✓ Validation: Product_id required for ideas")
     if ai_available:
-        print("✓ AI Submissions: Structure text, Submit with tracking")
+        print("✓ AI Submissions: Structure text, Submit with tracking and product_id")
     else:
         print("ℹ AI Submissions: Skipped (API key not configured)")
 

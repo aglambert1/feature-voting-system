@@ -14,6 +14,7 @@ from app.database import get_db
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.submission import Submission
 from app.models.user import User
+from app.models.competitor_intelligence import CIProduct, ProductPermissionLevel
 from app.schemas.submission import (
     SubmissionStructureRequest,
     SubmissionStructureResponse,
@@ -22,6 +23,7 @@ from app.schemas.submission import (
     SubmissionResponse
 )
 from app.services.llm_service import llm_service
+from app.services.permission_service import PermissionService
 from app.utils.security import get_current_active_user
 
 
@@ -98,7 +100,29 @@ async def submit_idea(
 
     Raises:
         400 Bad Request: If data validation fails
+        403 Forbidden: If user lacks VIEW permission on product
+        404 Not Found: If product doesn't exist
     """
+    # Validate product exists
+    product = db.query(CIProduct).filter(CIProduct.id == submission_data.product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product with id {submission_data.product_id} not found"
+        )
+
+    # Check user has VIEW permission on product
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=submission_data.product_id,
+        required_level=ProductPermissionLevel.VIEW
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to submit ideas for this product"
+        )
+
     # Create the idea first
     new_idea = Idea(
         title=submission_data.title,
@@ -106,6 +130,7 @@ async def submit_idea(
         why_description=submission_data.why_description,
         use_case_description=submission_data.use_case_description,
         category=submission_data.category,
+        product_id=submission_data.product_id,
         source_type=SourceType.MANUAL,
         submitter_id=current_user.id,
         status=IdeaStatus.ACTIVE

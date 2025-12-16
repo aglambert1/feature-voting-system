@@ -49,7 +49,7 @@ export default function SessionWorkflowPage() {
       setError(null);
 
       // Fetch product
-      const productResponse = await api.get(`/competitor-intelligence/products/${productId}`);
+      const productResponse = await api.get(`/product-intelligence/products/${productId}`);
       setProduct(productResponse.data);
 
       // Verify product is analyzed
@@ -61,7 +61,7 @@ export default function SessionWorkflowPage() {
 
       // If sessionId provided, fetch existing session
       if (sessionId) {
-        const sessionResponse = await api.get(`/competitor-intelligence/sessions/${sessionId}`);
+        const sessionResponse = await api.get(`/product-intelligence/sessions/${sessionId}`);
         setSession(sessionResponse.data);
         // Determine stage based on session status
         // (For now, default to stage 2)
@@ -71,7 +71,7 @@ export default function SessionWorkflowPage() {
         // Fetch previous sessions to check for ones with competitors
         let previousSessionId = null;
         try {
-          const sessionsResponse = await api.get(`/competitor-intelligence/sessions/products/${productId}/sessions`);
+          const sessionsResponse = await api.get(`/product-intelligence/sessions/products/${productId}/sessions`);
           const sessions = sessionsResponse.data || [];
           console.log('[SessionWorkflow] Previous sessions:', sessions);
 
@@ -93,7 +93,7 @@ export default function SessionWorkflowPage() {
         }
 
         // Create new session
-        const createResponse = await api.post('/competitor-intelligence/sessions', {
+        const createResponse = await api.post('/product-intelligence/sessions', {
           product_id: parseInt(productId),
           session_name: `${productResponse.data.product_name} - Session ${new Date().toLocaleDateString()}`,
           product_source_type: productResponse.data.product_source_type || 'text',
@@ -109,7 +109,7 @@ export default function SessionWorkflowPage() {
 
         // Update URL to include session ID
         navigate(
-          `/competitor-intelligence/products/${productId}/sessions/${createResponse.data.id}`,
+          `/product-intelligence/products/${productId}/sessions/${createResponse.data.id}`,
           { replace: true }
         );
       }
@@ -148,7 +148,7 @@ export default function SessionWorkflowPage() {
   };
 
   const handleBack = () => {
-    navigate(`/competitor-intelligence/products/${productId}`);
+    navigate(`/product-intelligence/products/${productId}`);
   };
 
   if (loading) {

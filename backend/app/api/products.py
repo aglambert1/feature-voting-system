@@ -25,10 +25,10 @@ from app.services.llm_service import llm_service
 from app.utils.security import get_current_active_user
 
 
-# Create router with /competitor-intelligence/products prefix
+# Create router with /product-intelligence/products prefix
 router = APIRouter(
-    prefix="/competitor-intelligence/products",
-    tags=["Competitor Intelligence - Products"]
+    prefix="/product-intelligence/products",
+    tags=["Product Intelligence - Products"]
 )
 
 
