@@ -5,7 +5,7 @@
  * Shows discovered competitors, allows selection, and supports custom additions.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 import api from '../../../services/api';
 import CompetitorCard from '../components/CompetitorCard';
@@ -30,6 +30,7 @@ const Stage2_CompetitorDiscovery = ({
   const [submitting, setSubmitting] = useState(false);
   const [discoveryInitiated, setDiscoveryInitiated] = useState(!!savedState);
   const [existingCompetitors, setExistingCompetitors] = useState([]);
+  const copyingRef = useRef(false);
 
   // Persist state changes to parent
   useEffect(() => {
@@ -86,32 +87,54 @@ const Stage2_CompetitorDiscovery = ({
         return;
       }
 
-      // Fetch competitors from previous session
-      console.log('[Stage2] Fetching competitors from previous session:', previousSessionId);
-      const previousSessionResponse = await api.get(
-        `/competitor-intelligence/sessions/${previousSessionId}/competitors`
+      // Copy competitors from previous session to current session
+      // Guard against multiple calls (React StrictMode runs effects twice)
+      if (copyingRef.current) {
+        console.log('[Stage2] Copy already in progress, skipping duplicate call');
+        return;
+      }
+
+      copyingRef.current = true;
+      console.log('[Stage2] Copying competitors from previous session:', previousSessionId, 'to current session:', sessionId);
+
+      const copyResponse = await api.post(
+        `/competitor-intelligence/sessions/${sessionId}/copy-competitors/${previousSessionId}`
       );
 
-      const previousComps = previousSessionResponse.data.competitors || [];
-      console.log('[Stage2] Found', previousComps.length, 'total competitors from previous session');
+      console.log('[Stage2] Copy result:', copyResponse.data);
+      copyingRef.current = false;
 
-      if (previousComps.length > 0) {
-        // Show existing competitors from previous session
-        console.log('[Stage2] Using competitors from previous session - immediate display');
-        const mappedCompetitors = previousComps.map(c => ({
-          ...c,
-          selected: c.selected_by_user
-        }));
-        setCompetitors(mappedCompetitors);
-        setMode('reviewing');
+      if (copyResponse.data.copied_count > 0 || copyResponse.data.skipped_count > 0) {
+        // Competitors were copied (or already existed), fetch and display them
+        console.log('[Stage2] Fetching copied competitors from current session');
+        const currentSessionResponse = await api.get(
+          `/competitor-intelligence/sessions/${sessionId}/competitors`
+        );
+
+        const copiedComps = currentSessionResponse.data.competitors || [];
+        console.log('[Stage2] Found', copiedComps.length, 'competitors after copy');
+
+        if (copiedComps.length > 0) {
+          const mappedCompetitors = copiedComps.map(c => ({
+            ...c,
+            selected: c.selected_by_user
+          }));
+          setCompetitors(mappedCompetitors);
+          setMode('reviewing');
+        } else {
+          // Shouldn't happen, but fallback to discovery
+          console.log('[Stage2] No competitors after copy, starting discovery');
+          discoverCompetitors();
+        }
       } else {
-        // No competitors found anywhere - run discovery
-        console.log('[Stage2] No existing competitors found, starting discovery');
+        // No competitors to copy - run discovery
+        console.log('[Stage2] No competitors to copy, starting discovery');
         discoverCompetitors();
       }
     } catch (err) {
       // If fetching fails, fall back to discovery
       console.error('[Stage2] Failed to check existing competitors:', err);
+      copyingRef.current = false; // Reset on error
       discoverCompetitors();
     }
   };

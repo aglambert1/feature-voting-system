@@ -326,6 +326,80 @@ class CompetitorIntelligenceService:
             'selected_count': selected_count
         }
 
+    async def copy_competitors_from_session(
+        self,
+        from_session_id: int,
+        to_session_id: int
+    ) -> Dict:
+        """
+        Copy competitors from one session to another, avoiding duplicates.
+
+        Args:
+            from_session_id: Source session ID
+            to_session_id: Destination session ID
+
+        Returns:
+            Dict with copied_count and skipped_count
+        """
+        # Get source competitors
+        source_competitors = self.db.query(SessionCompetitor).filter(
+            SessionCompetitor.session_id == from_session_id
+        ).all()
+
+        # Get destination session
+        dest_session = self.db.query(CompetitorAnalysisSession).filter(
+            CompetitorAnalysisSession.id == to_session_id
+        ).first()
+
+        if not dest_session:
+            raise ValueError(f"Destination session {to_session_id} not found")
+
+        copied_count = 0
+        skipped_count = 0
+
+        for source_comp in source_competitors:
+            # Check if this competitor already exists in destination session
+            # Check by product_competitor_id if available, otherwise by name
+            if source_comp.product_competitor_id:
+                existing = self.db.query(SessionCompetitor).filter(
+                    SessionCompetitor.session_id == to_session_id,
+                    SessionCompetitor.product_competitor_id == source_comp.product_competitor_id
+                ).first()
+            else:
+                existing = self.db.query(SessionCompetitor).filter(
+                    SessionCompetitor.session_id == to_session_id,
+                    SessionCompetitor.competitor_name == source_comp.competitor_name
+                ).first()
+
+            if existing:
+                # Already exists, skip
+                skipped_count += 1
+                continue
+
+            # Create copy in destination session
+            new_competitor = SessionCompetitor(
+                session_id=to_session_id,
+                product_competitor_id=source_comp.product_competitor_id,
+                competitor_name=source_comp.competitor_name,
+                competitor_url=source_comp.competitor_url,
+                ai_summary=source_comp.ai_summary,
+                discovery_source=source_comp.discovery_source,
+                is_new_discovery=False,  # Not new since it's copied
+                selected_by_user=source_comp.selected_by_user,  # Preserve selection
+                status_change=None
+            )
+
+            self.db.add(new_competitor)
+            copied_count += 1
+
+        self.db.commit()
+
+        return {
+            'copied_count': copied_count,
+            'skipped_count': skipped_count,
+            'total_source': len(source_competitors)
+        }
+
     async def get_session_competitors(
         self,
         session_id: int

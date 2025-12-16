@@ -340,6 +340,44 @@ async def discover_competitors(
         )
 
 
+@router.post("/{session_id}/copy-competitors/{from_session_id}")
+async def copy_competitors_from_session(
+    session_id: int,
+    from_session_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Copy competitors from another session to this session.
+
+    Useful for reusing competitor discoveries without re-running AI.
+    Automatically deduplicates - won't create duplicates if competitors
+    already exist in the destination session.
+
+    Args:
+        session_id: Destination session ID (current session)
+        from_session_id: Source session ID (previous session to copy from)
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Dict with copied_count, skipped_count, and total_source
+    """
+    service = CompetitorIntelligenceService(db)
+
+    try:
+        result = await service.copy_competitors_from_session(
+            from_session_id=from_session_id,
+            to_session_id=session_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+
+
 @router.get("/{session_id}/competitors")
 async def get_session_competitors(
     session_id: int,
