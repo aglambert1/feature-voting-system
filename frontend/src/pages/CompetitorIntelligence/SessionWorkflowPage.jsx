@@ -13,6 +13,8 @@ import api from '../../services/api';
 import Navigation from '../../components/Navigation';
 import Stage2_CompetitorDiscovery from './stages/Stage2_CompetitorDiscovery';
 import Stage3_FeatureExtraction from './stages/Stage3_FeatureExtraction';
+import Stage4_IdeaGeneration from './stages/Stage4_IdeaGeneration';
+import Stage5_Finalization from './stages/Stage5_Finalization';
 
 export default function SessionWorkflowPage() {
   const { productId, sessionId } = useParams();
@@ -27,6 +29,7 @@ export default function SessionWorkflowPage() {
   const [currentStage, setCurrentStage] = useState(2); // Start at Stage 2
   const [stage2State, setStage2State] = useState(null); // Stage 2 state cache for back navigation
   const [stage3State, setStage3State] = useState(null); // Stage 3 state cache for back navigation
+  const [stage4State, setStage4State] = useState(null); // Stage 4 state cache for back navigation
 
   useEffect(() => {
     // Only initialize once - prevent double-init in React StrictMode
@@ -127,8 +130,21 @@ export default function SessionWorkflowPage() {
     setCurrentStage(4);
   };
 
+  const handleStage4Complete = () => {
+    // Move to Stage 5 (finalization)
+    setCurrentStage(5);
+  };
+
   const handleBackToStage2 = () => {
     setCurrentStage(2);
+  };
+
+  const handleBackToStage3 = () => {
+    setCurrentStage(3);
+  };
+
+  const handleBackToStage4 = () => {
+    setCurrentStage(4);
   };
 
   const handleBack = () => {
@@ -223,6 +239,15 @@ export default function SessionWorkflowPage() {
                 <span className="ml-3 font-medium">Generate Ideas</span>
               </div>
             </div>
+            <div className={`flex-1 border-t-2 ${currentStage >= 5 ? 'border-blue-600' : 'border-gray-300'} mx-4`}></div>
+            <div className={`flex-1 ${currentStage >= 5 ? 'text-blue-600' : 'text-gray-400'}`}>
+              <div className="flex items-center">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${currentStage >= 5 ? 'bg-blue-600 text-white' : 'bg-gray-300 text-gray-600'}`}>
+                  5
+                </div>
+                <span className="ml-3 font-medium">Finalize & Submit</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -253,33 +278,18 @@ export default function SessionWorkflowPage() {
           )}
 
           {currentStage === 4 && (
-            <div className="text-center py-12">
-              <div className="mb-4">
-                <svg
-                  className="mx-auto h-16 w-16 text-gray-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-                  />
-                </svg>
-              </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                Stage 4: Idea Generation
-              </h3>
-              <p className="text-gray-600 mb-4">Coming soon...</p>
-              <button
-                onClick={() => setCurrentStage(3)}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-              >
-                ← Back to Stage 3
-              </button>
-            </div>
+            <Stage4_IdeaGeneration
+              sessionId={session.id}
+              onComplete={handleStage4Complete}
+              onBack={handleBackToStage3}
+            />
+          )}
+
+          {currentStage === 5 && (
+            <Stage5_Finalization
+              sessionId={session.id}
+              onBack={handleBackToStage4}
+            />
           )}
         </div>
       </main>

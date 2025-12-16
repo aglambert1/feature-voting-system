@@ -18,6 +18,7 @@ from app.schemas.competitor_intelligence import SessionCreate
 from app.services.session_service import SessionService
 from app.services.competitor_intelligence_service import CompetitorIntelligenceService
 from app.services.feature_extraction_service import FeatureExtractionService
+from app.services.idea_generation_service import IdeaGenerationService
 from app.services.llm_service import llm_service
 from app.utils.security import get_current_active_user
 from app.database import get_db
@@ -664,3 +665,212 @@ async def select_features(
     )
 
     return result
+
+
+# ============================================================================
+# Idea Generation Endpoints (Stage 4)
+# ============================================================================
+
+class EditIdeaRequest(BaseModel):
+    """Schema for editing a generated idea"""
+    what: Optional[str] = None
+    why: Optional[str] = None
+    use_case: Optional[str] = None
+
+
+class ApproveIdeasRequest(BaseModel):
+    """Schema for approving/rejecting generated ideas"""
+    idea_ids: List[int]
+    approved: bool = True
+
+
+@router.post("/{session_id}/generate-ideas")
+async def generate_ideas_for_session(
+    session_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Generate ideas from selected competitor features (Stage 3 → Stage 4).
+
+    This endpoint:
+    1. Gets all selected features from the session
+    2. Runs the IdeaStructuringAgent to adapt features to the product
+    3. Stores generated ideas in competitor_generated_ideas table
+    4. Returns all generated ideas for review
+
+    Prerequisites:
+    - Session must exist
+    - At least one feature must be selected (selected_by_user = True)
+
+    Args:
+        session_id: Session ID
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Generated ideas with adaptation notes
+
+    Raises:
+        404: Session not found
+        400: No features selected
+        500: Idea generation failed
+    """
+    service = IdeaGenerationService(db)
+
+    try:
+        result = service.generate_ideas_for_session(
+            session_id=session_id,
+            llm_service=llm_service
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Idea generation failed: {str(e)}"
+        )
+
+
+@router.get("/{session_id}/generated-ideas")
+def get_generated_ideas(
+    session_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all generated ideas for a session.
+
+    Returns all CompetitorGeneratedIdea records for the session,
+    including their approval status and link to source features.
+
+    Args:
+        session_id: Session ID
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        List of generated ideas with metadata
+    """
+    service = IdeaGenerationService(db)
+    return service.get_generated_ideas(session_id)
+
+
+@router.put("/generated-ideas/{idea_id}")
+def edit_generated_idea(
+    idea_id: int,
+    edit_data: EditIdeaRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Edit a generated idea.
+
+    Allows users to refine AI-generated ideas before approval.
+    Marks the idea as user_edited and tracks the edit timestamp.
+
+    Args:
+        idea_id: Generated idea ID
+        edit_data: Fields to update (what, why, use_case)
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Updated idea data
+
+    Raises:
+        404: Idea not found
+    """
+    service = IdeaGenerationService(db)
+
+    try:
+        result = service.edit_generated_idea(
+            idea_id=idea_id,
+            what=edit_data.what,
+            why=edit_data.why,
+            use_case=edit_data.use_case
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+
+
+@router.post("/generated-ideas/approve")
+def approve_generated_ideas(
+    approve_data: ApproveIdeasRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Approve or reject generated ideas.
+
+    Sets user_approved flag for specified ideas.
+    Only approved ideas will be submitted to the voting system.
+
+    Args:
+        approve_data: Idea IDs and approval status
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Updated counts
+    """
+    service = IdeaGenerationService(db)
+    return service.approve_generated_ideas(
+        idea_ids=approve_data.idea_ids,
+        approved=approve_data.approved
+    )
+
+
+# ============================================================================
+# Idea Finalization Endpoints (Stage 5)
+# ============================================================================
+
+@router.post("/{session_id}/finalize")
+def finalize_session_ideas(
+    session_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Submit approved ideas to the main voting system (Stage 4 → Stage 5 → Complete).
+
+    This is the final step in the competitor intelligence workflow.
+    Creates Idea records for all approved CompetitorGeneratedIdea records.
+
+    What happens:
+    1. Gets all approved, unsubmitted ideas from the session
+    2. Creates Idea records with source_type='competitor_automated'
+    3. Links CompetitorGeneratedIdea.final_idea_id to Idea.id
+    4. Marks ideas as submitted_to_ideas=True
+    5. Sets session stage to 'completed'
+
+    Args:
+        session_id: Session ID
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Submission results with idea IDs
+
+    Raises:
+        404: Session not found
+        400: No approved ideas to submit
+    """
+    service = IdeaGenerationService(db)
+
+    try:
+        result = service.finalize_ideas(session_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )

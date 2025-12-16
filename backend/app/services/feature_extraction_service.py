@@ -455,11 +455,19 @@ class FeatureExtractionService:
         User selects which features to use for idea generation.
         """
         # Reset all selections for this session
-        self.db.query(CompetitorFeature).join(
+        # Get all feature IDs for this session first (can't use update with join)
+        feature_ids_to_reset = self.db.query(CompetitorFeature.id).join(
             SessionCompetitor
         ).filter(
             SessionCompetitor.session_id == session_id
-        ).update({"selected_by_user": False}, synchronize_session=False)
+        ).all()
+
+        feature_ids_to_reset = [f[0] for f in feature_ids_to_reset]
+
+        if feature_ids_to_reset:
+            self.db.query(CompetitorFeature).filter(
+                CompetitorFeature.id.in_(feature_ids_to_reset)
+            ).update({"selected_by_user": False}, synchronize_session=False)
 
         # Set selected features
         if feature_ids:
