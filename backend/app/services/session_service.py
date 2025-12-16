@@ -32,7 +32,8 @@ class SessionService:
         user_id: int,
         product_id: int,
         session_name: Optional[str] = None,
-        enable_comparison: bool = True
+        enable_comparison: bool = True,
+        previous_session_id: Optional[int] = None
     ) -> CompetitorAnalysisSession:
         """
         Create a new analysis session for an existing product.
@@ -46,6 +47,7 @@ class SessionService:
             product_id: ID of existing product (must be analyzed)
             session_name: Optional session name
             enable_comparison: Enable differential analysis if previous sessions exist
+            previous_session_id: Explicit previous session ID to compare against (overrides auto-detection)
 
         Returns:
             Created CompetitorAnalysisSession
@@ -82,12 +84,17 @@ class SessionService:
         analysis_type = "full"
         comparison_to_session_id = None
 
-        if session_number > 1 and enable_comparison:
-            # Get previous session for comparison
-            previous_session = self._get_previous_session(product.id)
-            if previous_session:
+        if enable_comparison:
+            if previous_session_id is not None:
+                # Use explicitly provided previous session ID
                 analysis_type = "differential"
-                comparison_to_session_id = previous_session.id
+                comparison_to_session_id = previous_session_id
+            elif session_number > 1:
+                # Fall back to auto-detection for backward compatibility
+                previous_session = self._get_previous_session(product.id)
+                if previous_session:
+                    analysis_type = "differential"
+                    comparison_to_session_id = previous_session.id
 
         # Create session (lightweight - just tracks workflow)
         session = CompetitorAnalysisSession(

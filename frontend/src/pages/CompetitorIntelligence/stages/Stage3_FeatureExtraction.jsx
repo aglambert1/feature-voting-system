@@ -18,24 +18,86 @@ const Stage3_FeatureExtraction = ({
   hasPreviousAnalysis,
   onComplete,
   onBack,
+  savedState,
+  onStateChange,
+  previousSessionId,
 }) => {
-  const [mode, setMode] = useState('loading');
-  const [featuresByCompetitor, setFeaturesByCompetitor] = useState([]);
-  const [changeStats, setChangeStats] = useState(null);
+  const [mode, setMode] = useState(savedState?.mode || 'loading');
+  const [featuresByCompetitor, setFeaturesByCompetitor] = useState(savedState?.features || []);
+  const [changeStats, setChangeStats] = useState(savedState?.changeStats || null);
   const [showOnlyChanges, setShowOnlyChanges] = useState(hasPreviousAnalysis);
   const [error, setError] = useState(null);
+  const [existingFeatures, setExistingFeatures] = useState([]);
+
+  // Save state when it changes
+  useEffect(() => {
+    if (onStateChange) {
+      onStateChange({
+        mode,
+        features: featuresByCompetitor,
+        changeStats,
+      });
+    }
+  }, [mode, featuresByCompetitor, changeStats, onStateChange]);
 
   useEffect(() => {
-    extractFeatures();
+    // If we have saved state, don't re-extract
+    if (savedState?.features && savedState.features.length > 0) {
+      console.log('[Stage3] Restored from saved state');
+      return;
+    }
+
+    // Check for existing features from previous session
+    checkExistingFeatures();
   }, []);
 
-  const extractFeatures = async () => {
+  const checkExistingFeatures = async () => {
+    console.log('[Stage3] Checking if selected competitors have existing features from any previous session');
+
+    try {
+      // Check which selected competitors have extractable features
+      const response = await api.get(
+        `/competitor-intelligence/sessions/${sessionId}/competitors/feature-availability`
+      );
+
+      const { competitors_with_features, total_selected, with_features } = response.data;
+      console.log(`[Stage3] ${with_features} of ${total_selected} competitors have existing features`);
+
+      if (with_features > 0) {
+        // Some competitors have existing features - show choice UI
+        console.log('[Stage3] Showing choice UI - some competitors have reusable features');
+        setExistingFeatures(competitors_with_features);
+        setMode('choice');
+      } else {
+        // No existing features for any selected competitor - extract all
+        console.log('[Stage3] No existing features for any competitor, starting extraction');
+        extractFeatures();
+      }
+    } catch (err) {
+      console.error('[Stage3] Failed to check feature availability:', err);
+      // Fall back to extraction
+      extractFeatures();
+    }
+  };
+
+  const handleUseExisting = () => {
+    console.log('[Stage3] Using existing features - backend will reuse and only extract missing');
+    // Pass reuse_existing=true to skip AI extraction for competitors with existing features
+    extractFeatures(true);
+  };
+
+  const handleReExtract = () => {
+    console.log('[Stage3] Re-extracting features');
+    extractFeatures(false);
+  };
+
+  const extractFeatures = async (reuseExisting = false) => {
     try {
       setMode('loading');
 
-      // Start extraction
+      // Start extraction with reuse parameter
       await api.post(
-        `/competitor-intelligence/sessions/${sessionId}/extract-features`
+        `/competitor-intelligence/sessions/${sessionId}/extract-features?reuse_existing=${reuseExisting}`
       );
 
       // Load extracted features
@@ -95,6 +157,108 @@ const Stage3_FeatureExtraction = ({
       setError(err.response?.data?.detail || 'Failed to confirm selection');
     }
   };
+
+  if (mode === 'choice') {
+    const totalFeatures = existingFeatures.reduce((sum, comp) => sum + (comp.features_count || 0), 0);
+
+    return (
+      <div>
+        <h2 className="text-2xl font-bold mb-4">Feature Extraction - Reuse Available</h2>
+
+        {/* Info banner */}
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-start">
+            <svg className="w-6 h-6 text-blue-600 mr-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+            </svg>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-blue-900">
+                Smart Feature Reuse Available
+              </p>
+              <p className="text-sm text-blue-700 mt-1">
+                {existingFeatures.length} competitor(s) have been previously analyzed with {totalFeatures} total feature(s). You can reuse these to save time.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Detailed competitor status */}
+        <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+          <h4 className="text-sm font-semibold text-gray-900 mb-3">Competitor Analysis Status:</h4>
+          <div className="space-y-2">
+            {existingFeatures.map((comp) => (
+              <div key={comp.product_competitor_id} className="flex items-center justify-between p-2 bg-white rounded border border-gray-200">
+                <div className="flex items-center">
+                  <svg className="w-5 h-5 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <span className="text-sm font-medium text-gray-900">{comp.competitor_name}</span>
+                </div>
+                <span className="text-xs text-green-600 font-medium">
+                  ✓ {comp.features_count} features available
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-4 mb-6">
+          {/* Smart Reuse Option (Recommended) */}
+          <div className="border-2 border-green-500 rounded-lg p-6 bg-green-50">
+            <div className="flex items-start mb-3">
+              <span className="px-2 py-1 bg-green-600 text-white text-xs font-semibold rounded mr-3">RECOMMENDED</span>
+              <h3 className="text-lg font-semibold text-gray-900">Use Existing Features (Instant)</h3>
+            </div>
+            <p className="text-gray-700 mb-3">
+              Reuse the {totalFeatures} feature(s) from these {existingFeatures.length} competitor(s).
+              Any other selected competitors without existing features will still be analyzed.
+            </p>
+            <div className="flex items-center text-sm text-green-700 mb-4">
+              <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+              </svg>
+              <span className="font-medium">Instant for existing • AI extraction only for new competitors</span>
+            </div>
+
+            <button
+              onClick={handleUseExisting}
+              className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
+            >
+              Use Existing + Extract Missing →
+            </button>
+          </div>
+
+          {/* Re-extract Option */}
+          <div className="border-2 border-gray-200 rounded-lg p-6 hover:border-blue-300 transition-colors">
+            <h3 className="text-lg font-semibold mb-2">Re-Extract All Features</h3>
+            <p className="text-gray-600 mb-2">
+              Run AI-powered feature extraction to analyze all competitors and extract fresh features, ignoring existing data.
+            </p>
+            <div className="text-sm text-orange-600 mb-4">
+              ⏱️ Takes 1-3 minutes depending on number of competitors
+            </div>
+
+            <button
+              onClick={handleReExtract}
+              className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Run New Feature Extraction
+            </button>
+          </div>
+        </div>
+
+        {/* Back button */}
+        <div className="mt-6 flex justify-start">
+          <button
+            onClick={onBack}
+            className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            ← Back to Competitor Selection
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (mode === 'loading') {
     return (
@@ -274,6 +438,9 @@ Stage3_FeatureExtraction.propTypes = {
   hasPreviousAnalysis: PropTypes.bool.isRequired,
   onComplete: PropTypes.func.isRequired,
   onBack: PropTypes.func.isRequired,
+  savedState: PropTypes.object,
+  onStateChange: PropTypes.func,
+  previousSessionId: PropTypes.number,
 };
 
 export default Stage3_FeatureExtraction;

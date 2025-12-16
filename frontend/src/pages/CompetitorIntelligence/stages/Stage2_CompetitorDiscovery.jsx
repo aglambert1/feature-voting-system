@@ -52,35 +52,61 @@ const Stage2_CompetitorDiscovery = ({
   }, [savedState, discoveryInitiated]);
 
   const checkExistingCompetitors = async () => {
-    // Check if there's a previous session with competitors to reuse
-    console.log('[Stage2] Checking existing competitors. previousSessionId:', previousSessionId);
-
-    if (!previousSessionId) {
-      // No previous session - proceed with discovery
-      console.log('[Stage2] No previousSessionId, starting discovery');
-      discoverCompetitors();
-      return;
-    }
+    // First check if THIS session already has competitors (handles legacy sessions)
+    console.log('[Stage2] Checking existing competitors for session:', sessionId);
 
     try {
+      // Try to fetch competitors from the current session first
+      const currentSessionResponse = await api.get(
+        `/competitor-intelligence/sessions/${sessionId}/competitors`
+      );
+
+      const currentComps = currentSessionResponse.data.competitors || [];
+      console.log('[Stage2] Found', currentComps.length, 'competitors in current session');
+
+      if (currentComps.length > 0) {
+        // This session already has competitors - show them immediately
+        console.log('[Stage2] Using existing competitors from current session - immediate display');
+        const mappedCompetitors = currentComps.map(c => ({
+          ...c,
+          selected: c.selected_by_user
+        }));
+        setCompetitors(mappedCompetitors);
+        setMode('reviewing');
+        return;
+      }
+
+      // No competitors in current session - check if we have a previous session to copy from
+      console.log('[Stage2] No competitors in current session. previousSessionId:', previousSessionId);
+
+      if (!previousSessionId) {
+        // No previous session - run discovery
+        console.log('[Stage2] No previousSessionId, starting discovery');
+        discoverCompetitors();
+        return;
+      }
+
       // Fetch competitors from previous session
       console.log('[Stage2] Fetching competitors from previous session:', previousSessionId);
-      const response = await api.get(
+      const previousSessionResponse = await api.get(
         `/competitor-intelligence/sessions/${previousSessionId}/competitors`
       );
 
-      const existingComps = response.data.competitors || [];
-      const selectedComps = existingComps.filter(c => c.selected);
-      console.log('[Stage2] Found', existingComps.length, 'competitors,', selectedComps.length, 'selected');
+      const previousComps = previousSessionResponse.data.competitors || [];
+      console.log('[Stage2] Found', previousComps.length, 'total competitors from previous session');
 
-      if (selectedComps.length > 0) {
-        // Show choice UI with competitors from previous session
-        console.log('[Stage2] Showing choice UI with existing competitors');
-        setExistingCompetitors(existingComps);
-        setMode('choice');
+      if (previousComps.length > 0) {
+        // Show existing competitors from previous session
+        console.log('[Stage2] Using competitors from previous session - immediate display');
+        const mappedCompetitors = previousComps.map(c => ({
+          ...c,
+          selected: c.selected_by_user
+        }));
+        setCompetitors(mappedCompetitors);
+        setMode('reviewing');
       } else {
-        // No selected competitors in previous session - auto-discover
-        console.log('[Stage2] No selected competitors, starting discovery');
+        // No competitors found anywhere - run discovery
+        console.log('[Stage2] No existing competitors found, starting discovery');
         discoverCompetitors();
       }
     } catch (err) {
@@ -98,11 +124,14 @@ const Stage2_CompetitorDiscovery = ({
       );
 
       // Sort competitors by relevance score (highest first)
-      const sortedCompetitors = [...response.data.competitors].sort((a, b) => {
-        const scoreA = a.relevance_score || 0;
-        const scoreB = b.relevance_score || 0;
-        return scoreB - scoreA;
-      });
+      // Map selected_by_user to selected for UI state
+      const sortedCompetitors = [...response.data.competitors]
+        .map(c => ({ ...c, selected: c.selected_by_user }))
+        .sort((a, b) => {
+          const scoreA = a.relevance_score || 0;
+          const scoreB = b.relevance_score || 0;
+          return scoreB - scoreA;
+        });
 
       setCompetitors(sortedCompetitors);
       setChangeSummary(response.data.change_summary);
@@ -115,7 +144,12 @@ const Stage2_CompetitorDiscovery = ({
   };
 
   const handleUseExisting = () => {
-    setCompetitors(existingCompetitors);
+    // Map selected_by_user to selected for UI state
+    const mappedCompetitors = existingCompetitors.map(c => ({
+      ...c,
+      selected: c.selected_by_user
+    }));
+    setCompetitors(mappedCompetitors);
     setMode('reviewing');
   };
 
@@ -232,8 +266,8 @@ const Stage2_CompetitorDiscovery = ({
   }
 
   if (mode === 'choice') {
-    const selectedCount = existingCompetitors.filter(c => c.selected).length;
-    const previewCompetitors = existingCompetitors.filter(c => c.selected).slice(0, 3);
+    const selectedCount = existingCompetitors.filter(c => c.selected_by_user).length;
+    const previewCompetitors = existingCompetitors.filter(c => c.selected_by_user).slice(0, 3);
 
     return (
       <div>

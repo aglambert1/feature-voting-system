@@ -51,8 +51,27 @@ export default function ProductDetailPage() {
     navigate(`/competitor-intelligence/products/${productId}/analyze`);
   };
 
-  const handleFindCompetitors = () => {
-    navigate(`/competitor-intelligence/products/${productId}/sessions`);
+  const handleFindCompetitors = async () => {
+    // Check for existing sessions and reuse the most recent one
+    try {
+      const sessionsResponse = await api.get(`/competitor-intelligence/sessions/products/${productId}/sessions`);
+      const sessions = sessionsResponse.data || [];
+
+      // Find the most recent session
+      if (sessions.length > 0) {
+        const mostRecentSession = sessions[0]; // Sessions are ordered by creation date (newest first)
+        console.log('[ProductDetail] Reusing existing session:', mostRecentSession.id);
+        navigate(`/competitor-intelligence/products/${productId}/sessions/${mostRecentSession.id}`);
+      } else {
+        // No existing sessions - create new one
+        console.log('[ProductDetail] No existing sessions, creating new one');
+        navigate(`/competitor-intelligence/products/${productId}/sessions`);
+      }
+    } catch (err) {
+      console.error('[ProductDetail] Failed to check existing sessions:', err);
+      // Fall back to creating new session
+      navigate(`/competitor-intelligence/products/${productId}/sessions`);
+    }
   };
 
   const toggleVersionExpanded = (versionId) => {

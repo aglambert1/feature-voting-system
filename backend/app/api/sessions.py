@@ -77,7 +77,8 @@ def create_session(
             user_id=current_user.id,
             product_id=session_data.product_id,
             session_name=session_data.session_name,
-            enable_comparison=session_data.enable_comparison
+            enable_comparison=session_data.enable_comparison,
+            previous_session_id=session_data.previous_session_id
         )
 
         return {
@@ -86,6 +87,7 @@ def create_session(
             "session_number": session.session_number,
             "session_name": session.session_name,
             "analysis_type": session.analysis_type,
+            "comparison_to_session_id": session.comparison_to_session_id,
             "status": session.status,
             "analyzed_product": session.analyzed_product_structure,
             "has_previous_analysis": session.analysis_type == "differential",
@@ -189,7 +191,7 @@ def list_product_sessions(
                 "status": s.status,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "completed_at": s.completed_at.isoformat() if s.completed_at else None,
-                "competitors_count": len([c for c in s.session_competitors if c.selected])
+                "competitors_count": len([c for c in s.session_competitors if c.selected_by_user])
             }
             for s in sessions
         ]
@@ -397,6 +399,75 @@ async def confirm_competitors(
     return result
 
 
+@router.get("/{session_id}/competitors/feature-availability")
+async def check_competitor_feature_availability(
+    session_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Check which selected competitors have extractable features from previous sessions.
+
+    For each selected competitor, checks if they have a ProductCompetitor record
+    with extracted features from ANY previous session (not just the comparison session).
+
+    Args:
+        session_id: Current session ID
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Dict with competitor feature availability:
+        {
+            "competitors_with_features": [
+                {
+                    "session_competitor_id": int,
+                    "product_competitor_id": int,
+                    "competitor_name": str,
+                    "features_count": int,
+                    "last_extraction_session_id": int
+                },
+                ...
+            ],
+            "total_selected": int,
+            "with_features": int
+        }
+    """
+    from app.models.competitor_intelligence import SessionCompetitor, ProductCompetitorFeature
+
+    # Get selected competitors for this session
+    competitors = db.query(SessionCompetitor).filter(
+        SessionCompetitor.session_id == session_id,
+        SessionCompetitor.selected_by_user == True,
+        SessionCompetitor.product_competitor_id.isnot(None)
+    ).all()
+
+    competitors_with_features = []
+
+    for comp in competitors:
+        # Check if this ProductCompetitor has extracted features
+        features_count = db.query(ProductCompetitorFeature).filter(
+            ProductCompetitorFeature.product_competitor_id == comp.product_competitor_id
+        ).count()
+
+        if features_count > 0:
+            # Get the most recent session where features were extracted
+            # (We can infer this from the ProductCompetitor's last_seen_session_id)
+            competitors_with_features.append({
+                "session_competitor_id": comp.id,
+                "product_competitor_id": comp.product_competitor_id,
+                "competitor_name": comp.competitor_name,
+                "features_count": features_count,
+                "last_extraction_session_id": comp.product_competitor.last_seen_session_id
+            })
+
+    return {
+        "competitors_with_features": competitors_with_features,
+        "total_selected": len(competitors),
+        "with_features": len(competitors_with_features)
+    }
+
+
 # ============================================================================
 # Feature Extraction Endpoints (Stage 3)
 # ============================================================================
@@ -409,6 +480,7 @@ class SelectFeaturesRequest(BaseModel):
 @router.post("/{session_id}/extract-features")
 async def extract_features(
     session_id: int,
+    reuse_existing: bool = False,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
@@ -420,6 +492,7 @@ async def extract_features(
 
     Args:
         session_id: Session ID
+        reuse_existing: If True, reuse existing ProductCompetitorFeature without AI extraction (default: False)
         current_user: Authenticated user
         db: Database session
 
@@ -438,7 +511,8 @@ async def extract_features(
     try:
         result = await service.extract_features_for_session(
             session_id=session_id,
-            llm_service=llm_service
+            llm_service=llm_service,
+            reuse_existing=reuse_existing
         )
 
         return result

@@ -27,11 +27,17 @@ class FeatureExtractionService:
     async def extract_features_for_session(
         self,
         session_id: int,
-        llm_service: LLMService
+        llm_service: LLMService,
+        reuse_existing: bool = False
     ) -> Dict:
         """
         Extract features for all selected competitors in a session.
         Sequential processing (simplified MVP - no Celery).
+
+        Args:
+            session_id: Session ID
+            llm_service: LLM service for AI extraction
+            reuse_existing: If True, reuse existing ProductCompetitorFeature without AI extraction
         """
         # Get session
         session = self.db.query(CompetitorAnalysisSession).filter(
@@ -60,7 +66,8 @@ class FeatureExtractionService:
                 session_competitor=competitor,
                 session_id=session_id,
                 compare_to_previous=compare_to_previous,
-                llm_service=llm_service
+                llm_service=llm_service,
+                reuse_existing=reuse_existing
             )
             results.append(result)
 
@@ -77,11 +84,43 @@ class FeatureExtractionService:
         session_competitor: SessionCompetitor,
         session_id: int,
         compare_to_previous: bool,
-        llm_service: LLMService
+        llm_service: LLMService,
+        reuse_existing: bool = False
     ) -> Dict:
         """
         Extract features for a single competitor.
+
+        Args:
+            session_competitor: Competitor to extract features for
+            session_id: Current session ID
+            compare_to_previous: Whether to compare to previous analysis
+            llm_service: LLM service for AI extraction
+            reuse_existing: If True, copy existing ProductCompetitorFeature without AI extraction
         """
+        # Check if we should reuse existing features
+        if reuse_existing and session_competitor.product_competitor_id:
+            existing_features = self._load_product_competitor_features(
+                product_competitor_id=session_competitor.product_competitor_id
+            )
+
+            if existing_features:
+                # Copy existing features to session-specific CompetitorFeature
+                feature_ids = self._copy_existing_features(
+                    session_competitor_id=session_competitor.id,
+                    session_id=session_id,
+                    existing_features=existing_features
+                )
+
+                return {
+                    'competitor_id': session_competitor.id,
+                    'competitor_name': session_competitor.competitor_name,
+                    'feature_count': len(feature_ids),
+                    'change_summary': None,
+                    'status': 'reused',
+                    'reused': True
+                }
+
+        # Otherwise, run AI extraction as normal
         # Load previous features if comparison enabled
         previous_features = None
         if compare_to_previous and session_competitor.product_competitor_id:
@@ -117,8 +156,63 @@ class FeatureExtractionService:
             'competitor_name': session_competitor.competitor_name,
             'feature_count': len(feature_ids),
             'change_summary': agent_result.get('summary', None),
-            'status': 'completed'
+            'status': 'completed',
+            'reused': False
         }
+
+    def _load_product_competitor_features(
+        self,
+        product_competitor_id: int
+    ) -> Optional[List['ProductCompetitorFeature']]:
+        """Load persistent ProductCompetitorFeature records for reuse."""
+        features = self.db.query(ProductCompetitorFeature).filter(
+            ProductCompetitorFeature.product_competitor_id == product_competitor_id,
+            ProductCompetitorFeature.status == 'active'
+        ).all()
+
+        return features if features else None
+
+    def _copy_existing_features(
+        self,
+        session_competitor_id: int,
+        session_id: int,
+        existing_features: List['ProductCompetitorFeature']
+    ) -> List[int]:
+        """
+        Copy existing ProductCompetitorFeature records to session-specific CompetitorFeature.
+        This avoids running AI extraction when reusing features.
+        """
+        feature_ids = []
+
+        for product_feature in existing_features:
+            # Create session-specific feature copy
+            competitor_feature = CompetitorFeature(
+                session_competitor_id=session_competitor_id,
+                product_feature_id=product_feature.id,
+                feature_name=product_feature.feature_name,
+                feature_description=product_feature.feature_description,
+                feature_category=product_feature.feature_category,
+                extraction_confidence=0.9,  # High confidence since it's existing data
+                source_url=None,
+                raw_context=None,
+                change_type=None,  # No change tracking when reusing
+                change_description=None,
+                comparison_to_feature_id=None,
+                selected_by_user=False,
+                detail_requested=False
+            )
+
+            self.db.add(competitor_feature)
+            self.db.flush()
+
+            feature_ids.append(competitor_feature.id)
+
+        # Update last_seen for all copied features
+        for product_feature in existing_features:
+            product_feature.last_seen_session_id = session_id
+
+        self.db.commit()
+        return feature_ids
 
     def _load_previous_features(
         self,
