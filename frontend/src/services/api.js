@@ -47,8 +47,12 @@ api.interceptors.response.use(
       // Server responded with error status
       const status = error.response.status;
 
-      if (status === 401) {
+      // Check if we should skip auth redirect (e.g., for login page)
+      const skipAuthRedirect = error.config?.skipAuthRedirect;
+
+      if (status === 401 && !skipAuthRedirect) {
         // Unauthorized - clear token and redirect to login
+        // (but skip redirect if this is the login request itself)
         localStorage.removeItem('access_token');
         window.location.href = '/login';
       }
@@ -91,13 +95,23 @@ export const login = async (username, password) => {
   formData.append('username', username);
   formData.append('password', password);
 
-  const response = await api.post('/auth/login', formData, {
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-  });
+  try {
+    const response = await api.post('/auth/login', formData, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      // Skip the global 401 interceptor redirect for login
+      skipAuthRedirect: true,
+    });
 
-  return response.data;
+    return response.data;
+  } catch (error) {
+    // Handle login-specific errors with user-friendly messages
+    if (error.status === 401) {
+      throw new Error('Invalid username or password. Please try again.');
+    }
+    throw new Error(error.message || 'Login failed. Please try again.');
+  }
 };
 
 /**
