@@ -14,8 +14,18 @@ Usage:
 import requests
 from pprint import pprint
 import time
+import pytest
 
 BASE_URL = "http://localhost:8000"
+
+
+def check_server_running():
+    """Check if the backend server is running."""
+    try:
+        response = requests.get(f"{BASE_URL}/health", timeout=1)
+        return response.status_code == 200
+    except:
+        return False
 
 
 def print_section(title):
@@ -31,6 +41,7 @@ def print_test(number, description):
     print("-" * 70)
 
 
+@pytest.mark.skipif(not check_server_running(), reason="Backend server not running on localhost:8000")
 def test_password_management():
     """Test all password management endpoints."""
 

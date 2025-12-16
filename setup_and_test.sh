@@ -227,8 +227,9 @@ if ! command_exists pytest; then
 fi
 
 # Run pytest on all test files
+# Set PYTHONPATH to include the backend directory so tests can import app modules
 PYTEST_PASSED=true
-if pytest -v tests/ test_*.py --tb=short --maxfail=5 2>&1 | tee /tmp/pytest_output.txt; then
+if PYTHONPATH="${BACKEND_DIR}:${PYTHONPATH}" pytest -v tests/ test_*.py --tb=short --maxfail=5 2>&1 | tee /tmp/pytest_output.txt; then
     print_success "Pytest test suite passed"
 else
     PYTEST_PASSED=false

@@ -10,11 +10,22 @@ Usage:
 
 import requests
 from pprint import pprint
+import pytest
 
 # Base URL of your API
 BASE_URL = "http://localhost:8000"
 
 
+def check_server_running():
+    """Check if the backend server is running."""
+    try:
+        response = requests.get(f"{BASE_URL}/health", timeout=1)
+        return response.status_code == 200
+    except:
+        return False
+
+
+@pytest.mark.skipif(not check_server_running(), reason="Backend server not running on localhost:8000")
 def test_api():
     """Test the main API endpoints."""
 
