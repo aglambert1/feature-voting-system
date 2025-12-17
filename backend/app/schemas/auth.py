@@ -23,13 +23,14 @@ class UserCreate(BaseModel):
     Schema for creating a new user (registration).
 
     This is what the API expects when someone registers.
-    Note: role is NOT included here - new users always start as VOTER.
-    Only admins can change roles via a separate endpoint.
+    Note: role is optional - defaults to VOTER if not provided.
+    When an admin creates a user, they can specify the role.
     """
     email: EmailStr  # EmailStr automatically validates email format
     username: str = Field(..., min_length=3, max_length=50)
     password: str = Field(..., min_length=8, max_length=100)
     full_name: Optional[str] = None
+    role: Optional[UserRole] = None
 
 
 class UserLogin(BaseModel):

@@ -1,0 +1,435 @@
+import { useState, useEffect, ChangeEvent, FormEvent } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import api from '../services/api';
+import type { User } from '../types';
+import { AxiosError } from 'axios';
+import type { ApiError } from '../types';
+
+interface CreateFormData {
+  username: string;
+  email: string;
+  full_name: string;
+  password: string;
+  role: string;
+}
+
+export default function UserManagementPage() {
+  const { user } = useAuth();
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>('');
+  const [successMessage, setSuccessMessage] = useState<string>('');
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+  const [createFormData, setCreateFormData] = useState<CreateFormData>({
+    username: '',
+    email: '',
+    full_name: '',
+    password: '',
+    role: 'voter'
+  });
+
+  // Fetch users
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const fetchUsers = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get<User[]>('/auth/users');
+      setUsers(response.data);
+      setError('');
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setError(error.response?.data?.detail || 'Failed to load users');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeactivateUser = async (userId: number, username: string) => {
+    if (!confirm(`Are you sure you want to deactivate ${username}?`)) {
+      return;
+    }
+
+    try {
+      await api.patch(`/auth/users/${userId}/deactivate`);
+      setSuccessMessage(`User ${username} deactivated successfully`);
+      fetchUsers(); // Refresh list
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setError(error.response?.data?.detail || 'Failed to deactivate user');
+      setTimeout(() => setError(''), 3000);
+    }
+  };
+
+  const handleActivateUser = async (userId: number, username: string) => {
+    try {
+      await api.patch(`/auth/users/${userId}/activate`);
+      setSuccessMessage(`User ${username} activated successfully`);
+      fetchUsers(); // Refresh list
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setError(error.response?.data?.detail || 'Failed to activate user');
+      setTimeout(() => setError(''), 3000);
+    }
+  };
+
+  const handleChangeRole = async (userId: number, username: string, newRole: string) => {
+    if (!confirm(`Change ${username}'s role to ${newRole}?`)) {
+      return;
+    }
+
+    try {
+      await api.patch(`/auth/users/${userId}/role`, { role: newRole });
+      setSuccessMessage(`User ${username}'s role changed to ${newRole}`);
+      fetchUsers(); // Refresh list
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setError(error.response?.data?.detail || 'Failed to change role');
+      setTimeout(() => setError(''), 3000);
+    }
+  };
+
+  const handleCreateUser = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    try {
+      await api.post('/auth/register', createFormData);
+      setSuccessMessage(`User ${createFormData.username} created successfully`);
+      setShowCreateModal(false);
+      setCreateFormData({
+        username: '',
+        email: '',
+        full_name: '',
+        password: '',
+        role: 'voter'
+      });
+      fetchUsers(); // Refresh list
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setError(error.response?.data?.detail || 'Failed to create user');
+      setTimeout(() => setError(''), 3000);
+    }
+  };
+
+  const getRoleBadgeColor = (role: string): string => {
+    switch (role) {
+      case 'admin':
+        return 'bg-red-100 text-red-800';
+      case 'voter':
+        return 'bg-blue-100 text-blue-800';
+      case 'product_owner':
+        return 'bg-gray-100 text-gray-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex justify-between items-center">
+            <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
+            <a
+              href="/ideas"
+              className="text-blue-600 hover:text-blue-800 transition-colors"
+            >
+              ← Back to Ideas
+            </a>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Messages */}
+        {error && (
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+            {error}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg">
+            {successMessage}
+          </div>
+        )}
+
+        {/* Users Table */}
+        <div className="bg-white shadow rounded-lg overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">All Users</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Manage user accounts, roles, and access
+              </p>
+            </div>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center"
+            >
+              <svg
+                className="w-5 h-5 mr-2"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4v16m8-8H4"
+                />
+              </svg>
+              Add User
+            </button>
+          </div>
+
+          {loading ? (
+            <div className="flex justify-center items-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            </div>
+          ) : users.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-gray-500">No users found</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      User
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Email
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Role
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {users.map((u) => (
+                    <tr key={u.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold">
+                            {u.username?.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="ml-4">
+                            <div className="text-sm font-medium text-gray-900">
+                              {u.username}
+                              {u.id === user?.id && (
+                                <span className="ml-2 text-xs text-gray-500">(You)</span>
+                              )}
+                            </div>
+                            <div className="text-sm text-gray-500">{u.full_name}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">{u.email}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <select
+                          value={u.role}
+                          onChange={(e: ChangeEvent<HTMLSelectElement>) => handleChangeRole(u.id, u.username, e.target.value)}
+                          disabled={u.id === user?.id}
+                          className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getRoleBadgeColor(
+                            u.role
+                          )} ${u.id === user?.id ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                        >
+                          <option value="admin">Admin</option>
+                          <option value="voter">Voter</option>
+                          <option value="product_owner">Product Owner</option>
+                        </select>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span
+                          className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                            u.is_active
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-red-100 text-red-800'
+                          }`}
+                        >
+                          {u.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {u.id === user?.id ? (
+                          <span className="text-gray-400">Cannot modify yourself</span>
+                        ) : (
+                          <div className="flex space-x-2">
+                            {u.is_active ? (
+                              <button
+                                onClick={() => handleDeactivateUser(u.id, u.username)}
+                                className="text-red-600 hover:text-red-900 font-medium"
+                              >
+                                Deactivate
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleActivateUser(u.id, u.username)}
+                                className="text-green-600 hover:text-green-900 font-medium"
+                              >
+                                Activate
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Statistics */}
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-white shadow rounded-lg p-6">
+            <h3 className="text-sm font-medium text-gray-500">Total Users</h3>
+            <p className="mt-2 text-3xl font-bold text-gray-900">{users.length}</p>
+          </div>
+          <div className="bg-white shadow rounded-lg p-6">
+            <h3 className="text-sm font-medium text-gray-500">Active Users</h3>
+            <p className="mt-2 text-3xl font-bold text-green-600">
+              {users.filter((u) => u.is_active).length}
+            </p>
+          </div>
+          <div className="bg-white shadow rounded-lg p-6">
+            <h3 className="text-sm font-medium text-gray-500">Admins</h3>
+            <p className="mt-2 text-3xl font-bold text-red-600">
+              {users.filter((u) => u.role === 'admin').length}
+            </p>
+          </div>
+        </div>
+      </main>
+
+      {/* Create User Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">Create New User</h3>
+            </div>
+
+            <form onSubmit={handleCreateUser} className="px-6 py-4">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Username *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={createFormData.username}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setCreateFormData({...createFormData, username: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="johndoe"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={createFormData.email}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setCreateFormData({...createFormData, email: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="john@example.com"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Full Name
+                  </label>
+                  <input
+                    type="text"
+                    value={createFormData.full_name}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setCreateFormData({...createFormData, full_name: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="John Doe"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Password *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    value={createFormData.password}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setCreateFormData({...createFormData, password: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Min 8 characters"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Role *
+                  </label>
+                  <select
+                    value={createFormData.role}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setCreateFormData({...createFormData, role: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="product_owner">Product Owner</option>
+                    <option value="voter">Voter</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateModal(false);
+                    setCreateFormData({
+                      username: '',
+                      email: '',
+                      full_name: '',
+                      password: '',
+                      role: 'voter'
+                    });
+                  }}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+                >
+                  Create User
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

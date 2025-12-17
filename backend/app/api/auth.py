@@ -78,12 +78,13 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
         )
 
     # Create new user with hashed password
-    # Note: role defaults to VOTER (set in the User model)
+    # Note: role defaults to VOTER (set in the User model) if not provided
     new_user = User(
         email=user_data.email,
         username=user_data.username,
         hashed_password=hash_password(user_data.password),
-        full_name=user_data.full_name
+        full_name=user_data.full_name,
+        role=user_data.role if user_data.role else None  # Use provided role or let model default to VOTER
     )
 
     # Add to database and commit
