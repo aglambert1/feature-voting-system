@@ -107,6 +107,11 @@ class PermissionService:
         """
         Get all products accessible to a user at the specified permission level.
 
+        Role-based filtering (MVP):
+        - VOTER: Can see all products (read-only for dropdown in idea submission)
+        - PRODUCT_OWNER: Can only see products they created
+        - ADMIN: Can see all products
+
         Args:
             user_id: User ID
             permission_level: Minimum permission level (None = VIEW by default)
@@ -122,63 +127,25 @@ class PermissionService:
         if not user or not user.is_active:
             return []
 
-        # System admins see all products
-        if user.role == UserRole.ADMIN:
-            return self.db.query(CIProduct).filter(
-                CIProduct.status == "active"
-            ).all()
-
-        # Build query based on access rules
+        # Build base query
         query = self.db.query(CIProduct).filter(CIProduct.status == "active")
 
-        # Start with products created by user (implicit ADMIN)
-        filters = [CIProduct.created_by_user_id == user_id]
-
-        # Add team-wide products if user has team-wide access and only VIEW required
-        if (user.default_product_access == ProductAccessMode.TEAM_WIDE and
-                permission_level == ProductPermissionLevel.VIEW):
-            # User can see all active products in team-wide mode
+        # Role-based filtering
+        if user.role == UserRole.ADMIN:
+            # ADMINs see all products
             return query.all()
 
-        # Add products with explicit permission grants
-        if permission_level == ProductPermissionLevel.VIEW:
-            # Include products where user has VIEW, EDIT, or ADMIN permission
-            granted_product_ids = self.db.query(ProductPermission.product_id).filter(
-                ProductPermission.user_id == user_id,
-                ProductPermission.permission_level.in_([
-                    ProductPermissionLevel.VIEW,
-                    ProductPermissionLevel.EDIT,
-                    ProductPermissionLevel.ADMIN
-                ])
-            ).all()
-            if granted_product_ids:
-                filters.append(CIProduct.id.in_([p[0] for p in granted_product_ids]))
+        elif user.role == UserRole.PRODUCT_OWNER:
+            # PRODUCT_OWNERs only see products they created (complete isolation)
+            # Note: default_product_access and explicit grants are ignored for PRODUCT_OWNER
+            return query.filter(CIProduct.created_by_user_id == user_id).all()
 
-        elif permission_level == ProductPermissionLevel.EDIT:
-            # Include products where user has EDIT or ADMIN permission
-            granted_product_ids = self.db.query(ProductPermission.product_id).filter(
-                ProductPermission.user_id == user_id,
-                ProductPermission.permission_level.in_([
-                    ProductPermissionLevel.EDIT,
-                    ProductPermissionLevel.ADMIN
-                ])
-            ).all()
-            if granted_product_ids:
-                filters.append(CIProduct.id.in_([p[0] for p in granted_product_ids]))
+        elif user.role == UserRole.VOTER:
+            # VOTERs can see all products (read-only for dropdown in idea submission)
+            # They cannot navigate to /product-intelligence pages (enforced by route guards)
+            return query.all()
 
-        elif permission_level == ProductPermissionLevel.ADMIN:
-            # Include products where user has ADMIN permission
-            granted_product_ids = self.db.query(ProductPermission.product_id).filter(
-                ProductPermission.user_id == user_id,
-                ProductPermission.permission_level == ProductPermissionLevel.ADMIN
-            ).all()
-            if granted_product_ids:
-                filters.append(CIProduct.id.in_([p[0] for p in granted_product_ids]))
-
-        # Combine filters with OR
-        if len(filters) > 0:
-            return query.filter(or_(*filters)).all()
-
+        # Fallback: no access
         return []
 
     def grant_permission(

@@ -17,13 +17,13 @@ class UserRole(str, enum.Enum):
     """
     User roles that determine what actions a user can perform.
 
-    - ADMIN: Full access to everything
-    - VOTER: Can vote and submit ideas
-    - VIEWER: Read-only access
+    - ADMIN: Full access to everything including user management and all products
+    - VOTER: Can vote and submit ideas only (no product management)
+    - PRODUCT_OWNER: All VOTER permissions plus product management and competitive intelligence
     """
     ADMIN = "admin"
     VOTER = "voter"
-    VIEWER = "viewer"
+    PRODUCT_OWNER = "product_owner"
 
 
 class ProductAccessMode(str, enum.Enum):

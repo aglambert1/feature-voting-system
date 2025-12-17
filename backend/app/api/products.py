@@ -22,7 +22,7 @@ from app.models.user import User
 from app.models.competitor_intelligence import ProductPermissionLevel
 from app.services.product_service import ProductService
 from app.services.llm_service import llm_service
-from app.utils.security import get_current_active_user
+from app.utils.security import get_current_active_user, get_product_owner_or_admin
 
 
 # Create router with /product-intelligence/products prefix
@@ -85,11 +85,13 @@ class ProductResponse(BaseModel):
 @router.post("", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 def create_product(
     request: ProductCreateRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
     Create a new product WITHOUT automatic analysis (Stage 0).
+
+    Requires: PRODUCT_OWNER or ADMIN role.
 
     Products are created as team resources. The creator gets implicit ADMIN access.
     Other users can be granted VIEW/EDIT/ADMIN permissions separately.
@@ -100,6 +102,7 @@ def create_product(
         Created product with analysis_version=0 (not yet analyzed)
 
     Raises:
+        403: If user is not a Product Owner or Admin
         400: If product name already exists
     """
     service = ProductService(db)
@@ -185,10 +188,14 @@ def list_products(
     """
     List all products accessible to the current user.
 
+    Note: This endpoint is accessible to all authenticated users (including VOTER role)
+    so they can see product names in dropdown for idea submission. However, the list
+    returned is filtered based on role and permissions (see permission_service.py).
+
     Returns products based on:
+    - User's role (VOTER sees all product names, PRODUCT_OWNER sees only their products, ADMIN sees all)
     - User's default_product_access mode (SINGLE_USER vs TEAM_WIDE)
     - Explicit product permission grants
-    - System role (ADMIN sees all)
 
     Args:
         permission_level: Filter by minimum permission level (view, edit, admin)
@@ -220,19 +227,19 @@ def list_products(
 @router.get("/{product_id}", response_model=ProductResponse)
 def get_product(
     product_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
-    Get a product by ID.
+    Get a product by ID (detail view).
 
-    Requires VIEW permission on the product.
+    Requires: PRODUCT_OWNER or ADMIN role + VIEW permission on the product.
 
     Returns:
         Product details
 
     Raises:
-        403: If user lacks VIEW permission
+        403: If user is not a Product Owner/Admin or lacks VIEW permission
         404: If product not found
     """
     service = ProductService(db)

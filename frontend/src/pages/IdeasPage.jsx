@@ -24,10 +24,10 @@ const IdeasPage = () => {
 
   // State
   const [ideas, setIdeas] = useState([]);
-  const [loading, setLoading] = useState(false);  // Don't show loading until product selected
+  const [loading, setLoading] = useState(true);  // Show loading on initial load
   const [error, setError] = useState('');
   const [products, setProducts] = useState([]);
-  const [selectedProductId, setSelectedProductId] = useState(null);
+  const [selectedProductId, setSelectedProductId] = useState('all');  // Default to 'all'
   const [hasProducts, setHasProducts] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(true);
 
@@ -36,9 +36,9 @@ const IdeasPage = () => {
     fetchProducts();
   }, []);
 
-  // Fetch ideas when product selection changes
+  // Fetch ideas when product selection changes or on initial load
   useEffect(() => {
-    if (!loadingProducts && selectedProductId) {
+    if (!loadingProducts) {
       fetchIdeas();
     }
   }, [selectedProductId, loadingProducts]);
@@ -49,14 +49,10 @@ const IdeasPage = () => {
   const fetchProducts = async () => {
     try {
       setLoadingProducts(true);
-      const response = await api.get('/product-intelligence/products');
+      const response = await api.get('/ideas/products');
       setProducts(response.data || []);
       setHasProducts(response.data.length > 0);
-
-      // Auto-select first product if only one exists
-      if (response.data.length === 1) {
-        setSelectedProductId(response.data[0].id);
-      }
+      // Don't auto-select - default to 'all' products
     } catch (err) {
       console.error('Error fetching products:', err);
       setHasProducts(false);
@@ -69,15 +65,12 @@ const IdeasPage = () => {
    * Fetch ideas from API
    */
   const fetchIdeas = async () => {
-    if (!selectedProductId) {
-      return;
-    }
-
     try {
       setLoading(true);
       setError('');
 
-      const params = { product_id: selectedProductId };
+      // If 'all' is selected, don't pass product_id filter
+      const params = selectedProductId === 'all' ? {} : { product_id: selectedProductId };
       const data = await getIdeas(params);
 
       // Ideas are already sorted by score on backend
@@ -155,14 +148,19 @@ const IdeasPage = () => {
               No products yet
             </h3>
             <p className="mt-2 text-gray-600">
-              Create a product first to start browsing ideas
+              {user?.role === 'voter'
+                ? "A product needs to be created before submitting ideas"
+                : "Create a product first to start browsing ideas"
+              }
             </p>
-            <Link
-              to="/product-intelligence"
-              className="mt-6 inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-3 rounded-lg"
-            >
-              Go to Products
-            </Link>
+            {(user?.role === 'product_owner' || user?.role === 'admin') && (
+              <Link
+                to="/product-intelligence"
+                className="mt-6 inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-3 rounded-lg"
+              >
+                Go to Products
+              </Link>
+            )}
           </div>
         )}
 
@@ -170,29 +168,21 @@ const IdeasPage = () => {
         {!loadingProducts && hasProducts && (
           <div className="mb-6 bg-white rounded-lg border border-gray-200 p-4">
             <label htmlFor="product-filter" className="block text-sm font-medium text-gray-700 mb-2">
-              Select Product
+              Filter by Product
             </label>
             <select
               id="product-filter"
-              value={selectedProductId || ''}
-              onChange={(e) => setSelectedProductId(e.target.value ? parseInt(e.target.value) : null)}
+              value={selectedProductId}
+              onChange={(e) => setSelectedProductId(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              required
             >
-              <option value="">Select a product to view ideas...</option>
+              <option value="all">All Products</option>
               {products.map((product) => (
                 <option key={product.id} value={product.id}>
                   {product.product_name}
                 </option>
               ))}
             </select>
-          </div>
-        )}
-
-        {/* Prompt to select product */}
-        {!loadingProducts && hasProducts && !selectedProductId && (
-          <div className="text-center py-12 text-gray-500 bg-white rounded-lg border border-gray-200">
-            <p>Please select a product to view ideas</p>
           </div>
         )}
 
@@ -217,8 +207,8 @@ const IdeasPage = () => {
           </div>
         )}
 
-        {/* Empty State - No Ideas (only show if products exist and a product is selected) */}
-        {!loading && !error && hasProducts && selectedProductId && ideas.length === 0 && (
+        {/* Empty State - No Ideas */}
+        {!loading && !error && hasProducts && ideas.length === 0 && (
           <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
             <svg
               className="mx-auto h-12 w-12 text-gray-400"
@@ -237,7 +227,10 @@ const IdeasPage = () => {
               No ideas yet
             </h3>
             <p className="mt-2 text-gray-600">
-              Be the first to submit an idea for this product!
+              {selectedProductId === 'all'
+                ? "Be the first to submit an idea!"
+                : "Be the first to submit an idea for this product!"
+              }
             </p>
             <Link
               to="/submit"

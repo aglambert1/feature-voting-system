@@ -144,7 +144,7 @@ def list_ideas(
     """
     List all active ideas with vote counts, optionally filtered by product.
 
-    Requires authentication to enforce product permissions.
+    This endpoint is accessible to all authenticated users.
     Ideas are sorted by score (highest first).
 
     Args:
@@ -158,7 +158,6 @@ def list_ideas(
         List of ideas with vote counts
 
     Raises:
-        403 Forbidden: If user lacks VIEW permission on specified product
         404 Not Found: If product doesn't exist
     """
     # Build base query for active ideas
@@ -174,18 +173,8 @@ def list_ideas(
                 detail=f"Product with id {product_id} not found"
             )
 
-        # Check user has VIEW permission on product
-        if current_user:
-            permission_service = PermissionService(db)
-            if not permission_service.can_access_product(
-                user_id=current_user.id,
-                product_id=product_id,
-                required_level=ProductPermissionLevel.VIEW
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You don't have permission to view ideas for this product"
-                )
+        # Note: All authenticated users can view ideas for any product
+        # Product permissions are only enforced for product management operations, not idea viewing
 
         query = query.filter(Idea.product_id == product_id)
 
@@ -230,6 +219,36 @@ def list_ideas(
         page=skip // limit + 1 if limit > 0 else 1,
         page_size=limit
     )
+
+
+@router.get("/products", response_model=list)
+def get_products_for_ideas(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all active products for idea submission/filtering.
+
+    This endpoint returns ALL products to all authenticated users,
+    regardless of role. This is used for:
+    - Product dropdown on idea submission page
+    - Product filter on ideas browsing page
+
+    Product Owners see all products here, but only see their own
+    products on the /product-intelligence page.
+
+    Returns:
+        List of active products with id and product_name
+    """
+    products = db.query(CIProduct).filter(CIProduct.status == "active").all()
+
+    return [
+        {
+            "id": product.id,
+            "product_name": product.product_name
+        }
+        for product in products
+    ]
 
 
 @router.get("/{idea_id}", response_model=IdeaResponse)

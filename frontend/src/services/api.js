@@ -146,13 +146,22 @@ export const logout = () => {
 
 /**
  * Get all ideas with vote counts
- * @param {number} skip - Pagination offset
- * @param {number} limit - Number of items to return
+ * @param {Object} params - Query parameters (optional)
+ * @param {number} params.skip - Pagination offset
+ * @param {number} params.limit - Number of items to return
+ * @param {number} params.product_id - Filter by product ID
  * @returns {Promise} - List of ideas
  */
-export const getIdeas = async (skip = 0, limit = 100) => {
+export const getIdeas = async (params = {}) => {
+  // Set defaults if not provided
+  const queryParams = {
+    skip: params.skip || 0,
+    limit: params.limit || 100,
+    ...params
+  };
+
   const response = await api.get('/ideas', {
-    params: { skip, limit },
+    params: queryParams,
   });
   return response.data;
 };

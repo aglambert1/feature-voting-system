@@ -107,7 +107,7 @@ export default function UserManagementPage() {
         return 'bg-red-100 text-red-800';
       case 'voter':
         return 'bg-blue-100 text-blue-800';
-      case 'viewer':
+      case 'product_owner':
         return 'bg-gray-100 text-gray-800';
       default:
         return 'bg-gray-100 text-gray-800';
@@ -238,7 +238,7 @@ export default function UserManagementPage() {
                         >
                           <option value="admin">Admin</option>
                           <option value="voter">Voter</option>
-                          <option value="viewer">Viewer</option>
+                          <option value="product_owner">Product Owner</option>
                         </select>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -380,7 +380,7 @@ export default function UserManagementPage() {
                     onChange={(e) => setCreateFormData({...createFormData, role: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="viewer">Viewer</option>
+                    <option value="product_owner">Product Owner</option>
                     <option value="voter">Voter</option>
                     <option value="admin">Admin</option>
                   </select>

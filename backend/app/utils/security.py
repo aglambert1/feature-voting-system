@@ -201,13 +201,13 @@ def get_current_admin_user(
 ) -> User:
     """
     Verify that the current user is an admin.
-    
+
     Args:
         current_user: The authenticated user
-        
+
     Returns:
         The admin user
-        
+
     Raises:
         403 Forbidden: If user is not an admin
     """
@@ -215,5 +215,31 @@ def get_current_admin_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions. Admin access required."
+        )
+    return current_user
+
+
+async def get_product_owner_or_admin(
+    current_user: User = Depends(get_current_active_user)
+) -> User:
+    """
+    Verify that the current user is either a Product Owner or Admin.
+
+    Product Owners can manage products and competitive intelligence.
+    Admins have full system access.
+
+    Args:
+        current_user: The authenticated user
+
+    Returns:
+        The user if they are a Product Owner or Admin
+
+    Raises:
+        403 Forbidden: If user is not a Product Owner or Admin
+    """
+    if current_user.role not in [UserRole.PRODUCT_OWNER, UserRole.ADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Product Owners and Admins can access this resource"
         )
     return current_user

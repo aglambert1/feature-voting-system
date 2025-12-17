@@ -89,6 +89,7 @@ async def submit_idea(
     to track the original freeform text and AI processing details.
 
     This is a protected endpoint - requires authentication.
+    All authenticated users (VOTER, PRODUCT_OWNER, ADMIN) can submit ideas.
 
     Args:
         submission_data: Complete submission with original text and structured data
@@ -100,7 +101,6 @@ async def submit_idea(
 
     Raises:
         400 Bad Request: If data validation fails
-        403 Forbidden: If user lacks VIEW permission on product
         404 Not Found: If product doesn't exist
     """
     # Validate product exists
@@ -111,17 +111,8 @@ async def submit_idea(
             detail=f"Product with id {submission_data.product_id} not found"
         )
 
-    # Check user has VIEW permission on product
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=submission_data.product_id,
-        required_level=ProductPermissionLevel.VIEW
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to submit ideas for this product"
-        )
+    # Note: All authenticated users (VOTER, PRODUCT_OWNER, ADMIN) can submit ideas for any product
+    # Product permissions are only enforced for product management operations, not idea submission
 
     # Create the idea first
     new_idea = Idea(

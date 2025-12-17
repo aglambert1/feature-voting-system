@@ -20,7 +20,7 @@ from app.services.competitor_intelligence_service import CompetitorIntelligenceS
 from app.services.feature_extraction_service import FeatureExtractionService
 from app.services.idea_generation_service import IdeaGenerationService
 from app.services.llm_service import llm_service
-from app.utils.security import get_current_active_user
+from app.utils.security import get_current_active_user, get_product_owner_or_admin
 from app.database import get_db
 from app.models.user import User
 
@@ -34,7 +34,7 @@ router = APIRouter(
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_session(
     session_data: SessionCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -114,7 +114,7 @@ def create_session(
 @router.get("/{session_id}")
 def get_session(
     session_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -159,7 +159,7 @@ def get_session(
 @router.get("/products/{product_id}/sessions")
 def list_product_sessions(
     product_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -207,7 +207,7 @@ def list_product_sessions(
 def update_session_status(
     session_id: int,
     status_value: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -254,7 +254,7 @@ def update_session_status(
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_session(
     session_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -301,7 +301,7 @@ class ConfirmCompetitorsRequest(BaseModel):
 @router.post("/{session_id}/discover-competitors")
 async def discover_competitors(
     session_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -345,7 +345,7 @@ async def discover_competitors(
 async def copy_competitors_from_session(
     session_id: int,
     from_session_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -382,7 +382,7 @@ async def copy_competitors_from_session(
 @router.get("/{session_id}/competitors")
 async def get_session_competitors(
     session_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -409,7 +409,7 @@ async def get_session_competitors(
 async def confirm_competitors(
     session_id: int,
     data: ConfirmCompetitorsRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -441,7 +441,7 @@ async def confirm_competitors(
 @router.get("/{session_id}/competitors/feature-availability")
 async def check_competitor_feature_availability(
     session_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -520,7 +520,7 @@ class SelectFeaturesRequest(BaseModel):
 async def extract_features(
     session_id: int,
     reuse_existing: bool = False,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -565,7 +565,7 @@ async def extract_features(
 @router.get("/{session_id}/features")
 async def get_session_features(
     session_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -593,7 +593,7 @@ async def get_session_features(
 @router.get("/features/{feature_id}/details")
 async def get_feature_details(
     feature_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -640,7 +640,7 @@ async def get_feature_details(
 async def select_features(
     session_id: int,
     data: SelectFeaturesRequest = Body(...),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -687,7 +687,7 @@ class ApproveIdeasRequest(BaseModel):
 @router.post("/{session_id}/generate-ideas")
 async def generate_ideas_for_session(
     session_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -739,7 +739,7 @@ async def generate_ideas_for_session(
 @router.get("/{session_id}/generated-ideas")
 def get_generated_ideas(
     session_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -764,7 +764,7 @@ def get_generated_ideas(
 def edit_generated_idea(
     idea_id: int,
     edit_data: EditIdeaRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -805,7 +805,7 @@ def edit_generated_idea(
 @router.post("/generated-ideas/approve")
 def approve_generated_ideas(
     approve_data: ApproveIdeasRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -836,7 +836,7 @@ def approve_generated_ideas(
 @router.post("/{session_id}/finalize")
 def finalize_session_ideas(
     session_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
     """

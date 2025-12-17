@@ -12,6 +12,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
+import ProductOwnerRoute from './components/ProductOwnerRoute';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import IdeasPage from './pages/IdeasPage';
@@ -72,12 +73,14 @@ function App() {
             }
           />
 
-          {/* Product Intelligence routes */}
+          {/* Product Intelligence routes - restricted to Product Owners and Admins */}
           <Route
             path="/product-intelligence"
             element={
               <ProtectedRoute>
-                <ProductListPage />
+                <ProductOwnerRoute>
+                  <ProductListPage />
+                </ProductOwnerRoute>
               </ProtectedRoute>
             }
           />
@@ -85,7 +88,9 @@ function App() {
             path="/product-intelligence/products/create"
             element={
               <ProtectedRoute>
-                <CreateProductPage />
+                <ProductOwnerRoute>
+                  <CreateProductPage />
+                </ProductOwnerRoute>
               </ProtectedRoute>
             }
           />
@@ -93,7 +98,9 @@ function App() {
             path="/product-intelligence/products/:productId"
             element={
               <ProtectedRoute>
-                <ProductDetailPage />
+                <ProductOwnerRoute>
+                  <ProductDetailPage />
+                </ProductOwnerRoute>
               </ProtectedRoute>
             }
           />
@@ -101,7 +108,9 @@ function App() {
             path="/product-intelligence/products/:productId/analyze"
             element={
               <ProtectedRoute>
-                <AnalyzeProductPage />
+                <ProductOwnerRoute>
+                  <AnalyzeProductPage />
+                </ProductOwnerRoute>
               </ProtectedRoute>
             }
           />
@@ -109,7 +118,9 @@ function App() {
             path="/product-intelligence/products/:productId/sessions/:sessionId"
             element={
               <ProtectedRoute>
-                <SessionWorkflowPage />
+                <ProductOwnerRoute>
+                  <SessionWorkflowPage />
+                </ProductOwnerRoute>
               </ProtectedRoute>
             }
           />
@@ -117,7 +128,9 @@ function App() {
             path="/product-intelligence/products/:productId/sessions"
             element={
               <ProtectedRoute>
-                <SessionWorkflowPage />
+                <ProductOwnerRoute>
+                  <SessionWorkflowPage />
+                </ProductOwnerRoute>
               </ProtectedRoute>
             }
           />

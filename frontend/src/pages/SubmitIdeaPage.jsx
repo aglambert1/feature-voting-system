@@ -60,7 +60,7 @@ const SubmitIdeaPage = () => {
   const fetchProducts = async () => {
     try {
       setLoadingProducts(true);
-      const response = await api.get('/product-intelligence/products');
+      const response = await api.get('/ideas/products');
       setProducts(response.data || []);
       setHasProducts(response.data.length > 0);
 
@@ -231,14 +231,19 @@ const SubmitIdeaPage = () => {
                 No products available
               </h3>
               <p className="mt-2 text-gray-600">
-                You need to create a product before submitting ideas
+                {user?.role === 'voter'
+                  ? "A product needs to be created before submitting ideas"
+                  : "Create a product first to start submitting ideas"
+                }
               </p>
-              <Link
-                to="/product-intelligence"
-                className="mt-6 inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-3 rounded-lg"
-              >
-                Create Your First Product
-              </Link>
+              {(user?.role === 'product_owner' || user?.role === 'admin') && (
+                <Link
+                  to="/product-intelligence"
+                  className="mt-6 inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-3 rounded-lg"
+                >
+                  Go to Products
+                </Link>
+              )}
             </div>
           </div>
         )}
