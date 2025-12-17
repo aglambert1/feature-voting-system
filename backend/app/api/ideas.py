@@ -7,18 +7,19 @@ This file contains all endpoints for managing ideas:
 - GET /ideas/{id} - Get a single idea
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
-from typing import Optional
+from typing import Optional, List
 
 from app.database import get_db
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.vote import Vote
 from app.models.user import User
 from app.models.competitor_intelligence import CIProduct, ProductPermissionLevel
-from app.schemas.idea import IdeaCreate, IdeaResponse, IdeaListItem, IdeaListResponse, VoteCount
+from app.schemas.idea import IdeaCreate, IdeaResponse, IdeaListItem, IdeaListResponse, VoteCount, SimilarIdeaResponse
 from app.services.permission_service import PermissionService
+from app.services.vector_service import VectorService
 from app.utils.security import get_current_active_user, get_current_user
 
 
@@ -249,6 +250,100 @@ def get_products_for_ideas(
         }
         for product in products
     ]
+
+
+@router.get("/similar", response_model=List[SimilarIdeaResponse])
+async def find_similar_ideas(
+    q: str = Query(..., min_length=10, max_length=1000, description="Query text for similarity search"),
+    product_id: int = Query(..., description="Product ID to filter by"),
+    limit: int = Query(5, ge=1, le=10, description="Maximum number of results to return"),
+    threshold: float = Query(0.7, ge=0.0, le=1.0, description="Minimum similarity score"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """
+    Find similar ideas using semantic search.
+
+    This endpoint performs vector similarity search to find ideas similar to the query text.
+    Used for duplicate detection during idea submission.
+
+    Args:
+        q: Query text (min 10 characters)
+        product_id: Filter results to this product only
+        limit: Maximum number of results (default 5, max 10)
+        threshold: Minimum similarity score (0.0-1.0, default 0.7)
+        current_user: Authenticated user
+        db: Database session
+        request: FastAPI request object (to access app.state.embedding_model)
+
+    Returns:
+        List of similar ideas with similarity scores
+
+    Raises:
+        404 Not Found: If product doesn't exist
+        503 Service Unavailable: If embedding model not loaded
+        500 Internal Server Error: If embedding generation fails
+    """
+    # Validate product exists
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product with id {product_id} not found"
+        )
+
+    # Check if embedding model is available
+    if not hasattr(request.app.state, 'embedding_model') or request.app.state.embedding_model is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Semantic search unavailable - embedding model not loaded"
+        )
+
+    # Generate query embedding
+    try:
+        query_embedding = request.app.state.embedding_model.encode(
+            q,
+            show_progress_bar=False
+        ).tolist()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Embedding generation failed: {str(e)}"
+        )
+
+    # Perform vector similarity search
+    try:
+        results = VectorService.find_similar(
+            db=db,
+            query_embedding=query_embedding,
+            product_id=product_id,
+            limit=limit
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Vector search failed: {str(e)}"
+        )
+
+    # Convert cosine distance to similarity score and filter by threshold
+    # Distance: 0=identical, 1=orthogonal, 2=opposite
+    # Similarity: 1=identical, 0=opposite
+    similar_ideas = []
+    for row in results:
+        # row is (idea_id, title, what_description, distance)
+        distance = row[3]
+        similarity = 1 - (distance / 2)
+
+        if similarity >= threshold:
+            similar_ideas.append(SimilarIdeaResponse(
+                id=row[0],
+                title=row[1],
+                what_description=row[2],
+                similarity_score=round(similarity, 3)
+            ))
+
+    return similar_ideas
 
 
 @router.get("/{idea_id}", response_model=IdeaResponse)

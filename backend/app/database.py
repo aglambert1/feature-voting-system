@@ -5,9 +5,10 @@ This file configures SQLAlchemy to connect to the database and
 provides a way to get database sessions for handling requests.
 """
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.engine import Engine
 
 from app.config import settings
 
@@ -32,6 +33,31 @@ SessionLocal = sessionmaker(
 # Base class for all database models
 # All your models (User, Idea, Vote, etc.) will inherit from this
 Base = declarative_base()
+
+
+# Load SQLite extensions on connection (for vector search)
+@event.listens_for(Engine, "connect")
+def configure_sqlite(dbapi_conn, connection_record):
+    """
+    Configure SQLite-specific settings.
+
+    Loads the sqlite-vec extension for vector similarity search.
+    Only applies to SQLite connections (not PostgreSQL).
+    """
+    # Check if this is a SQLite connection (not PostgreSQL)
+    if 'sqlite' in str(settings.database_url).lower():
+        try:
+            # Enable extension loading
+            dbapi_conn.enable_load_extension(True)
+
+            # Load sqlite-vec extension using the installed package path
+            import sqlite_vec
+            ext_path = sqlite_vec.loadable_path()
+            dbapi_conn.load_extension(ext_path)
+            print("✓ Loaded sqlite-vec extension")
+        except Exception as e:
+            print(f"✗ Failed to load sqlite-vec: {e}")
+            print("  (Vector search will not be available)")
 
 
 def get_db():
@@ -60,6 +86,7 @@ def init_db():
     Initialize the database by creating all tables.
 
     This creates tables for all models that inherit from Base.
+    Also sets up vector search infrastructure (database-specific).
     In production, you'd use migrations (Alembic) instead.
     """
     # Import all models so they are registered with Base.metadata
@@ -69,7 +96,33 @@ def init_db():
     import app.models.vote  # noqa: F401
     import app.models.competitor_intelligence  # noqa: F401
 
+    # Create standard tables
     Base.metadata.create_all(bind=engine)
+
+    # Database-specific vector search initialization
+    db = SessionLocal()
+    try:
+        if 'postgresql' in str(engine.url):
+            # PostgreSQL: Enable pgvector extension
+            db.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            print("✓ pgvector extension enabled")
+        else:
+            # SQLite: Create vec_ideas virtual table for vector search
+            db.execute(text("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS vec_ideas
+                USING vec0(
+                    idea_id INTEGER PRIMARY KEY,
+                    embedding FLOAT[384]
+                )
+            """))
+            print("✓ sqlite-vec virtual table created")
+
+        db.commit()
+    except Exception as e:
+        print(f"Vector extension setup: {e}")
+        print("  (Vector search may not be available)")
+    finally:
+        db.close()
 
 
 def create_initial_admin():

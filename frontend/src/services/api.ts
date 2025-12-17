@@ -26,6 +26,7 @@ import type {
   Feature,
   FeatureCreate,
   AnalysisSession,
+  SimilarIdea,
 } from '../types';
 
 // Create axios instance with base configuration
@@ -197,6 +198,31 @@ export const getIdea = async (ideaId: number): Promise<IdeaResponse> => {
  */
 export const createIdea = async (ideaData: IdeaCreate): Promise<IdeaResponse> => {
   const response = await api.post<IdeaResponse>('/ideas', ideaData);
+  return response.data;
+};
+
+/**
+ * Find similar ideas using semantic search
+ *
+ * @param query - Text to search for similar ideas
+ * @param productId - Product ID to filter by
+ * @param options - Optional axios config (e.g., signal for AbortController)
+ * @returns List of similar ideas with similarity scores
+ */
+export const findSimilarIdeas = async (
+  query: string,
+  productId: number,
+  options?: { signal?: AbortSignal }
+): Promise<SimilarIdea[]> => {
+  const response = await api.get<SimilarIdea[]>('/ideas/similar', {
+    params: {
+      q: query,
+      product_id: productId,
+      limit: 5,
+      threshold: 0.7,
+    },
+    signal: options?.signal,
+  });
   return response.data;
 };
 

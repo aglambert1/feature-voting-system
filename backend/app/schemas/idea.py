@@ -102,3 +102,23 @@ class IdeaListResponse(BaseModel):
     total: int = Field(description="Total number of ideas")
     page: int = Field(default=1, description="Current page number")
     page_size: int = Field(default=100, description="Number of items per page")
+
+
+class SimilarIdeaResponse(BaseModel):
+    """
+    Schema for similar ideas search results.
+
+    Returns minimal information about similar ideas with similarity score.
+    Used for duplicate detection during idea submission.
+    """
+    id: int = Field(description="Idea ID")
+    title: str = Field(description="Idea title")
+    what_description: str = Field(description="What is the feature?")
+    similarity_score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Similarity score (0.0 to 1.0, where 1.0 is identical)"
+    )
+
+    class Config:
+        from_attributes = True

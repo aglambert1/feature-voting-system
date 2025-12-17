@@ -15,13 +15,14 @@
  *   - "Start Over" button
  */
 
-import { useState, useEffect, ChangeEvent } from 'react';
+import { useState, useEffect, ChangeEvent, useRef } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { structureText, submitIdea } from '../services/api';
+import { structureText, submitIdea, findSimilarIdeas } from '../services/api';
 import api from '../services/api';
 import Navigation from '../components/Navigation';
-import type { ApiError } from '../types';
+import { useDebounce } from '../hooks/useDebounce';
+import type { ApiError, SimilarIdea } from '../types';
 
 interface StructuredData {
   title: string;
@@ -63,10 +64,58 @@ const SubmitIdeaPage = () => {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
 
+  // Similarity search state
+  const [similarIdeas, setSimilarIdeas] = useState<SimilarIdea[]>([]);
+  const [checkingSimilarity, setCheckingSimilarity] = useState<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Debounced freeform text for similarity search
+  const debouncedFreeformText = useDebounce(freeformText, 500);
+
   // Fetch products on mount
   useEffect(() => {
     fetchProducts();
   }, []);
+
+  // Check for similar ideas when freeform text changes (debounced)
+  useEffect(() => {
+    // Only search if we have sufficient text and a product selected
+    if (debouncedFreeformText.length >= 10 && selectedProductId && step === 1) {
+      checkForSimilarIdeas(debouncedFreeformText);
+    } else {
+      setSimilarIdeas([]);
+    }
+  }, [debouncedFreeformText, selectedProductId, step]);
+
+  /**
+   * Check for similar ideas using semantic search
+   */
+  const checkForSimilarIdeas = async (query: string) => {
+    // Cancel previous request if still pending
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Create new AbortController for this request
+    const newController = new AbortController();
+    abortControllerRef.current = newController;
+    setCheckingSimilarity(true);
+
+    try {
+      const similar = await findSimilarIdeas(query, selectedProductId!, {
+        signal: newController.signal,
+      });
+      setSimilarIdeas(similar);
+    } catch (err) {
+      // Don't show error for aborted requests
+      if ((err as any).name !== 'AbortError' && (err as any).name !== 'CanceledError') {
+        console.error('Error checking similarity:', err);
+        // Don't set error state - similarity search is optional
+      }
+    } finally {
+      setCheckingSimilarity(false);
+    }
+  };
 
   /**
    * Fetch products from API
@@ -184,9 +233,9 @@ const SubmitIdeaPage = () => {
       await submitIdea({
         original_freeform_text: freeformText,
         title: structuredData.title,
-        what: structuredData.what_description,
-        why: structuredData.why_description,
-        use_case: structuredData.use_case_description,
+        what_description: structuredData.what_description,
+        why_description: structuredData.why_description,
+        use_case_description: structuredData.use_case_description,
         product_id: selectedProductId,
       });
 
@@ -194,7 +243,13 @@ const SubmitIdeaPage = () => {
       navigate('/ideas');
     } catch (err) {
       const error = err as ApiError;
-      setError(error.message || 'Failed to submit idea. Please try again.');
+      // Handle FastAPI validation errors (422 returns array of error objects)
+      if (Array.isArray(error.message)) {
+        const validationErrors = error.message.map((e: any) => e.msg).join(', ');
+        setError(`Validation error: ${validationErrors}`);
+      } else {
+        setError(error.message || 'Failed to submit idea. Please try again.');
+      }
       console.error('Submit error:', err);
     } finally {
       setIsSubmitting(false);
@@ -336,6 +391,74 @@ const SubmitIdeaPage = () => {
                 {freeformText.length} characters
               </p>
             </div>
+
+            {/* Similarity Check Status */}
+            {checkingSimilarity && (
+              <div className="mb-4 text-blue-600 text-sm flex items-center gap-2">
+                <svg
+                  className="animate-spin h-4 w-4"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+                Checking for similar ideas...
+              </div>
+            )}
+
+            {/* Similar Ideas Warning */}
+            {similarIdeas.length > 0 && !checkingSimilarity && (
+              <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <h4 className="font-semibold text-yellow-800 mb-2 flex items-center gap-2">
+                  <svg
+                    className="h-5 w-5"
+                    fill="currentColor"
+                    viewBox="0 0 20 20"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  Similar ideas already exist:
+                </h4>
+                <ul className="space-y-2">
+                  {similarIdeas.map((idea) => (
+                    <li key={idea.id} className="text-sm">
+                      <a
+                        href={`/ideas/${idea.id}`}
+                        className="text-blue-600 hover:underline font-medium"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {idea.title}
+                      </a>
+                      <span className="text-gray-500 ml-2">
+                        ({Math.round(idea.similarity_score * 100)}% match)
+                      </span>
+                      <p className="text-gray-600 mt-1">{idea.what_description}</p>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-sm text-yellow-700 mt-3">
+                  Review these ideas before submitting. Your idea might already exist!
+                </p>
+              </div>
+            )}
 
             {/* Structure Button */}
             <div className="flex justify-end">

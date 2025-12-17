@@ -6,7 +6,7 @@ This file contains endpoints for the AI-powered idea submission flow:
 - POST /submissions/submit - Submit a complete idea with tracking
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 import time
 
@@ -24,6 +24,7 @@ from app.schemas.submission import (
 )
 from app.services.llm_service import llm_service
 from app.services.permission_service import PermissionService
+from app.services.vector_service import VectorService
 from app.utils.security import get_current_active_user
 
 
@@ -80,7 +81,8 @@ async def structure_freeform_text(
 async def submit_idea(
     submission_data: SubmissionCreate,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    request: Request = None
 ):
     """
     Submit a complete idea with tracking.
@@ -129,6 +131,30 @@ async def submit_idea(
 
     db.add(new_idea)
     db.flush()  # Get the idea ID without committing
+
+    # Generate and store embedding for vector similarity search
+    if request and hasattr(request.app.state, 'embedding_model') and request.app.state.embedding_model:
+        try:
+            # Combine title + what + why for embedding (exclude use_case for brevity)
+            combined_text = f"{new_idea.title}. {new_idea.what_description} {new_idea.why_description}"
+
+            # Generate embedding using SentenceTransformer model
+            embedding = request.app.state.embedding_model.encode(
+                combined_text,
+                show_progress_bar=False
+            )
+
+            # Store embedding in database (database-agnostic via VectorService)
+            VectorService.store_embedding(
+                db=db,
+                idea_id=new_idea.id,
+                embedding=embedding.tolist()
+            )
+            print(f"✓ Stored embedding for idea {new_idea.id}")
+        except Exception as e:
+            # Log warning but don't fail submission
+            print(f"Warning: Failed to generate/store embedding for idea {new_idea.id}: {e}")
+            # Continue without embedding - semantic search won't find this idea until migration
 
     # Calculate user edits (compare AI version to final version)
     user_edits = None

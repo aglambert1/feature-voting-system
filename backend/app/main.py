@@ -5,12 +5,51 @@ This is the entry point for the FastAPI backend.
 It sets up the app, configures CORS, includes routes, and initializes the database.
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db, create_initial_admin
 from app.api import auth, ideas, votes, submissions, products, sessions
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for application startup and shutdown.
+
+    Startup:
+    - Initializes database tables
+    - Creates initial admin user
+    - Loads SentenceTransformer model for embeddings
+
+    Shutdown:
+    - Cleans up model from memory
+    """
+    # Startup
+    print("Starting up application...")
+    init_db()
+    create_initial_admin()
+
+    # Load SentenceTransformer model ONCE (not on every request)
+    try:
+        print("Loading SentenceTransformer model (all-MiniLM-L6-v2)...")
+        from sentence_transformers import SentenceTransformer
+        app.state.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        print("✓ Model loaded successfully (384 dimensions)")
+    except Exception as e:
+        print(f"✗ Failed to load embedding model: {e}")
+        print("  (Semantic search will not be available)")
+        app.state.embedding_model = None
+
+    yield
+
+    # Shutdown
+    print("Shutting down application...")
+    if hasattr(app.state, 'embedding_model'):
+        del app.state.embedding_model
 
 
 # Create the FastAPI application instance
@@ -20,7 +59,8 @@ app = FastAPI(
     version="0.1.0",
     description="A feature voting system for prioritizing product ideas",
     docs_url="/docs",  # Swagger UI documentation
-    redoc_url="/redoc"  # ReDoc documentation
+    redoc_url="/redoc",  # ReDoc documentation
+    lifespan=lifespan  # Application lifecycle management
 )
 
 
@@ -44,18 +84,6 @@ app.include_router(votes.router)
 app.include_router(submissions.router)
 app.include_router(products.router)
 app.include_router(sessions.router)
-
-
-@app.on_event("startup")
-def on_startup():
-    """
-    Runs when the application starts up.
-
-    This creates all database tables if they don't exist yet.
-    In production, you'd use Alembic migrations instead.
-    """
-    init_db()
-    create_initial_admin()  # Create admin user on first startup
 
 
 @app.get("/")

@@ -117,6 +117,13 @@ export interface IdeaCreate {
   product_id: number;
 }
 
+export interface SimilarIdea {
+  id: number;
+  title: string;
+  what_description: string;
+  similarity_score: number;
+}
+
 // ============================================================================
 // SUBMISSION TYPES
 // ============================================================================
@@ -133,9 +140,9 @@ export interface StructureResponse {
 
 export interface SubmissionData {
   title: string;
-  what: string;
-  why: string;
-  use_case: string;
+  what_description: string;
+  why_description: string;
+  use_case_description: string;
   product_id: number;
   original_freeform_text?: string;
 }
