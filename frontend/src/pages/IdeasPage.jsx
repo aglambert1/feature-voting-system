@@ -217,8 +217,8 @@ const IdeasPage = () => {
           </div>
         )}
 
-        {/* Empty State */}
-        {!loading && !error && ideas.length === 0 && (
+        {/* Empty State - No Ideas (only show if products exist and a product is selected) */}
+        {!loading && !error && hasProducts && selectedProductId && ideas.length === 0 && (
           <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
             <svg
               className="mx-auto h-12 w-12 text-gray-400"
@@ -237,7 +237,7 @@ const IdeasPage = () => {
               No ideas yet
             </h3>
             <p className="mt-2 text-gray-600">
-              Be the first to submit an idea!
+              Be the first to submit an idea for this product!
             </p>
             <Link
               to="/submit"
