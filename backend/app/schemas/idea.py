@@ -87,6 +87,7 @@ class IdeaListItem(BaseModel):
 
     # User's vote
     user_vote: Optional[int] = None
+    user_vote_timestamp: Optional[datetime] = None  # When user voted (if they did)
 
     class Config:
         from_attributes = True

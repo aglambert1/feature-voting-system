@@ -53,9 +53,9 @@ def get_vote_counts(db: Session, idea_id: int) -> VoteCount:
     )
 
 
-def get_user_vote(db: Session, idea_id: int, user_id: Optional[int]) -> Optional[int]:
+def get_user_vote(db: Session, idea_id: int, user_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
     """
-    Get the current user's vote on an idea.
+    Get the current user's vote on an idea and when they voted.
 
     Args:
         db: Database session
@@ -63,17 +63,19 @@ def get_user_vote(db: Session, idea_id: int, user_id: Optional[int]) -> Optional
         user_id: ID of the user (None if not authenticated)
 
     Returns:
-        Vote value (1, -1, or None)
+        Tuple of (vote value, timestamp) - both None if no vote
     """
     if user_id is None:
-        return None
+        return (None, None)
 
     vote = db.query(Vote).filter(
         Vote.idea_id == idea_id,
         Vote.user_id == user_id
     ).first()
 
-    return vote.vote_value if vote else None
+    if vote:
+        return (vote.vote_value, vote.updated_at)
+    return (None, None)
 
 
 @router.post("/", response_model=IdeaResponse, status_code=status.HTTP_201_CREATED)
@@ -185,7 +187,12 @@ def list_ideas(
     idea_items = []
     for idea in ideas:
         vote_counts = get_vote_counts(db, idea.id)
-        user_vote = None  # TODO: Add optional auth to show user's votes
+
+        # Get user's vote and timestamp if authenticated
+        user_vote = None
+        user_vote_timestamp = None
+        if current_user:
+            user_vote, user_vote_timestamp = get_user_vote(db, idea.id, current_user.id)
 
         # Get product name
         product_name = None
@@ -205,7 +212,8 @@ def list_ideas(
             product_id=idea.product_id,
             product_name=product_name,
             vote_counts=vote_counts,
-            user_vote=user_vote
+            user_vote=user_vote,
+            user_vote_timestamp=user_vote_timestamp
         ))
 
     # Sort by score (highest first)

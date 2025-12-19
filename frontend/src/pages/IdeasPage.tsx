@@ -12,78 +12,63 @@
  * - Pagination controls
  */
 
-import { useState, useEffect, ChangeEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect, useCallback, ChangeEvent } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useProduct } from '../contexts/ProductContext';
 import { getIdeas } from '../services/api';
-import api from '../services/api';
 import IdeaCard from '../components/IdeaCard';
 import Navigation from '../components/Navigation';
 import type { IdeaListItem, ApiError } from '../types';
-
-interface ProductListItem {
-  id: number;
-  product_name: string;
-}
 
 const ITEMS_PER_PAGE = 20;
 
 const IdeasPage = () => {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const {
+    products,
+    selectedProductId,
+    setSelectedProductId,
+    loadingProducts,
+    hasProducts
+  } = useProduct();
 
   // State
   const [ideas, setIdeas] = useState<IdeaListItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
-  const [products, setProducts] = useState<ProductListItem[]>([]);
-  const [selectedProductId, setSelectedProductId] = useState<number | 'all'>('all');
-  const [hasProducts, setHasProducts] = useState<boolean>(true);
-  const [loadingProducts, setLoadingProducts] = useState<boolean>(true);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [totalIdeas, setTotalIdeas] = useState<number>(0);
   const [totalPages, setTotalPages] = useState<number>(0);
 
-  // Fetch products on mount
+  // Sync URL parameter with context on mount
   useEffect(() => {
-    fetchProducts();
-  }, []);
-
-  // Fetch ideas when product selection or page changes
-  useEffect(() => {
-    if (!loadingProducts) {
-      fetchIdeas();
+    const productParam = searchParams.get('product');
+    if (productParam) {
+      if (productParam === 'all') {
+        setSelectedProductId('all');
+      } else {
+        const productId = parseInt(productParam, 10);
+        if (!isNaN(productId)) {
+          setSelectedProductId(productId);
+        }
+      }
     }
-  }, [selectedProductId, currentPage, loadingProducts]);
-
-  /**
-   * Fetch products from API
-   */
-  const fetchProducts = async () => {
-    try {
-      setLoadingProducts(true);
-      const response = await api.get<ProductListItem[]>('/ideas/products');
-      setProducts(response.data || []);
-      setHasProducts(response.data.length > 0);
-    } catch (err) {
-      console.error('Error fetching products:', err);
-      setHasProducts(false);
-    } finally {
-      setLoadingProducts(false);
-    }
-  };
+  }, [searchParams, setSelectedProductId]);
 
   /**
    * Fetch ideas from API with pagination
    */
-  const fetchIdeas = async () => {
+  const fetchIdeas = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
 
       const skip = (currentPage - 1) * ITEMS_PER_PAGE;
-      const params = selectedProductId === 'all'
+      const params = (selectedProductId === 'all' || selectedProductId === null)
         ? { skip, limit: ITEMS_PER_PAGE }
         : { product_id: selectedProductId, skip, limit: ITEMS_PER_PAGE };
 
@@ -99,25 +84,40 @@ const IdeasPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedProductId, currentPage]);
+
+  // Fetch ideas when product selection or page changes
+  useEffect(() => {
+    if (!loadingProducts) {
+      fetchIdeas();
+    }
+  }, [fetchIdeas, loadingProducts]);
 
   /**
    * Handle vote update - refresh ideas
    */
-  const handleVoteUpdate = async (_ideaId: number) => {
+  const handleVoteUpdate = useCallback(async (_ideaId: number) => {
     await fetchIdeas();
-  };
+  }, [fetchIdeas]);
 
-  const handleProductChange = (e: ChangeEvent<HTMLSelectElement>) => {
+  const handleProductChange = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
-    setSelectedProductId(value === 'all' ? 'all' : parseInt(value));
+    const newProductId = value === 'all' ? 'all' : parseInt(value);
+    setSelectedProductId(newProductId);
     setCurrentPage(1);  // Reset to first page when changing product
-  };
 
-  const handlePageChange = (newPage: number) => {
+    // Update URL to reflect the selection
+    if (newProductId === 'all') {
+      setSearchParams({});
+    } else {
+      setSearchParams({ product: newProductId.toString() });
+    }
+  }, [setSelectedProductId, setSearchParams]);
+
+  const handlePageChange = useCallback((newPage: number) => {
     setCurrentPage(newPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -198,7 +198,7 @@ const IdeasPage = () => {
             </label>
             <select
               id="product-filter"
-              value={selectedProductId}
+              value={selectedProductId ?? 'all'}
               onChange={handleProductChange}
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >

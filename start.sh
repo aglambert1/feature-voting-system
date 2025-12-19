@@ -42,6 +42,65 @@ echo -e "${GREEN}║         Feature Voting System - Quick Start             ║
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
+# Check if servers are already running
+echo -e "${BLUE}==>${NC} Checking for existing server instances..."
+EXISTING_BACKEND=$(lsof -ti :8000 2>/dev/null)
+EXISTING_FRONTEND=$(lsof -ti :5173 2>/dev/null)
+
+if [ ! -z "$EXISTING_BACKEND" ] || [ ! -z "$EXISTING_FRONTEND" ]; then
+    echo -e "${YELLOW}⚠  WARNING: Servers already running!${NC}"
+    if [ ! -z "$EXISTING_BACKEND" ]; then
+        BACKEND_COUNT=$(echo "$EXISTING_BACKEND" | wc -l | tr -d ' ')
+        echo -e "  ${YELLOW}Backend (port 8000):${NC} $BACKEND_COUNT instance(s) - PID(s): $EXISTING_BACKEND"
+    fi
+    if [ ! -z "$EXISTING_FRONTEND" ]; then
+        FRONTEND_COUNT=$(echo "$EXISTING_FRONTEND" | wc -l | tr -d ' ')
+        echo -e "  ${YELLOW}Frontend (port 5173):${NC} $FRONTEND_COUNT instance(s) - PID(s): $EXISTING_FRONTEND"
+    fi
+    echo ""
+    echo -e "${BLUE}What would you like to do?${NC}"
+    echo "  1) Stop existing servers and start fresh (recommended)"
+    echo "  2) Exit and keep existing servers running"
+    echo "  3) Try to start anyway (may fail if ports occupied)"
+    echo ""
+    read -p "Choose (1-3): " choice
+
+    case $choice in
+        1)
+            echo -e "\n${YELLOW}Stopping existing servers...${NC}"
+            for PID in $EXISTING_BACKEND $EXISTING_FRONTEND; do
+                kill $PID 2>/dev/null && echo -e "${GREEN}✓${NC} Killed process $PID"
+            done
+            sleep 2
+            # Verify they're stopped
+            STILL_RUNNING=$(lsof -ti :8000 :5173 2>/dev/null)
+            if [ ! -z "$STILL_RUNNING" ]; then
+                echo -e "${YELLOW}Some processes still running, force killing...${NC}"
+                for PID in $STILL_RUNNING; do
+                    kill -9 $PID 2>/dev/null
+                done
+                sleep 1
+            fi
+            echo -e "${GREEN}✓${NC} All existing servers stopped\n"
+            ;;
+        2)
+            echo -e "${GREEN}Keeping existing servers. Exiting.${NC}"
+            echo -e "${BLUE}Tip:${NC} Use ./check_servers.sh to view server status"
+            exit 0
+            ;;
+        3)
+            echo -e "${YELLOW}Attempting to start anyway...${NC}"
+            echo -e "${YELLOW}Note: This may fail if ports are occupied${NC}\n"
+            ;;
+        *)
+            echo -e "${RED}Invalid choice. Exiting.${NC}"
+            exit 1
+            ;;
+    esac
+else
+    echo -e "${GREEN}✓${NC} No existing servers detected\n"
+fi
+
 # Function to cleanup on exit
 cleanup() {
     echo ""

@@ -60,7 +60,8 @@ class VoteActionResponse(BaseModel):
     Schema for complete vote action response.
 
     Returns both the vote record and updated vote counts.
+    Vote can be None if the user removed their vote (unvote).
     """
-    vote: VoteResponse
+    vote: VoteResponse | None
     vote_counts: VoteCountResponse
     message: str = Field(description="Success message")

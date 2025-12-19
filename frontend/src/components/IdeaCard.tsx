@@ -21,11 +21,15 @@ interface IdeaCardProps {
 const IdeaCard = ({ idea, onVoteUpdate }: IdeaCardProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [userVote, setUserVote] = useState<number | null>(idea.user_vote || null);
+  const [voteTimestamp, setVoteTimestamp] = useState<string | null>(idea.user_vote_timestamp || null);
 
   // Handle vote change from VoteButtons
   const handleVoteChange = (newVote: number | null) => {
     // Update local vote state
     setUserVote(newVote);
+
+    // Update timestamp (set to current time if voting, null if unvoting)
+    setVoteTimestamp(newVote ? new Date().toISOString() : null);
 
     // Notify parent component to refresh vote counts
     if (onVoteUpdate) {
@@ -41,6 +45,25 @@ const IdeaCard = ({ idea, onVoteUpdate }: IdeaCardProps) => {
       month: 'short',
       day: 'numeric',
     });
+  };
+
+  // Format vote status message
+  const getVoteStatusMessage = (): string => {
+    if (!userVote) {
+      return 'No vote yet';
+    }
+
+    if (voteTimestamp) {
+      const date = new Date(voteTimestamp);
+      const formattedDate = date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+      return `You voted +1 on ${formattedDate}`;
+    }
+
+    return 'You voted +1';
   };
 
   // Truncate text to approximately 200 words
@@ -62,11 +85,14 @@ const IdeaCard = ({ idea, onVoteUpdate }: IdeaCardProps) => {
               currentVote={userVote}
               onVoteChange={handleVoteChange}
             />
-            {/* Score Display */}
+            {/* Total Votes Display */}
             <div className="text-center mt-2">
               <span className="text-sm font-semibold text-gray-700">
-                {idea.vote_counts.score}
+                {idea.vote_counts.total_votes}
               </span>
+              <div className="text-xs text-gray-500 mt-0.5">
+                {idea.vote_counts.total_votes === 1 ? 'vote' : 'votes'}
+              </div>
             </div>
           </div>
 
@@ -142,14 +168,14 @@ const IdeaCard = ({ idea, onVoteUpdate }: IdeaCardProps) => {
             </button>
 
             {/* Metadata Footer - Always visible */}
-            <div className="flex items-center gap-4 mt-4 text-sm text-gray-500">
-              {/* Vote Stats */}
-              <span>
-                {idea.vote_counts.upvotes} upvotes • {idea.vote_counts.downvotes} downvotes
+            <div className="flex items-center gap-4 mt-4 text-sm">
+              {/* Vote Status */}
+              <span className={userVote ? 'text-blue-600 font-medium' : 'text-gray-500'}>
+                {getVoteStatusMessage()}
               </span>
 
               {/* Date */}
-              <span>{formatDate(idea.created_at)}</span>
+              <span className="text-gray-500">{formatDate(idea.created_at)}</span>
             </div>
           </div>
         </div>

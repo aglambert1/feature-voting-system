@@ -10,6 +10,7 @@
 
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
+import { ProductProvider } from './contexts/ProductContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
 import ProductOwnerRoute from './components/ProductOwnerRoute';
@@ -29,7 +30,8 @@ function App() {
   return (
     <Router>
       <AuthProvider>
-        <Routes>
+        <ProductProvider>
+          <Routes>
           {/* Root - redirect to ideas */}
           <Route path="/" element={<Navigate to="/ideas" replace />} />
 
@@ -138,6 +140,7 @@ function App() {
           {/* 404 - redirect to home */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </ProductProvider>
       </AuthProvider>
     </Router>
   );

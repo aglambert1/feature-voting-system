@@ -82,6 +82,7 @@ export interface IdeaListItem {
   product_name: string | null;
   vote_counts: VoteCount;
   user_vote: number | null;
+  user_vote_timestamp: string | null;  // Timestamp when user voted
 }
 
 export interface IdeaResponse {

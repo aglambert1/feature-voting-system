@@ -15,11 +15,11 @@
  *   - "Start Over" button
  */
 
-import { useState, useEffect, ChangeEvent, useRef } from 'react';
+import { useState, useEffect, useCallback, ChangeEvent, useRef } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useProduct } from '../contexts/ProductContext';
 import { structureText, submitIdea, findSimilarIdeas } from '../services/api';
-import api from '../services/api';
 import Navigation from '../components/Navigation';
 import { useDebounce } from '../hooks/useDebounce';
 import type { ApiError, SimilarIdea } from '../types';
@@ -31,15 +31,17 @@ interface StructuredData {
   use_case_description: string;
 }
 
-interface ProductListItem {
-  id: number;
-  product_name: string;
-}
-
 const SubmitIdeaPage = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
+  const {
+    products,
+    selectedProductId,
+    setSelectedProductId,
+    loadingProducts,
+    hasProducts
+  } = useProduct();
 
   // Step management (1 = freeform input, 2 = structured editing)
   const [step, setStep] = useState<number>(1);
@@ -52,12 +54,6 @@ const SubmitIdeaPage = () => {
     why_description: '',
     use_case_description: '',
   });
-
-  // Product selection
-  const [products, setProducts] = useState<ProductListItem[]>([]);
-  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
-  const [hasProducts, setHasProducts] = useState<boolean>(true);
-  const [loadingProducts, setLoadingProducts] = useState<boolean>(true);
 
   // UI state
   const [isStructuring, setIsStructuring] = useState<boolean>(false);
@@ -72,25 +68,28 @@ const SubmitIdeaPage = () => {
   // Debounced freeform text for similarity search
   const debouncedFreeformText = useDebounce(freeformText, 500);
 
-  // Fetch products on mount
+  // Sync URL parameter with context on mount
   useEffect(() => {
-    fetchProducts();
-  }, []);
-
-  // Check for similar ideas when freeform text changes (debounced)
-  useEffect(() => {
-    // Only search if we have sufficient text and a product selected
-    if (debouncedFreeformText.length >= 10 && selectedProductId && step === 1) {
-      checkForSimilarIdeas(debouncedFreeformText);
-    } else {
-      setSimilarIdeas([]);
+    const productParam = searchParams.get('product');
+    if (productParam && !loadingProducts) {
+      const productId = parseInt(productParam, 10);
+      if (!isNaN(productId)) {
+        // Verify the product exists in the list
+        const productExists = products.find(p => p.id === productId);
+        if (productExists) {
+          setSelectedProductId(productId);
+        }
+      }
+    } else if (!loadingProducts && !selectedProductId && products.length === 1) {
+      // Auto-select if only one product (and no URL param and nothing already selected)
+      setSelectedProductId(products[0].id);
     }
-  }, [debouncedFreeformText, selectedProductId, step]);
+  }, [searchParams, products, loadingProducts, selectedProductId, setSelectedProductId]);
 
   /**
    * Check for similar ideas using semantic search
    */
-  const checkForSimilarIdeas = async (query: string) => {
+  const checkForSimilarIdeas = useCallback(async (query: string) => {
     // Cancel previous request if still pending
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -115,41 +114,17 @@ const SubmitIdeaPage = () => {
     } finally {
       setCheckingSimilarity(false);
     }
-  };
+  }, [selectedProductId]);
 
-  /**
-   * Fetch products from API
-   */
-  const fetchProducts = async () => {
-    try {
-      setLoadingProducts(true);
-      const response = await api.get<ProductListItem[]>('/ideas/products');
-      const products: ProductListItem[] = response.data || [];
-      setProducts(products);
-      setHasProducts(products.length > 0);
-
-      // Check for product ID in URL parameters
-      const productIdFromUrl = searchParams.get('product');
-      if (productIdFromUrl) {
-        const productId = parseInt(productIdFromUrl);
-        // Verify the product exists in the list
-        if (products.find(p => p.id === productId)) {
-          setSelectedProductId(productId);
-          return;
-        }
-      }
-
-      // Auto-select if only one product (and no URL param)
-      if (products.length === 1 && products[0]) {
-        setSelectedProductId(products[0].id);
-      }
-    } catch (err) {
-      console.error('Error fetching products:', err);
-      setHasProducts(false);
-    } finally {
-      setLoadingProducts(false);
+  // Check for similar ideas when freeform text changes (debounced)
+  useEffect(() => {
+    // Only search if we have sufficient text and a product selected
+    if (debouncedFreeformText.length >= 10 && selectedProductId && step === 1) {
+      checkForSimilarIdeas(debouncedFreeformText);
+    } else {
+      setSimilarIdeas([]);
     }
-  };
+  }, [debouncedFreeformText, selectedProductId, step, checkForSimilarIdeas]);
 
   /**
    * Handle "Structure with AI" button click
@@ -239,8 +214,12 @@ const SubmitIdeaPage = () => {
         product_id: selectedProductId,
       });
 
-      // Success - redirect to ideas page
-      navigate('/ideas');
+      // Success - redirect to ideas page with product filter preserved
+      if (selectedProductId && selectedProductId !== 'all') {
+        navigate(`/ideas?product=${selectedProductId}`);
+      } else {
+        navigate('/ideas');
+      }
     } catch (err) {
       const error = err as ApiError;
       // Handle FastAPI validation errors (422 returns array of error objects)

@@ -97,6 +97,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       const userData = await api.getCurrentUser();
       setUser(userData);
 
+      // Notify other components that user logged in (e.g., ProductContext)
+      window.dispatchEvent(new Event('user-logged-in'));
+
       return { success: true };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Login failed';

@@ -96,9 +96,7 @@ nano backend/.env
 ./start.sh
 ```
 
-**Quick Reference:** See [QUICK_REFERENCE.md](./QUICK_REFERENCE.md) for commands cheat sheet
-
-**Detailed Docs:** See [SCRIPTS_README.md](./SCRIPTS_README.md) for full script documentation
+**Script Documentation:** See [SCRIPTS.md](./SCRIPTS.md) for complete automation script reference
 
 ### Manual Setup
 

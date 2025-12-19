@@ -1,9 +1,9 @@
 /**
  * VoteButtons Component
  *
- * Upvote/downvote buttons with:
- * - Upvote (▲) and downvote (▼) buttons
- * - Highlight user's current vote
+ * Single toggle button for upvoting:
+ * - Click to upvote (shows as active +1)
+ * - Click again to remove vote (shows as inactive)
  * - Optimistic UI updates
  * - Error handling and rollback
  */
@@ -21,10 +21,12 @@ const VoteButtons = ({ ideaId, currentVote, onVoteChange }: VoteButtonsProps) =>
   const [isVoting, setIsVoting] = useState(false);
   const [error, setError] = useState('');
 
+  const hasVoted = currentVote === 1;
+
   /**
-   * Handle vote action
+   * Handle vote toggle (add or remove vote)
    */
-  const handleVote = async (voteValue: number) => {
+  const handleVoteToggle = async () => {
     // Prevent double-clicking
     if (isVoting) return;
 
@@ -34,12 +36,13 @@ const VoteButtons = ({ ideaId, currentVote, onVoteChange }: VoteButtonsProps) =>
     // Store previous vote for rollback
     const previousVote = currentVote;
 
-    // Optimistic update - update UI immediately
-    onVoteChange(voteValue === currentVote ? null : voteValue);
+    // Optimistic update - toggle between upvote and no vote
+    const newVote = hasVoted ? null : 1;
+    onVoteChange(newVote);
 
     try {
-      // Call API to submit vote
-      await voteOnIdea(ideaId, voteValue);
+      // Call API - backend will toggle the vote (add or remove)
+      await voteOnIdea(ideaId, 1);
 
       // Success - onVoteChange already updated the UI
     } catch (err) {
@@ -53,38 +56,43 @@ const VoteButtons = ({ ideaId, currentVote, onVoteChange }: VoteButtonsProps) =>
   };
 
   return (
-    <div className="flex flex-col items-center gap-3">
-      {/* Upvote Button */}
+    <div className="flex flex-col items-center gap-2">
+      {/* Single Vote Toggle Button */}
       <button
-        onClick={() => handleVote(1)}
+        onClick={handleVoteToggle}
         disabled={isVoting}
-        className={`w-12 h-12 flex items-center justify-center rounded-md text-2xl font-bold transition-all ${
-          currentVote === 1
-            ? 'bg-blue-600 text-white shadow-md'
-            : 'bg-white border-2 border-gray-300 text-gray-600 hover:border-blue-500 hover:text-blue-600 hover:shadow-sm'
-        } ${isVoting ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-        title="Upvote"
+        className={`
+          px-4 py-2 rounded-lg font-semibold text-sm transition-all duration-200
+          ${hasVoted
+            ? 'bg-blue-600 text-white shadow-md hover:bg-blue-700 border-2 border-blue-600'
+            : 'bg-white text-gray-700 border-2 border-gray-300 hover:border-blue-500 hover:text-blue-600 hover:shadow-sm'
+          }
+          ${isVoting ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+        `}
+        title={hasVoted ? 'Click to remove your vote' : 'Click to vote for this idea'}
       >
-        ▲
-      </button>
-
-      {/* Downvote Button */}
-      <button
-        onClick={() => handleVote(-1)}
-        disabled={isVoting}
-        className={`w-12 h-12 flex items-center justify-center rounded-md text-2xl font-bold transition-all ${
-          currentVote === -1
-            ? 'bg-red-600 text-white shadow-md'
-            : 'bg-white border-2 border-gray-300 text-gray-600 hover:border-red-500 hover:text-red-600 hover:shadow-sm'
-        } ${isVoting ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-        title="Downvote"
-      >
-        ▼
+        <div className="flex items-center gap-1.5">
+          {hasVoted ? (
+            <>
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+              <span>Voted</span>
+            </>
+          ) : (
+            <>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              <span>Vote</span>
+            </>
+          )}
+        </div>
       </button>
 
       {/* Error message */}
       {error && (
-        <p className="text-xs text-red-600 mt-1">{error}</p>
+        <p className="text-xs text-red-600 text-center max-w-[100px]">{error}</p>
       )}
     </div>
   );

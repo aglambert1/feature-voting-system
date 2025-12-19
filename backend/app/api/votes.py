@@ -29,16 +29,16 @@ def vote_on_idea(
     db: Session = Depends(get_db)
 ):
     """
-    Vote on an idea.
+    Vote on an idea (upvote only).
 
     This is a protected endpoint - requires authentication.
-    User can upvote (1) or downvote (-1).
-    If user has already voted, their vote is updated.
+    User can only upvote (1). Downvoting has been removed.
+    If user clicks upvote again, it removes their vote (unvote).
     One vote per user per idea.
 
     Args:
         idea_id: ID of the idea to vote on
-        vote_data: Vote value (1 or -1)
+        vote_data: Vote value (must be 1 for upvote)
         current_user: Authenticated user
         db: Database session
 
@@ -47,7 +47,15 @@ def vote_on_idea(
 
     Raises:
         404 Not Found: If idea doesn't exist
+        400 Bad Request: If vote value is not 1
     """
+    # Only allow upvotes (value = 1)
+    if vote_data.vote_value != 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only upvotes (value=1) are allowed. Use DELETE endpoint to remove vote."
+        )
+
     # Check if idea exists
     idea = db.query(Idea).filter(Idea.id == idea_id).first()
     if not idea:
@@ -63,54 +71,58 @@ def vote_on_idea(
     ).first()
 
     if existing_vote:
-        # Update existing vote
-        old_value = existing_vote.vote_value
-        existing_vote.vote_value = vote_data.vote_value
+        # User already voted - this is an "unvote" action (remove vote)
+        db.delete(existing_vote)
         db.commit()
-        db.refresh(existing_vote)
 
-        vote_record = existing_vote
-        message = f"Vote updated from {old_value} to {vote_data.vote_value}"
+        message = "Vote removed"
+        user_vote_value = None
+        vote_record = None
     else:
-        # Create new vote
+        # Create new upvote
         new_vote = Vote(
             idea_id=idea_id,
             user_id=current_user.id,
-            vote_value=vote_data.vote_value
+            vote_value=1
         )
         db.add(new_vote)
         db.commit()
         db.refresh(new_vote)
 
         vote_record = new_vote
-        message = f"Vote cast: {vote_data.vote_value}"
+        message = "Upvote cast"
+        user_vote_value = 1
 
     # Calculate updated vote counts
     result = db.query(
-        func.sum(case((Vote.vote_value == 1, 1), else_=0)).label('upvotes'),
-        func.sum(case((Vote.vote_value == -1, 1), else_=0)).label('downvotes'),
-        func.sum(Vote.vote_value).label('score'),
-        func.count(Vote.id).label('total_votes')
+        func.count(Vote.id).label('total_votes'),
+        func.sum(Vote.vote_value).label('score')
     ).filter(Vote.idea_id == idea_id).first()
+
+    # Score is now just the count of upvotes (no downvotes)
+    total_votes = int(result.total_votes or 0)
+    score = int(result.score or 0)  # This equals total_votes since all votes are +1
 
     vote_counts = VoteCountResponse(
         idea_id=idea_id,
-        upvotes=int(result.upvotes or 0),
-        downvotes=int(result.downvotes or 0),
-        score=int(result.score or 0),
-        total_votes=int(result.total_votes or 0),
-        user_vote=vote_data.vote_value
+        upvotes=total_votes,
+        downvotes=0,  # No downvotes anymore
+        score=score,
+        total_votes=total_votes,
+        user_vote=user_vote_value
     )
 
-    # Build vote response
-    vote_response = VoteResponse(
-        id=vote_record.id,
-        idea_id=vote_record.idea_id,
-        user_id=vote_record.user_id,
-        vote_value=vote_record.vote_value,
-        voted_at=vote_record.voted_at,
-        updated_at=vote_record.updated_at
-    )
+    # Build vote response (None if unvoted)
+    vote_response = None
+    if vote_record:
+        vote_response = VoteResponse(
+            id=vote_record.id,
+            idea_id=vote_record.idea_id,
+            user_id=vote_record.user_id,
+            vote_value=vote_record.vote_value,
+            voted_at=vote_record.voted_at,
+            updated_at=vote_record.updated_at
+        )
 
     # Return complete action response
     return VoteActionResponse(
