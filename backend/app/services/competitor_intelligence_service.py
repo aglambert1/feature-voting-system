@@ -45,6 +45,21 @@ class CompetitorIntelligenceService:
         if not session:
             raise ValueError("Session not found")
 
+        # Preserve user-added competitors before clearing
+        user_added_competitors = self.db.query(SessionCompetitor).filter(
+            SessionCompetitor.session_id == session_id,
+            SessionCompetitor.discovery_source == 'user_added'
+        ).all()
+
+        # Clear existing AI-discovered competitors from this session before rediscovery
+        # This prevents duplication when user clicks "Re-discover Competitors"
+        # but preserves user-added custom competitors
+        self.db.query(SessionCompetitor).filter(
+            SessionCompetitor.session_id == session_id,
+            SessionCompetitor.discovery_source != 'user_added'
+        ).delete()
+        self.db.commit()
+
         # Get product info for research
         product_data = session.analyzed_product_structure
 
@@ -90,6 +105,19 @@ class CompetitorIntelligenceService:
                 competitors_data=comparison_result['competitors']
             )
 
+            # Add back preserved user-added competitors
+            for user_comp in user_added_competitors:
+                stored_competitors.append({
+                    'id': str(user_comp.id),
+                    'name': user_comp.competitor_name,
+                    'url': user_comp.competitor_url,
+                    'summary': user_comp.ai_summary,
+                    'discovery_source': user_comp.discovery_source,
+                    'is_new_discovery': user_comp.is_new_discovery,
+                    'selected': user_comp.selected_by_user,
+                    'status_change': user_comp.status_change
+                })
+
             return {
                 'competitors': stored_competitors,
                 'change_summary': comparison_result['summary'],
@@ -104,6 +132,18 @@ class CompetitorIntelligenceService:
                 product_id=session.product_id,
                 competitors_data=research_result['competitors']
             )
+
+            # Add back preserved user-added competitors
+            for user_comp in user_added_competitors:
+                stored_competitors.append({
+                    'id': str(user_comp.id),
+                    'name': user_comp.competitor_name,
+                    'url': user_comp.competitor_url,
+                    'summary': user_comp.ai_summary,
+                    'discovery_source': user_comp.discovery_source,
+                    'is_new_discovery': user_comp.is_new_discovery,
+                    'selected': user_comp.selected_by_user
+                })
 
             return {
                 'competitors': stored_competitors,

@@ -24,9 +24,10 @@ interface CompetitorCardProps {
   competitor: Competitor;
   onToggle: () => void;
   showStatus: boolean;
+  onDelete?: () => void;
 }
 
-const CompetitorCard = ({ competitor, onToggle, showStatus }: CompetitorCardProps) => {
+const CompetitorCard = ({ competitor, onToggle, showStatus, onDelete }: CompetitorCardProps) => {
   const getStatusBadge = () => {
     if (!showStatus || !competitor.status) return null;
 
@@ -72,6 +73,22 @@ const CompetitorCard = ({ competitor, onToggle, showStatus }: CompetitorCardProp
             {getStatusBadge()}
           </div>
         </div>
+        {competitor.discovery_source === 'user_added' && onDelete && (
+          <button
+            onClick={(e: MouseEvent<HTMLButtonElement>) => {
+              e.stopPropagation();
+              if (window.confirm(`Remove "${competitor.name}" from the list?`)) {
+                onDelete();
+              }
+            }}
+            className="ml-2 p-1 text-gray-400 hover:text-red-600 transition-colors"
+            title="Remove custom competitor"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </div>
 
       <a

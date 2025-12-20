@@ -10,6 +10,7 @@ import { formatDistanceToNow } from 'date-fns';
 import api from '../../services/api';
 import Navigation from '../../components/Navigation';
 import { ProductSource } from '../../types';
+import SessionSelectorModal, { SessionSummary } from './components/SessionSelectorModal';
 
 interface StructuredProductData {
   core_features?: string[];
@@ -56,6 +57,9 @@ export default function ProductDetailPage() {
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
   const [sources, setSources] = useState<ProductSource[]>([]);
   const [sourcesModified, setSourcesModified] = useState<boolean>(false);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [loadingSessions, setLoadingSessions] = useState<boolean>(false);
+  const [showSessionSelector, setShowSessionSelector] = useState<boolean>(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -83,11 +87,27 @@ export default function ProductDetailPage() {
           `/product-intelligence/products/${productId}/analysis-history`
         );
         setAnalysisHistory(historyResponse.data);
+
+        // Fetch sessions for button logic
+        fetchSessions();
       }
     } catch (err: any) {
       setError(err.message || err.data?.detail || 'Failed to load product');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSessions = async (): Promise<void> => {
+    try {
+      setLoadingSessions(true);
+      const response = await api.get<SessionSummary[]>(`/product-intelligence/sessions/products/${productId}/sessions`);
+      setSessions(response.data || []);
+    } catch (err) {
+      console.error('[ProductDetail] Failed to fetch sessions:', err);
+      setSessions([]);
+    } finally {
+      setLoadingSessions(false);
     }
   };
 
@@ -170,27 +190,36 @@ export default function ProductDetailPage() {
     navigate(`/product-intelligence/products/${productId}/analyze`);
   };
 
-  const handleFindCompetitors = async (): Promise<void> => {
-    // Check for existing sessions and reuse the most recent one
-    try {
-      const sessionsResponse = await api.get<any[]>(`/product-intelligence/sessions/products/${productId}/sessions`);
-      const sessions = sessionsResponse.data || [];
+  const handleFindCompetitors = (): void => {
+    // Simple flow for first-time users (no sessions exist)
+    navigate(`/product-intelligence/products/${productId}/sessions`);
+  };
 
-      // Find the most recent session
-      if (sessions.length > 0) {
-        const mostRecentSession = sessions[0]; // Sessions are ordered by creation date (newest first)
-        console.log('[ProductDetail] Reusing existing session:', mostRecentSession.id);
-        navigate(`/product-intelligence/products/${productId}/sessions/${mostRecentSession.id}`);
-      } else {
-        // No existing sessions - create new one
-        console.log('[ProductDetail] No existing sessions, creating new one');
-        navigate(`/product-intelligence/products/${productId}/sessions`);
-      }
-    } catch (err) {
-      console.error('[ProductDetail] Failed to check existing sessions:', err);
-      // Fall back to creating new session
-      navigate(`/product-intelligence/products/${productId}/sessions`);
+  const handleShowCompetitors = (): void => {
+    // Navigate to most recent session
+    if (sessions.length > 0) {
+      const mostRecentSession = sessions[0]; // Sessions are ordered newest first
+      navigate(`/product-intelligence/products/${productId}/sessions/${mostRecentSession.id}`);
     }
+  };
+
+  const handleDiscoverChanges = (): void => {
+    if (sessions.length === 0) {
+      // Fallback: create new session without comparison
+      navigate(`/product-intelligence/products/${productId}/sessions`);
+      return;
+    }
+    setShowSessionSelector(true);
+  };
+
+  const handleSessionSelected = (sessionId: number): void => {
+    setShowSessionSelector(false);
+    // Navigate with comparison parameters
+    navigate(`/product-intelligence/products/${productId}/sessions?compare=true&compareToSession=${sessionId}`);
+  };
+
+  const handleCancelSessionSelector = (): void => {
+    setShowSessionSelector(false);
   };
 
   const toggleVersionExpanded = (versionId: number): void => {
@@ -294,11 +323,12 @@ export default function ProductDetailPage() {
                 )}
               </div>
             </div>
-            <div className="flex gap-3">
-              {product.analysis_version > 0 && (
+            <div className="flex flex-col sm:flex-row gap-3">
+              {/* Scenario 1: No sessions - Simple "Find Competitors" button */}
+              {product.analysis_version > 0 && sessions.length === 0 && (
                 <button
                   onClick={handleFindCompetitors}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center gap-2"
+                  className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2"
                 >
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -306,14 +336,53 @@ export default function ProductDetailPage() {
                   Find Competitors
                 </button>
               )}
+
+              {/* Scenario 2: Sessions exist - Three distinct options */}
+              {product.analysis_version > 0 && sessions.length > 0 && (
+                <>
+                  {/* Show existing competitors */}
+                  <button
+                    onClick={handleShowCompetitors}
+                    className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                    <span className="hidden md:inline">Show Competitors</span>
+                    <span className="md:hidden">Competitors</span>
+                  </button>
+
+                  {/* Discover changes (differential) */}
+                  <button
+                    onClick={handleDiscoverChanges}
+                    className="w-full sm:w-auto px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                    <span className="hidden md:inline">Discover Changes</span>
+                    <span className="md:hidden">Changes</span>
+                  </button>
+                </>
+              )}
+
+              {/* Always show re-analyze */}
               <button
                 onClick={handleAnalyze}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-2"
+                className="w-full sm:w-auto px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center gap-2"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                 </svg>
-                {product.analysis_version > 0 ? 'Re-analyze Product' : 'Analyze Product'}
+                {product.analysis_version > 0 ? (
+                  <>
+                    <span className="hidden md:inline">Re-analyze Product</span>
+                    <span className="md:hidden">Re-analyze</span>
+                  </>
+                ) : (
+                  'Analyze Product'
+                )}
               </button>
             </div>
           </div>
@@ -695,6 +764,15 @@ export default function ProductDetailPage() {
           )}
         </div>
       </main>
+
+      {/* Session Selector Modal */}
+      {showSessionSelector && (
+        <SessionSelectorModal
+          sessions={sessions}
+          onSelect={handleSessionSelected}
+          onCancel={handleCancelSessionSelector}
+        />
+      )}
     </div>
   );
 }

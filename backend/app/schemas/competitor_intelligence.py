@@ -77,7 +77,8 @@ class SessionCreate(BaseModel):
     product_source_type: str = Field(..., pattern="^(text|document|url)$")
     product_source_data: Optional[Dict[str, Any]] = None
     enable_comparison: bool = Field(default=True, description="Enable differential analysis if previous sessions exist")
-    previous_session_id: Optional[int] = Field(None, description="Explicit previous session ID to compare against")
+    previous_session_id: Optional[int] = Field(None, description="Deprecated: use compare_to_session_id instead")
+    compare_to_session_id: Optional[int] = Field(None, description="Explicit session ID to compare against for differential analysis")
 
 
 class SessionResponse(BaseModel):

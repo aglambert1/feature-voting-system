@@ -79,7 +79,8 @@ def create_session(
             product_id=session_data.product_id,
             session_name=session_data.session_name,
             enable_comparison=session_data.enable_comparison,
-            previous_session_id=session_data.previous_session_id
+            previous_session_id=session_data.previous_session_id,
+            compare_to_session_id=session_data.compare_to_session_id
         )
 
         return {
@@ -192,7 +193,10 @@ def list_product_sessions(
                 "status": s.status,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "completed_at": s.completed_at.isoformat() if s.completed_at else None,
-                "competitors_count": len([c for c in s.session_competitors if c.selected_by_user])
+                "competitors_count": len([c for c in s.session_competitors if c.selected_by_user]),
+                "features_count": len([f for sc in s.session_competitors if sc.selected_by_user for f in sc.session_competitor_features if f.selected_by_user]),
+                "has_competitors": len([c for c in s.session_competitors if c.selected_by_user]) > 0,
+                "has_features": len([f for sc in s.session_competitors if sc.selected_by_user for f in sc.session_competitor_features if f.selected_by_user]) > 0
             }
             for s in sessions
         ]
@@ -436,6 +440,123 @@ async def confirm_competitors(
     )
 
     return result
+
+
+@router.post("/{session_id}/competitors/add-custom")
+async def add_custom_competitor(
+    session_id: int,
+    competitor_data: dict = Body(...),
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Add a custom competitor to a session immediately.
+
+    This allows user-added competitors to persist even before confirmation,
+    so they survive page navigation and rediscovery.
+
+    Args:
+        session_id: Session ID
+        competitor_data: Dict with 'name', 'url', and optional 'summary'
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        The created SessionCompetitor with its database ID
+    """
+    from app.models.competitor_intelligence import CompetitorAnalysisSession, SessionCompetitor
+    from app.services.competitor_intelligence_service import CompetitorIntelligenceService
+
+    # Get session to verify it exists and get product_id
+    session = db.query(CompetitorAnalysisSession).filter(
+        CompetitorAnalysisSession.id == session_id
+    ).first()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+
+    service = CompetitorIntelligenceService(db)
+
+    # Create product-level competitor
+    product_competitor = service._get_or_create_product_competitor(
+        product_id=session.product_id,
+        competitor_name=competitor_data['name'],
+        competitor_url=competitor_data.get('url', ''),
+        session_id=session_id
+    )
+
+    # Create session competitor
+    session_competitor = SessionCompetitor(
+        session_id=session_id,
+        product_competitor_id=product_competitor.id,
+        competitor_name=competitor_data['name'],
+        competitor_url=competitor_data.get('url', ''),
+        ai_summary=competitor_data.get('summary', 'User-added competitor'),
+        discovery_source='user_added',
+        is_new_discovery=True,
+        selected_by_user=True,
+        status_change=None
+    )
+
+    db.add(session_competitor)
+    db.commit()
+    db.refresh(session_competitor)
+
+    return {
+        'id': str(session_competitor.id),
+        'name': session_competitor.competitor_name,
+        'url': session_competitor.competitor_url,
+        'summary': session_competitor.ai_summary,
+        'discovery_source': session_competitor.discovery_source,
+        'is_new_discovery': session_competitor.is_new_discovery,
+        'selected': session_competitor.selected_by_user
+    }
+
+
+@router.delete("/{session_id}/competitors/{competitor_id}")
+async def delete_session_competitor(
+    session_id: int,
+    competitor_id: int,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a specific competitor from a session.
+
+    This is primarily used to remove user-added custom competitors.
+    Cannot delete AI-discovered competitors that have already been confirmed.
+
+    Args:
+        session_id: Session ID
+        competitor_id: SessionCompetitor ID to delete
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Success confirmation
+    """
+    from app.models.competitor_intelligence import SessionCompetitor
+
+    # Find the competitor
+    competitor = db.query(SessionCompetitor).filter(
+        SessionCompetitor.id == competitor_id,
+        SessionCompetitor.session_id == session_id
+    ).first()
+
+    if not competitor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Competitor not found in this session"
+        )
+
+    # Delete the competitor
+    db.delete(competitor)
+    db.commit()
+
+    return {"success": True, "message": f"Competitor '{competitor.competitor_name}' removed"}
 
 
 @router.get("/{session_id}/competitors/feature-availability")

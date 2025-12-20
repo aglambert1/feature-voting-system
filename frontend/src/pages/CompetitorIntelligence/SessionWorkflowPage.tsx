@@ -109,13 +109,17 @@ export default function SessionWorkflowPage() {
         }
 
         // Create new session
+        const enableComparison = searchParams.get('compare') === 'true';
+        const compareToSessionId = searchParams.get('compareToSession');
+
         const createResponse = await api.post<Session>('/product-intelligence/sessions', {
           product_id: parseInt(productId!),
           session_name: `${productResponse.data.product_name} - Session ${new Date().toLocaleDateString()}`,
           product_source_type: productResponse.data.product_source_type || 'text',
           product_source_data: productResponse.data.product_source_data || null,
-          enable_comparison: searchParams.get('compare') === 'true',
-          previous_session_id: previousSessionId  // Pass to Stage2 for competitor reuse check
+          enable_comparison: enableComparison,
+          compare_to_session_id: compareToSessionId ? parseInt(compareToSessionId) : null,
+          previous_session_id: previousSessionId  // Backward compatibility
         });
 
         // Backend now returns comparison_to_session_id in response

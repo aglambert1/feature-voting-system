@@ -184,6 +184,7 @@ const Stage2_CompetitorDiscovery = ({
 
       // Sort competitors by relevance score (highest first)
       // Map selected_by_user to selected for UI state
+      // User-added competitors are now preserved by the backend and included in the response
       const sortedCompetitors = [...response.data.competitors]
         .map(c => ({ ...c, selected: c.selected_by_user ?? false }))
         .sort((a, b) => {
@@ -224,34 +225,47 @@ const Stage2_CompetitorDiscovery = ({
     );
   };
 
-  const handleAddCustom = (competitor: { name: string; url: string; summary?: string }): void => {
-    // Add to local state (will be sent to backend on confirm)
-    const newCompetitor: Competitor = {
-      id: `temp-${Date.now()}`,
-      name: competitor.name,
-      url: competitor.url,
-      summary: competitor.summary || 'User-added competitor',
-      selected: true,
-      discovery_source: 'user_added',
-    };
-    setCompetitors((prev) => [...prev, newCompetitor]);
-    setShowAddModal(false);
+  const handleAddCustom = async (competitor: { name: string; url: string; summary?: string }): Promise<void> => {
+    try {
+      // Save to backend immediately so it persists across navigation/rediscovery
+      const response = await api.post<Competitor>(
+        `/product-intelligence/sessions/${sessionId}/competitors/add-custom`,
+        {
+          name: competitor.name,
+          url: competitor.url,
+          summary: competitor.summary || 'User-added competitor'
+        }
+      );
+
+      // Add the returned competitor (with real ID) to local state
+      const newCompetitor: Competitor = {
+        ...response.data,
+        selected: true
+      };
+      setCompetitors((prev) => [...prev, newCompetitor]);
+      setShowAddModal(false);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to add custom competitor');
+    }
+  };
+
+  const handleDeleteCompetitor = async (competitorId: string): Promise<void> => {
+    // Delete from backend (all competitors are now persisted immediately)
+    try {
+      await api.delete(`/product-intelligence/sessions/${sessionId}/competitors/${competitorId}`);
+      setCompetitors((prev) => prev.filter((c) => c.id !== competitorId));
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to delete competitor');
+    }
   };
 
   const handleConfirm = async (): Promise<void> => {
+    // All competitors (including user-added) now have real IDs from the database
     const selectedIds = competitors
-      .filter((c) => c.selected && !c.id.startsWith('temp-'))
-      .map((c) => c.id);
+      .filter((c) => c.selected)
+      .map((c) => parseInt(c.id));
 
-    const customCompetitors = competitors
-      .filter((c) => c.selected && c.id.startsWith('temp-'))
-      .map((c) => ({
-        name: c.name,
-        url: c.url,
-        summary: c.summary,
-      }));
-
-    if (selectedIds.length === 0 && customCompetitors.length === 0) {
+    if (selectedIds.length === 0) {
       alert('Please select at least one competitor');
       return;
     }
@@ -263,7 +277,7 @@ const Stage2_CompetitorDiscovery = ({
         `/product-intelligence/sessions/${sessionId}/confirm-competitors`,
         {
           selected_ids: selectedIds,
-          custom_competitors: customCompetitors.length > 0 ? customCompetitors : null,
+          custom_competitors: null, // No longer needed - custom competitors are already in DB
         }
       );
 
@@ -515,6 +529,7 @@ const Stage2_CompetitorDiscovery = ({
               competitor={competitor}
               onToggle={() => toggleCompetitor(competitor.id)}
               showStatus={hasPreviousAnalysis}
+              onDelete={() => handleDeleteCompetitor(competitor.id)}
             />
           ))}
         </div>
