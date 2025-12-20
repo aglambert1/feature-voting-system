@@ -212,7 +212,7 @@ export default function AnalyzeProductPage() {
           </div>
         )}
 
-        {!analysisResult && !analyzing && (
+        {!analyzing && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">
               {product.analysis_version > 0 ? 'Edit Product Information' : 'Product Information'}
@@ -236,7 +236,7 @@ export default function AnalyzeProductPage() {
           </div>
         )}
 
-        {!analysisResult && !analyzing && (
+        {!analyzing && (
           <div className="flex justify-end gap-4 mb-6">
             <button
               onClick={handleSkip}
