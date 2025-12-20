@@ -12,14 +12,6 @@ import Navigation from '../../components/Navigation';
 import { MultiSourceInput } from '../../components/MultiSourceInput';
 import { ProductSource } from '../../types';
 
-interface StructuredProductData {
-  product_category?: string;
-  core_features?: string[];
-  target_users?: string;
-  value_propositions?: string[];
-  competitor_search_keywords?: string[];
-}
-
 interface ProductData {
   id: number;
   product_name: string;
@@ -27,10 +19,6 @@ interface ProductData {
   product_source_type?: string;
   product_source_data?: any;
   analysis_version: number;
-}
-
-interface AnalyzeResponse {
-  analyzed_structure: StructuredProductData;
 }
 
 export default function AnalyzeProductPage() {
@@ -41,7 +29,6 @@ export default function AnalyzeProductPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [analysisResult, setAnalysisResult] = useState<StructuredProductData | null>(null);
   const initialSourcesLoaded = useRef<boolean>(false);
 
   useEffect(() => {
@@ -143,21 +130,18 @@ export default function AnalyzeProductPage() {
       console.log('[AnalyzeProduct] Sending to API with', payload.source_data.total_tokens_estimate, 'tokens');
 
       // Analyze product (Stage 1)
-      const response = await api.post<AnalyzeResponse>(
+      await api.post(
         `/product-intelligence/products/${productId}/analyze`,
         payload
       );
 
       console.log('[AnalyzeProduct] Analysis complete');
 
-      setAnalysisResult(response.data.analyzed_structure);
-
-      // Refresh product to get updated analysis_version
-      await fetchProduct();
+      // Redirect directly to product detail page after successful analysis
+      navigate(`/product-intelligence/products/${productId}`);
     } catch (err: any) {
       console.error('[AnalyzeProduct] Error during analysis:', err);
       setError(err.message || err.data?.detail || 'Failed to analyze product');
-    } finally {
       setAnalyzing(false);
     }
   };
@@ -165,10 +149,6 @@ export default function AnalyzeProductPage() {
   const handleSourcesChange = (newSources: ProductSource[]): void => {
     setSources(newSources);
     setError(null);
-  };
-
-  const handleContinue = (): void => {
-    navigate(`/product-intelligence/products/${productId}`);
   };
 
   const handleSkip = (): void => {
@@ -283,92 +263,6 @@ export default function AnalyzeProductPage() {
                 AI is extracting features, categorizing, identifying target users, and generating competitor search keywords.
                 This may take a minute.
               </p>
-            </div>
-          </div>
-        )}
-
-        {analysisResult && (
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-gray-900">Analysis Complete</h2>
-              <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium">
-                ✓ Success
-              </span>
-            </div>
-
-            <div className="space-y-6">
-              {analysisResult.product_category && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">Product Category</h3>
-                  <p className="text-gray-900">{analysisResult.product_category}</p>
-                </div>
-              )}
-
-              {analysisResult.core_features && analysisResult.core_features.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">
-                    Core Features ({analysisResult.core_features.length})
-                  </h3>
-                  <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {analysisResult.core_features.map((feature, index) => (
-                      <li key={index} className="flex items-start gap-2">
-                        <span className="text-blue-600 mt-0.5">✓</span>
-                        <span className="text-gray-900">{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {analysisResult.target_users && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">Target Users</h3>
-                  <p className="text-gray-900">{analysisResult.target_users}</p>
-                </div>
-              )}
-
-              {analysisResult.value_propositions && analysisResult.value_propositions.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">
-                    Value Propositions ({analysisResult.value_propositions.length})
-                  </h3>
-                  <ul className="space-y-2">
-                    {analysisResult.value_propositions.map((prop, index) => (
-                      <li key={index} className="flex items-start gap-2">
-                        <span className="text-purple-600 mt-0.5">→</span>
-                        <span className="text-gray-900">{prop}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {analysisResult.competitor_search_keywords && analysisResult.competitor_search_keywords.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">
-                    Competitor Search Keywords ({analysisResult.competitor_search_keywords.length})
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {analysisResult.competitor_search_keywords.map((keyword, index) => (
-                      <span
-                        key={index}
-                        className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm"
-                      >
-                        {keyword}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="mt-6 pt-6 border-t flex justify-end">
-              <button
-                onClick={handleContinue}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-              >
-                Continue to Product →
-              </button>
             </div>
           </div>
         )}
