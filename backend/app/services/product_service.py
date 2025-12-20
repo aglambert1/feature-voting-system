@@ -5,8 +5,10 @@ This service handles CRUD operations for products without automatically
 triggering product analysis. Analysis is now a separate, independent operation.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
+from pathlib import Path
+import shutil
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -381,3 +383,135 @@ class ProductService:
         return self.db.query(ProductAnalysisHistory).filter(
             ProductAnalysisHistory.product_id == product_id
         ).order_by(ProductAnalysisHistory.analysis_version.desc()).all()
+
+    # ============================================================================
+    # Multi-Source Helper Methods
+    # ============================================================================
+
+    def _concatenate_sources(self, sources: List[Dict[str, Any]]) -> str:
+        """
+        Concatenate multiple sources into a single text block.
+
+        Creates clearly delineated sections for each source to help
+        the AI understand the context of each piece of content.
+
+        Args:
+            sources: List of source dictionaries with 'type' and 'extracted_text'
+
+        Returns:
+            Concatenated text with source labels
+
+        Example output:
+            ===== SOURCE 1: Text Description =====
+            [content]
+
+            ===== SOURCE 2: product_spec.pdf =====
+            [content]
+        """
+        if not sources:
+            return ""
+
+        parts = []
+        for i, source in enumerate(sources, 1):
+            # Get source label
+            source_label = self._get_source_label(source)
+
+            # Add labeled section
+            parts.append(f"===== SOURCE {i}: {source_label} =====\n")
+            parts.append(source.get('extracted_text', source.get('content', '')))
+            parts.append("\n\n")
+
+        return "".join(parts).strip()
+
+    def _get_source_label(self, source: Dict[str, Any]) -> str:
+        """
+        Generate a descriptive label for a source.
+
+        Args:
+            source: Source dictionary
+
+        Returns:
+            Human-readable label
+        """
+        source_type = source.get('type', 'unknown')
+
+        if source_type == 'text':
+            return "Text Description"
+        elif source_type == 'document':
+            filename = source.get('filename', 'unknown')
+            return filename
+        elif source_type == 'url':
+            url = source.get('url', 'unknown')
+            title = source.get('title', '')
+            return f"{url}" if not title else f"{title} ({url})"
+        else:
+            return source_type
+
+    def _get_product_upload_dir(self, product_id: int) -> Path:
+        """
+        Get or create the upload directory for a product.
+
+        Args:
+            product_id: Product ID
+
+        Returns:
+            Path to product upload directory
+        """
+        upload_dir = Path("uploads") / str(product_id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        return upload_dir
+
+    def _move_temp_files(self, sources: List[Dict[str, Any]], product_id: int) -> None:
+        """
+        Move uploaded files from temp storage to permanent product storage.
+
+        For document sources, moves files from uploads/temp/{uuid}_{filename}
+        to uploads/{product_id}/{uuid}_{filename} and updates the
+        file_path in the source dict.
+
+        Args:
+            sources: List of source dictionaries (modified in place)
+            product_id: Product ID for permanent storage location
+        """
+        product_dir = self._get_product_upload_dir(product_id)
+        temp_dir = Path("uploads/temp")
+
+        for source in sources:
+            if source.get('type') == 'document' and source.get('file_id'):
+                file_id = source['file_id']
+                filename = source.get('filename', 'unknown')
+                safe_filename = f"{file_id}_{filename}"
+
+                temp_path = temp_dir / safe_filename
+                permanent_path = product_dir / safe_filename
+
+                # Move file if it exists in temp
+                if temp_path.exists():
+                    try:
+                        shutil.move(str(temp_path), str(permanent_path))
+                        # Update source with permanent path (relative)
+                        source['file_path'] = f"uploads/{product_id}/{safe_filename}"
+                        print(f"✓ Moved {safe_filename} to product {product_id} directory")
+                    except Exception as e:
+                        print(f"✗ Failed to move {safe_filename}: {e}")
+                        # Leave file in temp, but update path anyway
+                        source['file_path'] = f"uploads/temp/{safe_filename}"
+
+    def _estimate_total_tokens(self, sources: List[Dict[str, Any]]) -> int:
+        """
+        Estimate total token count for all sources.
+
+        Uses simple heuristic: 1 token ≈ 4 characters
+
+        Args:
+            sources: List of source dictionaries
+
+        Returns:
+            Estimated total token count
+        """
+        total_chars = 0
+        for source in sources:
+            text = source.get('extracted_text', source.get('content', ''))
+            total_chars += len(text)
+
+        return total_chars // 4

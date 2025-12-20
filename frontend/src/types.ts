@@ -175,6 +175,42 @@ export interface ProductCreate {
   description?: string;
 }
 
+// ============================================================================
+// MULTI-SOURCE PRODUCT TYPES
+// ============================================================================
+
+export type ProductSourceType = 'text' | 'document' | 'url';
+
+export interface ProductSource {
+  type: ProductSourceType;
+  content?: string;           // For text type
+  file_id?: string;           // UUID for uploaded documents
+  filename?: string;          // Original filename
+  extracted_text?: string;    // Parsed text from document/URL
+  url?: string;               // URL for url type
+  title?: string;             // Page title for URLs
+  size_mb?: number;           // File size
+  token_estimate?: number;    // Estimated token count
+  fetch_timestamp?: string;   // When URL was fetched
+}
+
+export interface DocumentUploadResponse {
+  file_id: string;
+  filename: string;
+  file_type: string;
+  extracted_text: string;
+  size_mb: number;
+  token_estimate: number;
+}
+
+export interface URLFetchResponse {
+  url: string;
+  title: string;
+  extracted_text: string;
+  fetch_timestamp: string;
+  token_estimate: number;
+}
+
 export interface Competitor {
   id: number;
   product_id: number;

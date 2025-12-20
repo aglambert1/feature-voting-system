@@ -106,6 +106,17 @@ def init_db():
             # PostgreSQL: Enable pgvector extension
             db.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             print("✓ pgvector extension enabled")
+
+            # Add embedding column to ci_products if not exists
+            # Note: This will error if column already exists, which is fine
+            try:
+                db.execute(text("ALTER TABLE ci_products ADD COLUMN embedding vector(384)"))
+                db.commit()
+                print("✓ Added embedding column to ci_products table")
+            except Exception as e:
+                db.rollback()
+                # Column likely already exists, which is fine
+                pass
         else:
             # SQLite: Create vec_ideas virtual table for vector search
             db.execute(text("""
@@ -115,7 +126,29 @@ def init_db():
                     embedding FLOAT[384]
                 )
             """))
-            print("✓ sqlite-vec virtual table created")
+            print("✓ sqlite-vec vec_ideas virtual table created")
+
+            # SQLite: Create vec_products virtual table for product embeddings
+            # Note: vec0 uses first column as primary key automatically
+            db.execute(text("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS vec_products
+                USING vec0(
+                    embedding FLOAT[384]
+                )
+            """))
+
+            # Create a regular table to store product chunk metadata
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS product_chunks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_id INTEGER NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    chunk_text TEXT,
+                    vec_rowid INTEGER,
+                    UNIQUE(product_id, chunk_index)
+                )
+            """))
+            print("✓ sqlite-vec vec_products virtual table created")
 
         db.commit()
     except Exception as e:

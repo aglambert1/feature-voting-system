@@ -2,14 +2,15 @@
  * AnalyzeProductPage
  *
  * Stage 1: Analyze a product with AI to extract features, category, target users, etc.
- * This can be used for initial analysis or re-analysis as the product evolves.
+ * Supports multi-source documentation and re-analysis.
  */
 
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import Navigation from '../../components/Navigation';
-import SourceInput from './components/SourceInput';
+import { MultiSourceInput } from '../../components/MultiSourceInput';
+import { ProductSource } from '../../types';
 
 interface StructuredProductData {
   product_category?: string;
@@ -24,7 +25,7 @@ interface ProductData {
   product_name: string;
   product_description: string;
   product_source_type?: string;
-  product_source_data?: { url?: string; filename?: string } | null;
+  product_source_data?: any;
   analysis_version: number;
 }
 
@@ -36,14 +37,12 @@ export default function AnalyzeProductPage() {
   const { productId } = useParams<{ productId: string }>();
   const navigate = useNavigate();
   const [product, setProduct] = useState<ProductData | null>(null);
+  const [sources, setSources] = useState<ProductSource[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<StructuredProductData | null>(null);
-  const [sourceType, setSourceType] = useState<'text' | 'url' | 'document'>('text');
-  const [sourceData, setSourceData] = useState<{ url?: string; filename?: string } | null>(null);
-  const [productDescription, setProductDescription] = useState<string>('');
-  const shouldAutoAnalyze = useRef<boolean>(false);
+  const initialSourcesLoaded = useRef<boolean>(false);
 
   useEffect(() => {
     if (productId) {
@@ -51,34 +50,46 @@ export default function AnalyzeProductPage() {
     }
   }, [productId]);
 
-  // Pre-fill source information from product
+  // Parse existing product sources from source_data
   useEffect(() => {
-    if (product) {
-      console.log('[AnalyzeProduct] Pre-filling from product:', {
-        source_type: product.product_source_type,
-        source_data: product.product_source_data,
-        description_length: product.product_description?.length
-      });
-      setSourceType((product.product_source_type as 'text' | 'url' | 'document') || 'text');
-      setSourceData(product.product_source_data || null);
-      setProductDescription(product.product_description);
+    if (product && product.product_source_data && !initialSourcesLoaded.current) {
+      try {
+        // Try to extract sources from source_data
+        const sourceData = product.product_source_data;
+        let loadedSources: ProductSource[] = [];
 
-      // Mark for auto-analyze if this is a new product
-      if (product.analysis_version === 0 && !analyzing && !analysisResult) {
-        console.log('[AnalyzeProduct] New product detected, marking for auto-analysis...');
-        shouldAutoAnalyze.current = true;
+        if (sourceData.sources && Array.isArray(sourceData.sources)) {
+          // Multi-source format
+          loadedSources = sourceData.sources;
+        } else if (product.product_description) {
+          // Legacy single-source format - create a single text source
+          loadedSources = [{
+            type: 'text',
+            content: product.product_description,
+            extracted_text: product.product_description,
+            token_estimate: Math.floor(product.product_description.length / 4),
+          }];
+        }
+
+        setSources(loadedSources);
+
+        // Mark that initial sources have been loaded
+        initialSourcesLoaded.current = true;
+      } catch (err) {
+        console.error('[AnalyzeProduct] Failed to parse sources:', err);
+        // Fallback to single text source
+        if (product.product_description) {
+          setSources([{
+            type: 'text',
+            content: product.product_description,
+            extracted_text: product.product_description,
+            token_estimate: Math.floor(product.product_description.length / 4),
+          }]);
+        }
+        initialSourcesLoaded.current = true;
       }
     }
   }, [product]);
-
-  // Auto-analyze when description is loaded for new products
-  useEffect(() => {
-    if (shouldAutoAnalyze.current && productDescription && productDescription.length >= 10) {
-      console.log('[AnalyzeProduct] Auto-starting analysis...');
-      shouldAutoAnalyze.current = false; // Prevent re-triggering
-      handleAnalyze();
-    }
-  }, [productDescription]);
 
   const fetchProduct = async (): Promise<void> => {
     try {
@@ -93,31 +104,51 @@ export default function AnalyzeProductPage() {
   };
 
   const handleAnalyze = async (): Promise<void> => {
-    console.log('[AnalyzeProduct] Starting analysis with current state:', {
-      productDescription,
-      sourceType,
-      sourceData
-    });
+    if (sources.length === 0) {
+      setError('Please add at least one source of product information');
+      return;
+    }
+
+    console.log('[AnalyzeProduct] Starting analysis with', sources.length, 'sources');
 
     try {
       setAnalyzing(true);
       setError(null);
 
+      // Concatenate all source texts for product_description
+      const product_description = sources
+        .map((source, index) => {
+          const label =
+            source.type === 'text'
+              ? `Source ${index + 1}: Text Description`
+              : source.type === 'document'
+              ? `Source ${index + 1}: ${source.filename}`
+              : `Source ${index + 1}: ${source.title || source.url}`;
+
+          return `===== ${label.toUpperCase()} =====\n${source.extracted_text || source.content || ''}`;
+        })
+        .join('\n\n');
+
+      // Prepare payload
       const payload = {
-        product_description: productDescription,
-        source_type: sourceType,
-        source_data: sourceData
+        product_description,
+        source_type: 'text', // Multi-source represented as concatenated text
+        source_data: {
+          sources,
+          concatenated_text: product_description,
+          total_tokens_estimate: sources.reduce((sum, s) => sum + (s.token_estimate || 0), 0),
+        },
       };
 
-      console.log('[AnalyzeProduct] Sending to API:', payload);
+      console.log('[AnalyzeProduct] Sending to API with', payload.source_data.total_tokens_estimate, 'tokens');
 
-      // Analyze product (Stage 1) with updated description
+      // Analyze product (Stage 1)
       const response = await api.post<AnalyzeResponse>(
         `/product-intelligence/products/${productId}/analyze`,
         payload
       );
 
-      console.log('[AnalyzeProduct] API response:', response.data);
+      console.log('[AnalyzeProduct] Analysis complete');
 
       setAnalysisResult(response.data.analyzed_structure);
 
@@ -131,19 +162,9 @@ export default function AnalyzeProductPage() {
     }
   };
 
-  const handleSourceTypeChange = (type: 'text' | 'url' | 'document'): void => {
-    console.log('[AnalyzeProduct] Source type changed:', type);
-    setSourceType(type);
-  };
-
-  const handleSourceDataChange = (data: { url?: string; filename?: string } | null): void => {
-    console.log('[AnalyzeProduct] Source data changed:', data);
-    setSourceData(data);
-  };
-
-  const handleDescriptionChange = (description: string): void => {
-    console.log('[AnalyzeProduct] Description changed, length:', description?.length);
-    setProductDescription(description);
+  const handleSourcesChange = (newSources: ProductSource[]): void => {
+    setSources(newSources);
+    setError(null);
   };
 
   const handleContinue = (): void => {
@@ -198,11 +219,10 @@ export default function AnalyzeProductPage() {
           </h1>
           <p className="text-gray-600">
             {product.analysis_version > 0
-              ? `Current analysis version: ${product.analysis_version}. Run a new analysis to update.`
+              ? `Current analysis version: ${product.analysis_version}. Add or modify sources and run a new analysis to update.`
               : analyzing
-                ? 'Step 2 of 2: AI is analyzing your product...'
-                : 'Step 2 of 2: AI will analyze your product to extract features, category, and insights.'
-            }
+              ? 'AI is analyzing your product...'
+              : 'Review your product information and click "Analyze Product" when ready.'}
           </p>
         </div>
 
@@ -215,186 +235,164 @@ export default function AnalyzeProductPage() {
         {!analysisResult && !analyzing && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              {product.analysis_version > 0 ? 'Edit Source & Description' : 'Product Source'}
+              {product.analysis_version > 0 ? 'Edit Product Information' : 'Product Information'}
             </h2>
-            <div className="mb-4">
+
+            <div className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Product Name
               </label>
-              <p className="text-gray-900">{product.product_name}</p>
+              <p className="text-gray-900 font-medium">{product.product_name}</p>
             </div>
+
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Product Description & Source
-              </label>
-              <SourceInput
-                sourceType={sourceType}
-                sourceData={sourceData}
-                description={productDescription}
-                onSourceTypeChange={handleSourceTypeChange}
-                onSourceDataChange={handleSourceDataChange}
-                onDescriptionChange={handleDescriptionChange}
-                minLength={10}
-              />
+              <MultiSourceInput sources={sources} onSourcesChange={handleSourcesChange} />
               <p className="mt-2 text-sm text-gray-600">
                 {product.analysis_version > 0
-                  ? 'You can change the source type and description before re-analyzing. The product will be analyzed with this new information.'
-                  : 'Define the source of your product information before analysis.'
-                }
+                  ? 'You can add, remove, or modify sources before re-analyzing. All sources will be combined for AI analysis.'
+                  : 'Add one or more sources: type text directly, upload documents (PDF, DOCX, TXT, MD), or fetch content from URLs.'}
               </p>
             </div>
           </div>
         )}
 
         {!analysisResult && !analyzing && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-            <h3 className="font-medium text-blue-900 mb-2">
-              What will AI extract?
-            </h3>
-            <ul className="space-y-2 text-sm text-blue-800">
-              <li className="flex items-center gap-2">
-                <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                <span>Product category</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                <span>Core features</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                <span>Target users</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                <span>Value propositions</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                <span>Competitor search keywords</span>
-              </li>
-            </ul>
+          <div className="flex justify-end gap-4 mb-6">
+            <button
+              onClick={handleSkip}
+              className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+            >
+              Skip Analysis
+            </button>
+            <button
+              onClick={handleAnalyze}
+              disabled={sources.length === 0}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {product.analysis_version > 0 ? 'Re-analyze Product' : 'Analyze Product'}
+            </button>
           </div>
         )}
 
         {analyzing && (
-          <div className="bg-white rounded-lg shadow p-8 text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4"></div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              Analyzing product with AI...
-            </h3>
-            <p className="text-gray-600">
-              This may take 10-30 seconds. Please wait.
-            </p>
+          <div className="bg-white rounded-lg shadow p-8 mb-6">
+            <div className="flex flex-col items-center justify-center space-y-4">
+              <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600"></div>
+              <h3 className="text-lg font-semibold text-gray-900">Analyzing Product...</h3>
+              <p className="text-sm text-gray-600 text-center max-w-md">
+                AI is extracting features, categorizing, identifying target users, and generating competitor search keywords.
+                This may take a minute.
+              </p>
+            </div>
           </div>
         )}
 
         {analysisResult && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <div className="flex items-center gap-2 mb-4">
-              <svg className="w-6 h-6 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-              </svg>
-              <h2 className="text-lg font-semibold text-gray-900">
-                Analysis Complete!
-              </h2>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold text-gray-900">Analysis Complete</h2>
+              <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium">
+                ✓ Success
+              </span>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Product Category
-                </label>
-                <p className="text-gray-900">{analysisResult.product_category || 'N/A'}</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Core Features ({analysisResult.core_features?.length || 0})
-                </label>
-                <ul className="list-disc list-inside space-y-1 text-gray-700">
-                  {analysisResult.core_features?.map((feature, idx) => (
-                    <li key={idx}>{feature}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Target Users
-                </label>
-                <p className="text-gray-700">{analysisResult.target_users || 'N/A'}</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Value Propositions
-                </label>
-                <ul className="list-disc list-inside space-y-1 text-gray-700">
-                  {analysisResult.value_propositions?.map((vp, idx) => (
-                    <li key={idx}>{vp}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Competitor Search Keywords
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {analysisResult.competitor_search_keywords?.map((keyword, idx) => (
-                    <span
-                      key={idx}
-                      className="px-3 py-1 bg-gray-100 text-gray-700 text-sm rounded-full"
-                    >
-                      {keyword}
-                    </span>
-                  ))}
+            <div className="space-y-6">
+              {analysisResult.product_category && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">Product Category</h3>
+                  <p className="text-gray-900">{analysisResult.product_category}</p>
                 </div>
-              </div>
+              )}
+
+              {analysisResult.core_features && analysisResult.core_features.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">
+                    Core Features ({analysisResult.core_features.length})
+                  </h3>
+                  <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {analysisResult.core_features.map((feature, index) => (
+                      <li key={index} className="flex items-start gap-2">
+                        <span className="text-blue-600 mt-0.5">✓</span>
+                        <span className="text-gray-900">{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {analysisResult.target_users && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">Target Users</h3>
+                  <p className="text-gray-900">{analysisResult.target_users}</p>
+                </div>
+              )}
+
+              {analysisResult.value_propositions && analysisResult.value_propositions.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">
+                    Value Propositions ({analysisResult.value_propositions.length})
+                  </h3>
+                  <ul className="space-y-2">
+                    {analysisResult.value_propositions.map((prop, index) => (
+                      <li key={index} className="flex items-start gap-2">
+                        <span className="text-purple-600 mt-0.5">→</span>
+                        <span className="text-gray-900">{prop}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {analysisResult.competitor_search_keywords && analysisResult.competitor_search_keywords.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">
+                    Competitor Search Keywords ({analysisResult.competitor_search_keywords.length})
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {analysisResult.competitor_search_keywords.map((keyword, index) => (
+                      <span
+                        key={index}
+                        className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm"
+                      >
+                        {keyword}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 pt-6 border-t flex justify-end">
+              <button
+                onClick={handleContinue}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              >
+                Continue to Product →
+              </button>
             </div>
           </div>
         )}
 
-        <div className="flex justify-end gap-4">
-          {!analysisResult && !analyzing && (
-            <>
-              {product.analysis_version > 0 && (
-                <button
-                  onClick={handleSkip}
-                  className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                >
-                  Skip Re-analysis
-                </button>
-              )}
-              <button
-                onClick={handleAnalyze}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                </svg>
-                {product.analysis_version > 0 ? 'Re-analyze with AI' : 'Analyze with AI'}
-              </button>
-            </>
-          )}
-          {analysisResult && (
-            <button
-              onClick={handleContinue}
-              className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
-            >
-              Continue to Product →
-            </button>
-          )}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h3 className="font-medium text-blue-900 mb-2">What happens during analysis?</h3>
+          <ul className="space-y-2 text-sm text-blue-800">
+            <li className="flex items-start gap-2">
+              <span className="text-blue-600 font-bold">•</span>
+              <span>AI extracts core features and categorizes your product</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-blue-600 font-bold">•</span>
+              <span>Identifies target user segments and value propositions</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-blue-600 font-bold">•</span>
+              <span>Generates keywords for finding competitors</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-blue-600 font-bold">•</span>
+              <span>Creates vector embeddings for semantic search</span>
+            </li>
+          </ul>
         </div>
       </main>
     </div>

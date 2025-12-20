@@ -11,17 +11,21 @@ Independent Stages:
 - Stage 3: Analyze Competitor Features (handled by sessions)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body, Request, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
+import uuid
+from pathlib import Path
 
 from app.database import get_db
 from app.models.user import User
 from app.models.competitor_intelligence import ProductPermissionLevel
 from app.services.product_service import ProductService
 from app.services.llm_service import llm_service
+from app.services.document_parsing_service import DocumentParsingService
+from app.services.vector_service import VectorService
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
 
 
@@ -128,7 +132,8 @@ def analyze_product(
     product_id: int,
     request: ProductAnalyzeRequest,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    req: Request = None
 ):
     """
     Analyze a product with AI (Stage 1 - Independent Operation).
@@ -162,6 +167,66 @@ def analyze_product(
             source_data=request.source_data,
             llm_service=llm_service
         )
+
+        # Generate and store product embeddings after analysis completes
+        if req and hasattr(req.app.state, 'embedding_model'):
+            try:
+                # Get the product description that was analyzed
+                product_text = request.product_description
+
+                print(f"[API] Generating embedding for product {product_id}...")
+
+                # Check if text is large enough to require chunking
+                if len(product_text) > 16000:  # ~4000 tokens
+                    print(f"[API] Text is large ({len(product_text)} chars), chunking...")
+                    # Simple chunking: split into ~12K char chunks with overlap
+                    chunk_size = 12000
+                    overlap = 1000
+                    chunks = []
+
+                    for i in range(0, len(product_text), chunk_size - overlap):
+                        chunk = product_text[i:i + chunk_size]
+                        if chunk.strip():
+                            chunks.append(chunk)
+
+                    print(f"[API] Created {len(chunks)} chunks")
+
+                    # Generate embedding for each chunk
+                    for i, chunk in enumerate(chunks):
+                        embedding = req.app.state.embedding_model.encode(
+                            chunk,
+                            show_progress_bar=False
+                        )
+                        VectorService.store_product_embedding(
+                            db,
+                            product_id,
+                            embedding.tolist(),
+                            chunk_index=i,
+                            chunk_text=chunk[:500]  # Store first 500 chars as preview
+                        )
+
+                    print(f"[API] ✓ Stored {len(chunks)} chunk embeddings for product {product_id}")
+                else:
+                    # Single embedding for entire product
+                    embedding = req.app.state.embedding_model.encode(
+                        product_text,
+                        show_progress_bar=False
+                    )
+                    VectorService.store_product_embedding(
+                        db,
+                        product_id,
+                        embedding.tolist(),
+                        chunk_index=0,
+                        chunk_text=product_text[:500]  # Store first 500 chars as preview
+                    )
+                    print(f"[API] ✓ Stored single embedding for product {product_id}")
+
+                db.commit()
+            except Exception as e:
+                print(f"[API] Warning: Failed to generate product embedding: {e}")
+                # Don't fail the request if embedding generation fails
+                db.rollback()
+
         return {
             "product_id": product_id,
             "analysis_version": analyzed_structure.get("version", "latest"),
@@ -300,6 +365,106 @@ def get_analysis_history(
         )
 
 
+@router.get("/{product_id}/search")
+def search_product_content(
+    product_id: int,
+    q: str = Query(..., min_length=10, description="Search query (minimum 10 characters)"),
+    threshold: float = Query(0.6, ge=0.0, le=1.0, description="Similarity threshold (0-1, higher = more similar)"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+    req: Request = None
+):
+    """
+    Semantic search within product documentation.
+
+    Uses vector similarity search to find relevant content in the product's
+    documentation. This is useful for:
+    - Checking if a user idea is already implemented in the product
+    - Finding relevant product sections for specific features
+    - General product knowledge search
+
+    Requires VIEW permission on the product.
+
+    Args:
+        product_id: Product ID to search within
+        q: Search query (minimum 10 characters for meaningful results)
+        threshold: Similarity threshold (0-1, default 0.6). Higher values return only closer matches.
+
+    Returns:
+        List of matching content chunks with similarity scores
+
+    Raises:
+        400: If query is too short or embedding model unavailable
+        403: If user lacks VIEW permission
+        404: If product not found or has no embeddings
+    """
+    # Check if embedding model is available
+    if not req or not hasattr(req.app.state, 'embedding_model'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Embedding model not available. Semantic search is disabled."
+        )
+
+    # Check permission
+    service = ProductService(db)
+    product = service.get_product(product_id, current_user.id)
+
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found or you don't have permission to view it"
+        )
+
+    try:
+        # Generate query embedding
+        query_embedding = req.app.state.embedding_model.encode(
+            q,
+            show_progress_bar=False
+        )
+
+        # Search product chunks
+        results = VectorService.find_similar_in_product(
+            db,
+            query_embedding.tolist(),
+            product_id,
+            threshold=threshold
+        )
+
+        if not results:
+            return {
+                "product_id": product_id,
+                "query": q,
+                "threshold": threshold,
+                "matches": [],
+                "message": "No matches found. Try lowering the threshold or rephrasing your query."
+            }
+
+        # Convert distance to similarity score (distance = 2 * (1 - similarity))
+        # So similarity = 1 - (distance / 2)
+        matches = [
+            {
+                "text": text,
+                "similarity_score": 1 - (distance / 2),
+                "distance": distance
+            }
+            for text, distance in results
+        ]
+
+        return {
+            "product_id": product_id,
+            "query": q,
+            "threshold": threshold,
+            "matches": matches
+        }
+
+    except Exception as e:
+        print(f"[API] Error during product search: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Search failed: {str(e)}"
+        )
+
+
 @router.patch("/{product_id}", response_model=ProductResponse)
 def update_product(
     product_id: int,
@@ -386,5 +551,162 @@ def delete_product(
     except PermissionError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
+
+
+# ============================================================================
+# Document Upload & URL Fetching Endpoints
+# ============================================================================
+
+@router.post("/upload-document")
+async def upload_document(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Upload and parse a document (PDF, DOCX, TXT, MD).
+
+    Supported formats: .pdf, .docx, .txt, .md
+    Maximum size: 50MB
+
+    The file is saved to temporary storage and parsed to extract text.
+    The extracted text is returned immediately for frontend preview.
+    Files are moved to permanent storage when the product is created/analyzed.
+
+    Requires: Any authenticated user
+
+    Returns:
+        {
+            'file_id': str (UUID for tracking),
+            'filename': str,
+            'file_type': str (extension),
+            'extracted_text': str,
+            'size_mb': float,
+            'token_estimate': int
+        }
+
+    Raises:
+        400: If file validation fails or parsing fails
+        500: If unexpected error occurs
+    """
+    parsing_service = DocumentParsingService()
+
+    # Validate file
+    validation = parsing_service.validate_file(file)
+    if not validation['valid']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=validation['error']
+        )
+
+    # Generate unique file ID
+    file_id = str(uuid.uuid4())
+    file_ext = validation['file_type']
+    safe_filename = f"{file_id}_{file.filename}"
+
+    # Create temp directory if it doesn't exist
+    temp_dir = Path("uploads/temp")
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save file to temp location
+    temp_path = temp_dir / safe_filename
+    try:
+        with open(temp_path, 'wb') as f:
+            content = await file.read()
+            f.write(content)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save file: {str(e)}"
+        )
+
+    # Parse document based on type
+    try:
+        if file_ext == '.pdf':
+            extracted_text = parsing_service.parse_pdf(str(temp_path))
+        elif file_ext == '.docx':
+            extracted_text = parsing_service.parse_docx(str(temp_path))
+        elif file_ext in ['.txt', '.md']:
+            extracted_text = parsing_service.parse_text_file(str(temp_path))
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported file type: {file_ext}"
+            )
+    except Exception as e:
+        # Clean up temp file on parse failure
+        temp_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to parse document: {str(e)}"
+        )
+
+    # Calculate token estimate
+    token_estimate = parsing_service.count_tokens_estimate(extracted_text)
+
+    return {
+        'file_id': file_id,
+        'filename': file.filename,
+        'file_type': file_ext,
+        'extracted_text': extracted_text,
+        'size_mb': round(validation['size_mb'], 2),
+        'token_estimate': token_estimate
+    }
+
+
+@router.post("/fetch-url")
+async def fetch_url(
+    url: str = Body(..., embed=True),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Fetch and extract content from a URL.
+
+    Fetches HTML content and extracts main text using BeautifulSoup.
+    Converts HTML to clean markdown-style text for better readability.
+
+    Security features:
+    - SSRF prevention (blocks internal IPs)
+    - Timeout: 10 seconds
+    - Max redirects: 3
+    - Only allows http/https protocols
+
+    Requires: Any authenticated user
+
+    Returns:
+        {
+            'url': str (final URL after redirects),
+            'title': str (page title),
+            'extracted_text': str,
+            'fetch_timestamp': str (ISO format),
+            'token_estimate': int
+        }
+
+    Raises:
+        400: If URL is invalid, blocked, or fetch fails
+        500: If unexpected error occurs
+    """
+    parsing_service = DocumentParsingService()
+
+    try:
+        result = parsing_service.fetch_url_content(url)
+
+        # Add token estimate
+        result['token_estimate'] = parsing_service.count_tokens_estimate(
+            result['extracted_text']
+        )
+
+        return result
+    except ValueError as e:
+        # Validation errors (invalid URL, blocked IP, etc.)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        # Fetch errors (timeout, connection failed, etc.)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )

@@ -140,3 +140,6 @@ vite.config.ts.timestamp-*
 feature_voting.db.backup.*
 .DS_Store
 logs/
+
+# User uploaded files
+backend/uploads/

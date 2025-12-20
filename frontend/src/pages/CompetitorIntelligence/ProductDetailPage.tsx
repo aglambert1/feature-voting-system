@@ -9,6 +9,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import api from '../../services/api';
 import Navigation from '../../components/Navigation';
+import { ProductSource } from '../../types';
 
 interface StructuredProductData {
   core_features?: string[];
@@ -52,6 +53,9 @@ export default function ProductDetailPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedVersions, setExpandedVersions] = useState<Set<number>>(new Set());
+  const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
+  const [sources, setSources] = useState<ProductSource[]>([]);
+  const [sourcesModified, setSourcesModified] = useState<boolean>(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -68,6 +72,11 @@ export default function ProductDetailPage() {
       const productResponse = await api.get<ProductDetail>(`/product-intelligence/products/${productId}`);
       setProduct(productResponse.data);
 
+      // Load sources into state
+      const loadedSources = parseProductSources(productResponse.data);
+      setSources(loadedSources);
+      setSourcesModified(false);
+
       // Fetch analysis history if product has been analyzed
       if (productResponse.data.analysis_version > 0) {
         const historyResponse = await api.get<AnalysisHistory[]>(
@@ -80,6 +89,81 @@ export default function ProductDetailPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const parseProductSources = (productData: ProductDetail): ProductSource[] => {
+    if (!productData || !productData.product_source_data) {
+      // Fallback to legacy single-source format
+      if (productData?.product_description) {
+        return [{
+          type: 'text',
+          content: productData.product_description,
+          extracted_text: productData.product_description,
+          token_estimate: Math.floor(productData.product_description.length / 4),
+        }];
+      }
+      return [];
+    }
+
+    const sourceData = productData.product_source_data as any;
+    if (sourceData.sources && Array.isArray(sourceData.sources)) {
+      return sourceData.sources;
+    }
+
+    // Legacy single-source format
+    if (productData.product_description) {
+      return [{
+        type: 'text',
+        content: productData.product_description,
+        extracted_text: productData.product_description,
+        token_estimate: Math.floor(productData.product_description.length / 4),
+      }];
+    }
+
+    return [];
+  };
+
+  const handleRemoveSource = async (index: number): Promise<void> => {
+    if (!window.confirm('Are you sure you want to remove this source?')) {
+      return;
+    }
+
+    const newSources = sources.filter((_, i) => i !== index);
+    setSources(newSources);
+    setSourcesModified(true);
+
+    // Save immediately to backend
+    try {
+      const product_description = concatenateSources(newSources);
+      const source_data = {
+        sources: newSources,
+        concatenated_text: product_description,
+        total_tokens_estimate: newSources.reduce((sum, s) => sum + (s.token_estimate || 0), 0),
+      };
+
+      await api.put(`/product-intelligence/products/${productId}`, {
+        product_description,
+        source_type: 'text',
+        source_data,
+      });
+    } catch (err: any) {
+      setError(err.message || err.data?.detail || 'Failed to update product sources');
+    }
+  };
+
+  const concatenateSources = (sourcesToConcat: ProductSource[]): string => {
+    return sourcesToConcat
+      .map((source, index) => {
+        const label =
+          source.type === 'text'
+            ? `Source ${index + 1}: Text Description`
+            : source.type === 'document'
+            ? `Source ${index + 1}: ${source.filename}`
+            : `Source ${index + 1}: ${source.title || source.url}`;
+
+        return `===== ${label.toUpperCase()} =====\n${source.extracted_text || source.content || ''}`;
+      })
+      .join('\n\n');
   };
 
   const handleAnalyze = (): void => {
@@ -119,6 +203,34 @@ export default function ProductDetailPage() {
       }
       return newSet;
     });
+  };
+
+  const toggleSourceExpansion = (index: number): void => {
+    setExpandedSources(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(index)) {
+        newSet.delete(index);
+      } else {
+        newSet.add(index);
+      }
+      return newSet;
+    });
+  };
+
+  const getSourceLabel = (source: ProductSource, index: number): string => {
+    if (source.type === 'text') {
+      return `Text Description ${index + 1}`;
+    } else if (source.type === 'document') {
+      return source.filename || 'Document';
+    } else if (source.type === 'url') {
+      return source.title || source.url || 'URL';
+    }
+    return `Source ${index + 1}`;
+  };
+
+  const getSourcePreview = (source: ProductSource): string => {
+    const text = source.extracted_text || source.content || '';
+    return text.length > 150 ? text.substring(0, 150) + '...' : text;
   };
 
   if (loading) {
@@ -208,27 +320,188 @@ export default function ProductDetailPage() {
         </div>
 
         <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-2">
-            Product Description
-          </h2>
-          <p className="text-gray-700 mb-3">{product.product_description}</p>
-          {product.product_source_type && product.product_source_type !== 'text' && (
-            <div className="mt-3 pt-3 border-t border-gray-200">
-              <p className="text-sm text-gray-600">
-                <span className="font-medium">Source:</span>{' '}
-                <span className="capitalize">{product.product_source_type}</span>
-                {product.product_source_data?.url && (
-                  <span className="ml-2 text-blue-600">
-                    <a href={product.product_source_data.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                      {product.product_source_data.url}
-                    </a>
-                  </span>
-                )}
-                {product.product_source_data?.filename && (
-                  <span className="ml-2">: {product.product_source_data.filename}</span>
-                )}
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Product Information Sources
+            </h2>
+            <button
+              onClick={handleAnalyze}
+              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium"
+            >
+              + Add Sources
+            </button>
+          </div>
+
+          {sourcesModified && product?.analysis_version && product.analysis_version > 0 && (
+            <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+              <p className="text-sm text-yellow-800">
+                <span className="font-medium">Sources modified.</span> Click "Re-analyze Product" to update your analysis with the new information.
               </p>
             </div>
+          )}
+
+          {sources.length > 0 ? (
+            <div className="space-y-2">
+              {sources.map((source, index) => {
+                const isExpanded = expandedSources.has(index);
+                const fullText = source.extracted_text || source.content || '';
+
+                return (
+                  <div
+                    key={index}
+                    className="bg-gray-50 rounded-md border border-gray-200 overflow-hidden"
+                  >
+                    {/* Header - Always visible, clickable to expand */}
+                    <div className="flex items-start gap-3 p-3">
+                      {/* Source Icon */}
+                      <div className="flex-shrink-0 mt-1">
+                        {source.type === 'text' && (
+                          <svg
+                            className="h-5 w-5 text-gray-400"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M4 6h16M4 12h16M4 18h7"
+                            />
+                          </svg>
+                        )}
+                        {source.type === 'document' && (
+                          <svg
+                            className="h-5 w-5 text-blue-500"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+                            />
+                          </svg>
+                        )}
+                        {source.type === 'url' && (
+                          <svg
+                            className="h-5 w-5 text-green-500"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
+                            />
+                          </svg>
+                        )}
+                      </div>
+
+                      {/* Source Content - Clickable area */}
+                      <div
+                        className="flex-1 min-w-0 cursor-pointer"
+                        onClick={() => toggleSourceExpansion(index)}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <h4 className="text-sm font-medium text-gray-900 truncate">
+                            {getSourceLabel(source, index)}
+                          </h4>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500 whitespace-nowrap">
+                              {source.token_estimate?.toLocaleString() || 0} tokens
+                            </span>
+                            {/* Expand/Collapse icon */}
+                            <svg
+                              className={`h-4 w-4 text-gray-400 transition-transform ${
+                                isExpanded ? 'transform rotate-180' : ''
+                              }`}
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M19 9l-7 7-7-7"
+                              />
+                            </svg>
+                          </div>
+                        </div>
+
+                        {!isExpanded && (
+                          <p className="text-xs text-gray-600 mt-1">
+                            {getSourcePreview(source)}
+                          </p>
+                        )}
+
+                        {source.type === 'document' && source.size_mb !== undefined && !isExpanded && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            {source.size_mb.toFixed(1)} MB
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Remove Button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveSource(index);
+                        }}
+                        className="flex-shrink-0 p-1 text-gray-400 hover:text-red-600 transition-colors"
+                        title="Remove source"
+                      >
+                        <svg
+                          className="h-5 w-5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M6 18L18 6M6 6l12 12"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+
+                    {/* Expanded Content - Show full text when expanded */}
+                    {isExpanded && (
+                      <div className="px-3 pb-3 pl-11">
+                        <div className="mt-2 p-3 bg-white rounded border border-gray-200 max-h-96 overflow-y-auto">
+                          <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans">
+                            {fullText}
+                          </pre>
+                        </div>
+
+                        {/* Additional metadata when expanded */}
+                        <div className="mt-2 flex gap-4 text-xs text-gray-500">
+                          {source.type === 'document' && source.size_mb !== undefined && (
+                            <span>File size: {source.size_mb.toFixed(1)} MB</span>
+                          )}
+                          {source.type === 'url' && source.url && (
+                            <span>URL: {source.url}</span>
+                          )}
+                          {source.type === 'url' && source.fetch_timestamp && (
+                            <span>Fetched: {new Date(source.fetch_timestamp).toLocaleString()}</span>
+                          )}
+                          <span>Characters: {fullText.length.toLocaleString()}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-gray-500 text-sm">No product information available</p>
           )}
         </div>
 

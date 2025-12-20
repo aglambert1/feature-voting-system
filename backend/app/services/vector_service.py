@@ -116,3 +116,184 @@ class VectorService:
             })
 
         return results.fetchall()
+
+    # ============================================================================
+    # Product Embedding Methods
+    # ============================================================================
+
+    @staticmethod
+    def store_product_embedding(
+        db: Session,
+        product_id: int,
+        embedding: List[float],
+        chunk_index: int = 0,
+        chunk_text: str = None
+    ) -> None:
+        """
+        Store embedding for a product description (database-agnostic).
+
+        For large product descriptions (>4000 tokens), multiple chunks can be stored
+        with different chunk_index values.
+
+        Args:
+            db: SQLAlchemy database session
+            product_id: ID of the product
+            embedding: Embedding vector (384 dimensions for all-MiniLM-L6-v2)
+            chunk_index: Index of chunk (0 for single embedding)
+            chunk_text: Text content of this chunk (optional, for reference)
+
+        Note:
+            - PostgreSQL: Updates ci_products.embedding column (single embedding only)
+            - SQLite: Inserts into vec_products virtual table (supports chunks)
+        """
+        if VectorService.is_postgres(db):
+            # PostgreSQL: Update product embedding column
+            # For now, only support single embedding (chunk_index must be 0)
+            if chunk_index == 0:
+                db.execute(
+                    text("UPDATE ci_products SET embedding = :emb WHERE id = :id"),
+                    {"id": product_id, "emb": embedding}
+                )
+            # Note: Chunking for PostgreSQL would require separate chunks table
+        else:
+            # SQLite: Insert into vec_products virtual table + product_chunks metadata table
+            # Supports multiple chunks per product
+            serialized_emb = sqlite_vec.serialize_float32(embedding)
+
+            # Delete existing chunk if replacing
+            # First get the vec_rowid from product_chunks
+            result = db.execute(
+                text("SELECT vec_rowid FROM product_chunks WHERE product_id = :id AND chunk_index = :chunk_idx"),
+                {"id": product_id, "chunk_idx": chunk_index}
+            ).fetchone()
+
+            if result:
+                vec_rowid = result[0]
+                # Delete from vec_products using rowid
+                db.execute(
+                    text("DELETE FROM vec_products WHERE rowid = :rowid"),
+                    {"rowid": vec_rowid}
+                )
+                # Delete from product_chunks
+                db.execute(
+                    text("DELETE FROM product_chunks WHERE product_id = :id AND chunk_index = :chunk_idx"),
+                    {"id": product_id, "chunk_idx": chunk_index}
+                )
+
+            # Insert new chunk into vec_products
+            db.execute(
+                text("INSERT INTO vec_products(embedding) VALUES (:emb)"),
+                {"emb": serialized_emb}
+            )
+
+            # Get the rowid of the inserted embedding
+            vec_rowid = db.execute(text("SELECT last_insert_rowid()")).fetchone()[0]
+
+            # Insert metadata into product_chunks
+            db.execute(
+                text("""
+                    INSERT INTO product_chunks(product_id, chunk_index, chunk_text, vec_rowid)
+                    VALUES (:id, :chunk_idx, :text, :vec_rowid)
+                """),
+                {"id": product_id, "chunk_idx": chunk_index, "text": chunk_text, "vec_rowid": vec_rowid}
+            )
+
+    @staticmethod
+    def find_similar_in_product(
+        db: Session,
+        query_embedding: List[float],
+        product_id: int,
+        threshold: float = 0.7
+    ) -> List[Tuple[str, float]]:
+        """
+        Search within a product's description for similar content.
+
+        Args:
+            db: SQLAlchemy database session
+            query_embedding: Query embedding vector
+            product_id: Product ID to search within
+            threshold: Minimum similarity score (0-1, where 1 is identical)
+
+        Returns:
+            List of tuples: (chunk_text, distance)
+            Distance is cosine distance (0=identical, 2=opposite)
+            Results are filtered by threshold and sorted by similarity
+
+        Note:
+            - If product description is chunked, searches across all chunks
+            - If not chunked, returns single result with overall similarity
+        """
+        # Convert threshold to distance (distance = 2 * (1 - similarity))
+        max_distance = 2 * (1 - threshold)
+
+        if VectorService.is_postgres(db):
+            # PostgreSQL: Search product embedding
+            results = db.execute(text("""
+                SELECT COALESCE(product_description, '') as text,
+                       embedding <=> :query_emb::vector as distance
+                FROM ci_products
+                WHERE id = :product_id
+                  AND embedding IS NOT NULL
+                  AND (embedding <=> :query_emb::vector) <= :max_distance
+                ORDER BY embedding <=> :query_emb::vector
+            """), {
+                "query_emb": query_embedding,
+                "product_id": product_id,
+                "max_distance": max_distance
+            })
+        else:
+            # SQLite: Search all chunks for this product using JOIN
+            serialized_query = sqlite_vec.serialize_float32(query_embedding)
+            results = db.execute(text("""
+                SELECT COALESCE(pc.chunk_text, '') as text,
+                       vec_distance_cosine(vp.embedding, :query_emb) as distance
+                FROM product_chunks pc
+                JOIN vec_products vp ON pc.vec_rowid = vp.rowid
+                WHERE pc.product_id = :product_id
+                  AND vec_distance_cosine(vp.embedding, :query_emb) <= :max_distance
+                ORDER BY distance ASC
+            """), {
+                "query_emb": serialized_query,
+                "product_id": product_id,
+                "max_distance": max_distance
+            })
+
+        return results.fetchall()
+
+    @staticmethod
+    def delete_product_embeddings(db: Session, product_id: int) -> None:
+        """
+        Delete all embeddings for a product.
+
+        Useful when product is deleted or re-analyzed.
+
+        Args:
+            db: SQLAlchemy database session
+            product_id: Product ID
+        """
+        if VectorService.is_postgres(db):
+            # PostgreSQL: Set embedding to NULL
+            db.execute(
+                text("UPDATE ci_products SET embedding = NULL WHERE id = :id"),
+                {"id": product_id}
+            )
+        else:
+            # SQLite: Delete all chunks from vec_products and product_chunks
+            # First get all vec_rowids for this product
+            vec_rowids = db.execute(
+                text("SELECT vec_rowid FROM product_chunks WHERE product_id = :id"),
+                {"id": product_id}
+            ).fetchall()
+
+            # Delete from vec_products
+            for (vec_rowid,) in vec_rowids:
+                db.execute(
+                    text("DELETE FROM vec_products WHERE rowid = :rowid"),
+                    {"rowid": vec_rowid}
+                )
+
+            # Delete from product_chunks
+            db.execute(
+                text("DELETE FROM product_chunks WHERE product_id = :id"),
+                {"id": product_id}
+            )
