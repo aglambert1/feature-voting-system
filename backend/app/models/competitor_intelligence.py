@@ -30,6 +30,21 @@ class ProductPermissionLevel(str, enum.Enum):
     ADMIN = "admin"
 
 
+class SessionStage(str, enum.Enum):
+    """
+    Stages of an analysis session lifecycle.
+
+    - PRODUCT_ANALYSIS: Stage 1 - Product analyzed
+    - COMPETITOR_DISCOVERY: Stage 2 - Competitors discovered
+    - FEATURE_EXTRACTION: Stage 3 - Features extracted
+    - IDEA_GENERATION: Stage 4 - Ideas generated
+    """
+    PRODUCT_ANALYSIS = "product_analysis"
+    COMPETITOR_DISCOVERY = "competitor_discovery"
+    FEATURE_EXTRACTION = "feature_extraction"
+    IDEA_GENERATION = "idea_generation"
+
+
 class CIProduct(Base):
     """
     Product being analyzed for competitive intelligence.
@@ -59,6 +74,9 @@ class CIProduct(Base):
     analysis_version = Column(Integer, default=0)
     last_analyzed_at = Column(DateTime)
     analysis_count = Column(Integer, default=0)
+
+    # Source change tracking
+    last_source_hash = Column(String(64))
 
     status = Column(String(50), default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
@@ -95,6 +113,12 @@ class CompetitorAnalysisSession(Base):
     product_source_type = Column(String(50), nullable=False)
     product_source_data = Column(JSON)
     analyzed_product_structure = Column(JSON)
+
+    # Unified session architecture fields
+    analysis_version = Column(Integer)  # Links to ProductAnalysisHistory.analysis_version
+    stage_completed = Column(Enum(SessionStage), nullable=False, default=SessionStage.PRODUCT_ANALYSIS)
+    product_source_hash = Column(String(64))  # SHA-256 hash for change detection
+
     status = Column(String(50), nullable=False, default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

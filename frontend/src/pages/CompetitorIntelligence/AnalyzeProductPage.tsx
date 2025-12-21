@@ -39,17 +39,28 @@ export default function AnalyzeProductPage() {
 
   // Parse existing product sources from source_data
   useEffect(() => {
-    if (product && product.product_source_data && !initialSourcesLoaded.current) {
+    if (product && !initialSourcesLoaded.current) {
       try {
-        // Try to extract sources from source_data
-        const sourceData = product.product_source_data;
         let loadedSources: ProductSource[] = [];
 
-        if (sourceData.sources && Array.isArray(sourceData.sources)) {
-          // Multi-source format
-          loadedSources = sourceData.sources;
+        if (product.product_source_data) {
+          // Try to extract sources from source_data
+          const sourceData = product.product_source_data;
+
+          if (sourceData.sources && Array.isArray(sourceData.sources)) {
+            // Multi-source format
+            loadedSources = sourceData.sources;
+          } else if (product.product_description) {
+            // Legacy single-source format - create a single text source
+            loadedSources = [{
+              type: 'text',
+              content: product.product_description,
+              extracted_text: product.product_description,
+              token_estimate: Math.floor(product.product_description.length / 4),
+            }];
+          }
         } else if (product.product_description) {
-          // Legacy single-source format - create a single text source
+          // No source_data at all - create a single text source from product_description
           loadedSources = [{
             type: 'text',
             content: product.product_description,
@@ -242,7 +253,7 @@ export default function AnalyzeProductPage() {
               onClick={handleSkip}
               className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
             >
-              Skip Analysis
+              Cancel
             </button>
             <button
               onClick={handleAnalyze}

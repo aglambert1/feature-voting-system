@@ -12,6 +12,8 @@ export interface SessionSummary {
   id: number;
   session_number: number;
   session_name: string | null;
+  analysis_version: number | null;
+  stage_completed: string | null;
   created_at: string;
   completed_at: string | null;
   competitors_count: number;
@@ -22,13 +24,16 @@ export interface SessionSummary {
 
 interface SessionSelectorModalProps {
   sessions: SessionSummary[];
-  onSelect: (sessionId: number) => void;
+  currentSessionId?: number | null;  // NEW: ID of current session (most recent)
+  onSelect: (sessionId: number | null) => void;  // null = no comparison (full analysis)
   onCancel: () => void;
 }
 
-const SessionSelectorModal = ({ sessions, onSelect, onCancel }: SessionSelectorModalProps) => {
-  // Default to most recent session with competitors
-  const defaultSessionId = sessions.find(s => s.has_competitors)?.id || sessions[0]?.id || null;
+const SessionSelectorModal = ({ sessions, currentSessionId, onSelect, onCancel }: SessionSelectorModalProps) => {
+  // Default to most recent session with competitors (excluding current)
+  const previousSessions = sessions.filter(s => s.id !== currentSessionId);
+  const currentSession = sessions.find(s => s.id === currentSessionId);
+  const defaultSessionId = currentSession?.id || previousSessions.find(s => s.has_competitors)?.id || previousSessions[0]?.id || null;
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(defaultSessionId);
 
   const formatDate = (dateStr: string): string => {
@@ -98,8 +103,53 @@ const SessionSelectorModal = ({ sessions, onSelect, onCancel }: SessionSelectorM
               <p>No previous competitor analyses found.</p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {sessions.map((session) => (
+            <div className="space-y-4">
+              {/* Current session option */}
+              {currentSession && (
+                <div className="pb-4 border-b border-gray-200">
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">Current Analysis</h3>
+                  <button
+                    onClick={() => setSelectedSessionId(currentSession.id)}
+                    className={`w-full p-4 border-2 rounded-lg text-left transition-all min-h-[44px] sm:min-h-0 ${
+                      selectedSessionId === currentSession.id
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200 hover:border-blue-300'
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                          selectedSessionId === currentSession.id
+                            ? 'border-blue-500 bg-blue-500'
+                            : 'border-gray-300'
+                        }`}>
+                          {selectedSessionId === currentSession.id && (
+                            <div className="w-2 h-2 bg-white rounded-full"></div>
+                          )}
+                        </div>
+                        <div>
+                          <span className="font-semibold text-blue-600">
+                            Analysis #{currentSession.session_number}
+                          </span>
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded ml-2">
+                            Most Recent
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-2 ml-7 text-sm text-gray-600">
+                      Compare against the current analysis to find new competitors since last discovery
+                    </div>
+                  </button>
+                </div>
+              )}
+
+              {/* Previous analyses */}
+              {previousSessions.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">Previous Analyses</h3>
+                  <div className="space-y-3">
+                    {previousSessions.map((session) => (
                 <button
                   key={session.id}
                   onClick={() => setSelectedSessionId(session.id)}
@@ -160,7 +210,10 @@ const SessionSelectorModal = ({ sessions, onSelect, onCancel }: SessionSelectorM
                     </div>
                   )}
                 </button>
-              ))}
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

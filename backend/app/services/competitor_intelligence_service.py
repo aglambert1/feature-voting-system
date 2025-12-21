@@ -153,10 +153,9 @@ class CompetitorIntelligenceService:
             }
 
     def _get_previous_competitors(self, previous_session_id: int) -> List[Dict]:
-        """Get competitors from previous session"""
+        """Get competitors from previous session (all discovered competitors, not just selected ones)"""
         competitors = self.db.query(SessionCompetitor).filter(
-            SessionCompetitor.session_id == previous_session_id,
-            SessionCompetitor.selected_by_user == True
+            SessionCompetitor.session_id == previous_session_id
         ).all()
 
         return [

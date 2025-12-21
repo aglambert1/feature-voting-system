@@ -15,7 +15,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from app.models.competitor_intelligence import (
-    CIProduct, CompetitorAnalysisSession, ProductPermissionLevel
+    CIProduct, CompetitorAnalysisSession, ProductPermissionLevel, SessionStage
 )
 from app.services.permission_service import PermissionService
 
@@ -37,21 +37,22 @@ class SessionService:
         compare_to_session_id: Optional[int] = None
     ) -> CompetitorAnalysisSession:
         """
-        Create a new analysis session for an existing product.
+        Create a new analysis session or advance existing product-only session.
 
-        Sessions are workflow containers that track progression through
-        competitive intelligence stages. Product must already exist and
-        be analyzed before creating a session.
+        With unified session architecture, product analysis auto-creates sessions.
+        When user clicks "Find Competitors", we check if there's a product-only
+        session for the current analysis version and advance it to Stage 2.
 
         Args:
             user_id: ID of the user creating the session
             product_id: ID of existing product (must be analyzed)
             session_name: Optional session name
             enable_comparison: Enable differential analysis if previous sessions exist
-            previous_session_id: Explicit previous session ID to compare against (overrides auto-detection)
+            previous_session_id: Deprecated: use compare_to_session_id instead
+            compare_to_session_id: Explicit session ID to compare against for differential analysis
 
         Returns:
-            Created CompetitorAnalysisSession
+            Created or advanced CompetitorAnalysisSession
 
         Raises:
             PermissionError: If user lacks VIEW permission
@@ -78,41 +79,84 @@ class SessionService:
                 "Please analyze the product before creating a session."
             )
 
+        # UNIFIED SESSION ARCHITECTURE:
+        # Check if there's a product-only session for the current analysis version
+        existing_session = self.db.query(CompetitorAnalysisSession).filter(
+            CompetitorAnalysisSession.product_id == product_id,
+            CompetitorAnalysisSession.analysis_version == product.analysis_version,
+            CompetitorAnalysisSession.stage_completed == SessionStage.PRODUCT_ANALYSIS
+        ).first()
+
+        if existing_session:
+            print(f"[SessionService] Found existing product-only session #{existing_session.session_number}, advancing to Stage 2...")
+
+            # Advance existing session to Stage 2 (Competitor Discovery)
+            existing_session.status = "active"
+            existing_session.stage_completed = SessionStage.COMPETITOR_DISCOVERY
+
+            # Set up comparison if requested
+            if enable_comparison:
+                if compare_to_session_id is not None:
+                    existing_session.comparison_to_session_id = compare_to_session_id
+                    existing_session.analysis_type = "differential"
+                    print(f"[SessionService] Enabling differential comparison to session #{compare_to_session_id}")
+                elif previous_session_id is not None:
+                    existing_session.comparison_to_session_id = previous_session_id
+                    existing_session.analysis_type = "differential"
+                    print(f"[SessionService] Enabling differential comparison to session #{previous_session_id}")
+
+            if session_name:
+                existing_session.session_name = session_name
+
+            try:
+                self.db.commit()
+                self.db.refresh(existing_session)
+                print(f"[SessionService] Advanced session #{existing_session.session_number} to Stage 2")
+            except IntegrityError as e:
+                self.db.rollback()
+                raise ValueError(f"Failed to advance session: {str(e)}")
+
+            return existing_session
+
+        # No existing session - create new one (shouldn't happen in normal flow)
+        # This handles edge cases or direct API access
+        print(f"[SessionService] No product-only session found, creating new session...")
+
         # Determine session number
         session_number = self._get_next_session_number(product.id)
 
         # Check if we should do comparison analysis
         analysis_type = "full"
-        comparison_to_session_id = None
+        comparison_to_session_id_value = None
 
         if enable_comparison:
             # Priority order: compare_to_session_id > previous_session_id > auto-detect
             if compare_to_session_id is not None:
-                # Use explicitly provided comparison session (highest priority)
                 analysis_type = "differential"
-                comparison_to_session_id = compare_to_session_id
+                comparison_to_session_id_value = compare_to_session_id
             elif previous_session_id is not None:
-                # Backward compatibility: use previous_session_id
                 analysis_type = "differential"
-                comparison_to_session_id = previous_session_id
+                comparison_to_session_id_value = previous_session_id
             elif session_number > 1:
-                # Fall back to auto-detection
                 previous_session = self._get_previous_session(product.id)
                 if previous_session:
                     analysis_type = "differential"
-                    comparison_to_session_id = previous_session.id
+                    comparison_to_session_id_value = previous_session.id
 
-        # Create session (lightweight - just tracks workflow)
+        # Create new session
         session = CompetitorAnalysisSession(
             product_id=product.id,
             user_id=user_id,
             session_number=session_number,
-            session_name=session_name or f"Session {session_number}",
+            session_name=session_name or f"Analysis {session_number}",
+            analysis_version=product.analysis_version,  # Link to current analysis
+            stage_completed=SessionStage.COMPETITOR_DISCOVERY,  # Starting at Stage 2
             analysis_type=analysis_type,
-            comparison_to_session_id=comparison_to_session_id,
-            product_source_type="text",  # Legacy field - not critical
-            product_source_data=None,
+            comparison_to_session_id=comparison_to_session_id_value,
+            product_source_type=product.product_source_type,
+            product_source_data=product.product_source_data,
             analyzed_product_structure=product.structured_product_data,
+            product_source_hash=product.last_source_hash,
             status="active"
         )
 
@@ -120,6 +164,7 @@ class SessionService:
             self.db.add(session)
             self.db.commit()
             self.db.refresh(session)
+            print(f"[SessionService] Created new session #{session.session_number}")
         except IntegrityError as e:
             self.db.rollback()
             raise ValueError(f"Failed to create session: {str(e)}")

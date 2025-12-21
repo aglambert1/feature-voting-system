@@ -190,6 +190,8 @@ def list_product_sessions(
                 "session_number": s.session_number,
                 "session_name": s.session_name,
                 "analysis_type": s.analysis_type,
+                "analysis_version": s.analysis_version,  # NEW: Link to product analysis version
+                "stage_completed": s.stage_completed.value if s.stage_completed else None,  # NEW: Workflow stage
                 "status": s.status,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "completed_at": s.completed_at.isoformat() if s.completed_at else None,

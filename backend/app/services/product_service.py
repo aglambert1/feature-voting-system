@@ -9,11 +9,14 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from pathlib import Path
 import shutil
+import hashlib
+import json
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from app.models.competitor_intelligence import (
-    CIProduct, ProductAnalysisHistory, ProductPermissionLevel
+    CIProduct, ProductAnalysisHistory, ProductPermissionLevel,
+    CompetitorAnalysisSession, SessionStage
 )
 from app.models.user import User
 from app.agents.product_analyzer import ProductAnalyzerAgent
@@ -156,6 +159,13 @@ class ProductService:
         # Increment version
         new_version = product.analysis_version + 1
 
+        # Calculate source hash for change detection
+        source_hash = self._calculate_source_hash(
+            product_description=product_description,
+            source_type=source_type,
+            source_data=source_data
+        )
+
         # Save to analysis history with the analyzed description
         history = ProductAnalysisHistory(
             product_id=product_id,
@@ -168,8 +178,27 @@ class ProductService:
             tokens_used=None  # Could be extracted from agent logs
         )
 
+        # AUTO-CREATE SESSION (Unified Session Architecture)
+        # Every product analysis now creates a session
+        session = CompetitorAnalysisSession(
+            product_id=product_id,
+            user_id=user_id,
+            session_number=new_version,  # Match analysis version
+            analysis_version=new_version,  # Link to specific analysis
+            stage_completed=SessionStage.PRODUCT_ANALYSIS,  # Stage 1 complete
+            status="completed",  # Product analysis is done
+            analysis_type="full",  # No comparison at this stage
+            product_source_type=source_type,
+            product_source_data=source_data,
+            analyzed_product_structure=analyzed_structure,
+            product_source_hash=source_hash,
+            created_at=datetime.utcnow(),
+            completed_at=datetime.utcnow()  # Stage 1 is complete
+        )
+
         try:
             self.db.add(history)
+            self.db.add(session)
 
             # Update product with latest analysis and description
             print(f"[ProductService] Updating product {product_id} description: {product_description[:100]}...")
@@ -183,10 +212,14 @@ class ProductService:
             product.last_analyzed_by_user_id = user_id
             product.analysis_count = new_version
             product.last_modified_by_user_id = user_id
+            product.last_source_hash = source_hash  # Update source hash
 
+            print(f"[ProductService] Auto-creating session #{new_version} for product analysis...")
             print(f"[ProductService] Committing changes to database...")
             self.db.commit()
             self.db.refresh(product)
+            self.db.refresh(session)
+            print(f"[ProductService] Created session #{session.session_number} (ID: {session.id}) for product {product_id}")
             print(f"[ProductService] After commit, product.product_description: {product.product_description[:100]}...")
         except IntegrityError as e:
             self.db.rollback()
@@ -515,3 +548,62 @@ class ProductService:
             total_chars += len(text)
 
         return total_chars // 4
+
+    def _calculate_source_hash(
+        self,
+        product_description: str,
+        source_type: str,
+        source_data: Optional[Dict[str, Any]]
+    ) -> str:
+        """
+        Calculate SHA-256 hash of product sources for change detection.
+
+        Creates a deterministic hash based on source configuration to detect
+        when product information has changed and requires re-analysis.
+
+        Args:
+            product_description: Product description text
+            source_type: Source type (text, document, url)
+            source_data: Source metadata
+
+        Returns:
+            SHA-256 hash (64 hex characters)
+        """
+        source_data = source_data or {}
+
+        if source_type == "text":
+            # Hash the text content itself
+            content = product_description
+        elif source_type == "document":
+            # Hash file path + upload timestamp if available
+            # For multi-source, hash all file paths
+            if 'sources' in source_data:
+                # Multi-source mode
+                file_paths = sorted([
+                    s.get('file_path', '') for s in source_data.get('sources', [])
+                    if s.get('type') == 'document'
+                ])
+                content = '_'.join(file_paths)
+            else:
+                # Single-source mode
+                file_path = source_data.get('file_path', '')
+                uploaded_at = source_data.get('uploaded_at', '')
+                content = f"{file_path}_{uploaded_at}"
+        elif source_type == "url":
+            # Hash all URLs
+            if 'sources' in source_data:
+                # Multi-source mode
+                urls = sorted([
+                    s.get('url', '') for s in source_data.get('sources', [])
+                    if s.get('type') == 'url'
+                ])
+                content = '_'.join(urls)
+            else:
+                # Single-source mode
+                content = source_data.get('url', '')
+        else:
+            # Unknown source type - hash the description
+            content = product_description
+
+        # Generate SHA-256 hash
+        return hashlib.sha256(content.encode('utf-8')).hexdigest()

@@ -116,14 +116,15 @@ const Stage2_CompetitorDiscovery = ({
       // No competitors in current session - check if we have a previous session to copy from
       console.log('[Stage2] No competitors in current session. previousSessionId:', previousSessionId);
 
-      if (!previousSessionId) {
-        // No previous session - run discovery
-        console.log('[Stage2] No previousSessionId, starting discovery');
+      if (!previousSessionId || hasPreviousAnalysis) {
+        // No previous session OR this is differential analysis - run discovery
+        // For differential analysis, we always want to discover NEW competitors rather than copying old ones
+        console.log('[Stage2] No previousSessionId or differential analysis mode, starting discovery');
         discoverCompetitors();
         return;
       }
 
-      // Copy competitors from previous session to current session
+      // Copy competitors from previous session to current session (non-differential sessions only)
       // Guard against multiple calls (React StrictMode runs effects twice)
       if (copyingRef.current) {
         console.log('[Stage2] Copy already in progress, skipping duplicate call');
@@ -294,10 +295,12 @@ const Stage2_CompetitorDiscovery = ({
       <div className="text-center py-12">
         <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
         <h3 className="text-lg font-medium text-gray-900 mb-2">
-          Discovering Competitors...
+          {hasPreviousAnalysis ? 'Discovering New Competitors...' : 'Discovering Competitors...'}
         </h3>
         <p className="text-gray-600 mb-2">
-          AI is researching the competitive landscape
+          {hasPreviousAnalysis
+            ? 'AI is researching new competitors and comparing with previous analysis'
+            : 'AI is researching the competitive landscape'}
         </p>
         <p className="text-sm text-gray-500">
           ⏱️ This typically takes 30-60 seconds

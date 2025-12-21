@@ -266,23 +266,24 @@ Always respond with valid JSON matching the specified schema."""
         previous_competitors = input_data.get('previous_competitors', [])
         product_name = input_data.get('product_name', '')
 
-        prompt = f"""Compare competitor analyses for: {product_name}
+        # Pre-match competitors to simplify LLM's job
+        matched_results = self._match_competitors(current_competitors, previous_competitors)
 
-**Current Analysis:**
-{self._format_competitors(current_competitors)}
+        prompt = f"""Analyze competitive changes for: {product_name}
 
-**Previous Analysis:**
-{self._format_competitors(previous_competitors)}
+**Competitors have been pre-matched. Your task is to:**
+1. Validate the matches and assign status explanations
+2. Assess significance of changes
+3. Summarize key competitive shifts
 
-Your task:
-1. Match competitors between the two lists (by name and URL)
-2. For each current competitor, determine:
-   - status: "new" (wasn't in previous), "continuing" (in both), or "disappeared" (only in previous)
-   - status_explanation: Brief reason for the status (e.g., "New market entrant", "Still active competitor")
-   - significance: "low", "medium", or "high" (how important is this change?)
-   - previous_competitor_match: If continuing, which previous competitor it matches
+**Pre-matched Results:**
+{self._format_matched_competitors(matched_results)}
 
-3. Provide summary statistics:
+For each competitor, provide:
+- status_explanation: Brief reason (e.g., "New market entrant", "Continuing competitor")
+- significance: "low", "medium", or "high" based on competitive impact
+
+Summary:
    - new_count: Number of new competitors
    - continuing_count: Number of continuing competitors
    - disappeared_count: Number of disappeared competitors
@@ -311,6 +312,65 @@ Return JSON format:
 }}
 """
         return prompt
+
+    def _match_competitors(self, current: List[Dict], previous: List[Dict]) -> List[Dict]:
+        """
+        Pre-match current competitors against previous ones using simple name/URL matching.
+        This offloads the matching work from the LLM, making it faster.
+        """
+        import difflib
+
+        matched = []
+        previous_names = {comp.get('name', '').lower(): comp for comp in previous}
+
+        for curr_comp in current:
+            curr_name = curr_comp.get('name', '').lower()
+            curr_url = curr_comp.get('url', '').lower()
+
+            # Try exact name match first
+            match = previous_names.get(curr_name)
+
+            # Try fuzzy name match if no exact match
+            if not match and previous:
+                close_matches = difflib.get_close_matches(
+                    curr_name,
+                    previous_names.keys(),
+                    n=1,
+                    cutoff=0.8
+                )
+                if close_matches:
+                    match = previous_names[close_matches[0]]
+
+            # Try URL domain match as fallback
+            if not match and curr_url and previous:
+                curr_domain = curr_url.split('/')[2] if '/' in curr_url else curr_url
+                for prev_comp in previous:
+                    prev_url = prev_comp.get('url', '').lower()
+                    prev_domain = prev_url.split('/')[2] if '/' in prev_url else prev_url
+                    if curr_domain == prev_domain and curr_domain:
+                        match = prev_comp
+                        break
+
+            matched.append({
+                **curr_comp,
+                'status': 'continuing' if match else 'new',
+                'previous_match': match.get('id') if match else None
+            })
+
+        return matched
+
+    def _format_matched_competitors(self, matched: List[Dict]) -> str:
+        """Format pre-matched competitors for prompt"""
+        if not matched:
+            return "(None)"
+
+        lines = []
+        for comp in matched:
+            status = comp.get('status', 'new')
+            name = comp.get('name', 'Unknown')
+            url = comp.get('url', 'N/A')
+            lines.append(f"- [{status.upper()}] {name}: {url}")
+        return '\n'.join(lines)
 
     def _format_competitors(self, competitors: List[Dict]) -> str:
         """Format competitor list for prompt"""

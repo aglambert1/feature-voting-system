@@ -11,6 +11,7 @@ import api from '../../services/api';
 import Navigation from '../../components/Navigation';
 import { ProductSource } from '../../types';
 import SessionSelectorModal, { SessionSummary } from './components/SessionSelectorModal';
+import SourceChangeWarning from './components/SourceChangeWarning';
 
 interface StructuredProductData {
   core_features?: string[];
@@ -60,6 +61,7 @@ export default function ProductDetailPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loadingSessions, setLoadingSessions] = useState<boolean>(false);
   const [showSessionSelector, setShowSessionSelector] = useState<boolean>(false);
+  const [showSourceChangeWarning, setShowSourceChangeWarning] = useState<boolean>(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -197,13 +199,27 @@ export default function ProductDetailPage() {
 
   const handleShowCompetitors = (): void => {
     // Navigate to most recent session
-    if (sessions.length > 0) {
-      const mostRecentSession = sessions[0]; // Sessions are ordered newest first
+    const mostRecentSession = sessions[0]; // Sessions are ordered newest first
+    if (mostRecentSession) {
       navigate(`/product-intelligence/products/${productId}/sessions/${mostRecentSession.id}`);
     }
   };
 
-  const handleDiscoverChanges = (): void => {
+  const handleDiscoverChanges = async (): Promise<void> => {
+    // Check for source changes before navigating
+    try {
+      const response = await api.get(`/product-intelligence/products/${productId}/source-status`);
+
+      if (response.data.sources_changed) {
+        setShowSourceChangeWarning(true);
+        return;
+      }
+    } catch (err) {
+      console.error('[ProductDetail] Failed to check source status:', err);
+      // Continue anyway if check fails
+    }
+
+    // No changes - proceed normally
     if (sessions.length === 0) {
       // Fallback: create new session without comparison
       navigate(`/product-intelligence/products/${productId}/sessions`);
@@ -212,14 +228,38 @@ export default function ProductDetailPage() {
     setShowSessionSelector(true);
   };
 
-  const handleSessionSelected = (sessionId: number): void => {
+  const handleSessionSelected = (sessionId: number | null): void => {
     setShowSessionSelector(false);
-    // Navigate with comparison parameters
-    navigate(`/product-intelligence/products/${productId}/sessions?compare=true&compareToSession=${sessionId}`);
+    if (sessionId === null) {
+      // No comparison - fresh discovery
+      navigate(`/product-intelligence/products/${productId}/sessions`);
+    } else {
+      // Navigate with comparison parameters
+      navigate(`/product-intelligence/products/${productId}/sessions?compare=true&compareToSession=${sessionId}`);
+    }
   };
 
   const handleCancelSessionSelector = (): void => {
     setShowSessionSelector(false);
+  };
+
+  const handleSourceWarningReanalyze = (): void => {
+    setShowSourceChangeWarning(false);
+    handleAnalyze();  // Trigger product re-analysis
+  };
+
+  const handleSourceWarningContinue = (): void => {
+    setShowSourceChangeWarning(false);
+    // Proceed with session selector
+    if (sessions.length === 0) {
+      navigate(`/product-intelligence/products/${productId}/sessions`);
+      return;
+    }
+    setShowSessionSelector(true);
+  };
+
+  const handleSourceWarningCancel = (): void => {
+    setShowSourceChangeWarning(false);
   };
 
   const toggleVersionExpanded = (versionId: number): void => {
@@ -340,18 +380,25 @@ export default function ProductDetailPage() {
               {/* Scenario 2: Sessions exist - Three distinct options */}
               {product.analysis_version > 0 && sessions.length > 0 && (
                 <>
-                  {/* Show existing competitors */}
-                  <button
-                    onClick={handleShowCompetitors}
-                    className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2"
-                  >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                    <span className="hidden md:inline">Show Competitors</span>
-                    <span className="md:hidden">Competitors</span>
-                  </button>
+                  {/* Show existing competitors - only if they've been discovered */}
+                  {(() => {
+                    const mostRecentSession = sessions[0];
+                    const hasDiscoveredCompetitors = mostRecentSession?.stage_completed &&
+                      mostRecentSession.stage_completed !== 'product_analysis';
+                    return hasDiscoveredCompetitors;
+                  })() && (
+                    <button
+                      onClick={handleShowCompetitors}
+                      className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2"
+                    >
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                      <span className="hidden md:inline">Show Competitors</span>
+                      <span className="md:hidden">Competitors</span>
+                    </button>
+                  )}
 
                   {/* Discover changes (differential) */}
                   <button
@@ -769,8 +816,18 @@ export default function ProductDetailPage() {
       {showSessionSelector && (
         <SessionSelectorModal
           sessions={sessions}
+          currentSessionId={sessions[0]?.id || null}
           onSelect={handleSessionSelected}
           onCancel={handleCancelSessionSelector}
+        />
+      )}
+
+      {/* Source Change Warning Modal */}
+      {showSourceChangeWarning && (
+        <SourceChangeWarning
+          onReanalyze={handleSourceWarningReanalyze}
+          onContinueAnyway={handleSourceWarningContinue}
+          onCancel={handleSourceWarningCancel}
         />
       )}
     </div>

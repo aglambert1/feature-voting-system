@@ -465,6 +465,62 @@ def search_product_content(
         )
 
 
+@router.get("/{product_id}/source-status")
+def check_product_source_status(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Check if product sources have changed since last analysis.
+
+    Returns source change status to detect when product information
+    is stale and requires re-analysis before starting new workflows.
+
+    Requires VIEW permission on the product.
+
+    Args:
+        product_id: Product ID
+
+    Returns:
+        dict with:
+        - sources_changed: Boolean indicating if sources have changed
+        - last_analyzed_at: When product was last analyzed
+        - analysis_version: Current analysis version
+
+    Raises:
+        403: If user lacks VIEW permission
+        404: If product not found
+    """
+    service = ProductService(db)
+    product = service.get_product(product_id, current_user.id)
+
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found or you don't have permission to view it"
+        )
+
+    # Calculate current source hash
+    current_hash = service._calculate_source_hash(
+        product_description=product.product_description,
+        source_type=product.product_source_type,
+        source_data=product.product_source_data
+    )
+
+    # Compare to stored hash
+    sources_changed = (
+        product.last_source_hash is not None and
+        current_hash != product.last_source_hash
+    )
+
+    return {
+        "sources_changed": sources_changed,
+        "last_analyzed_at": product.last_analyzed_at.isoformat() if product.last_analyzed_at else None,
+        "analysis_version": product.analysis_version
+    }
+
+
 @router.patch("/{product_id}", response_model=ProductResponse)
 def update_product(
     product_id: int,
