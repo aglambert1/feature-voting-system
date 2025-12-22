@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models.competitor_intelligence import (
     CIProduct, ProductAnalysisHistory, ProductPermissionLevel,
-    CompetitorAnalysisSession, SessionStage
+    CompetitorAnalysisSession, SessionStage, ProductFeature
 )
 from app.models.user import User
 from app.agents.product_analyzer import ProductAnalyzerAgent
@@ -199,6 +199,26 @@ class ProductService:
         try:
             self.db.add(history)
             self.db.add(session)
+            self.db.flush()  # Flush to get history.id for detailed features
+
+            # Store detailed features
+            detailed_features_data = analyzed_structure.get('detailed_features', [])
+            if detailed_features_data:
+                print(f"[ProductService] Storing {len(detailed_features_data)} detailed features...")
+                for feature_data in detailed_features_data:
+                    product_feature = ProductFeature(
+                        product_id=product_id,
+                        analysis_history_id=history.id,
+                        analysis_version=new_version,
+                        feature_name=feature_data.get('name'),
+                        feature_description=feature_data.get('description'),
+                        feature_category=feature_data.get('category'),
+                        extraction_confidence=feature_data.get('confidence'),
+                        source_reference=feature_data.get('source_reference'),
+                        status='active'
+                    )
+                    self.db.add(product_feature)
+                print(f"[ProductService] Stored {len(detailed_features_data)} detailed features for version {new_version}")
 
             # Update product with latest analysis and description
             print(f"[ProductService] Updating product {product_id} description: {product_description[:100]}...")

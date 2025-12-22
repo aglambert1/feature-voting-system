@@ -365,6 +365,83 @@ def get_analysis_history(
         )
 
 
+@router.get("/{product_id}/detailed-features", response_model=List[dict])
+def get_detailed_features(
+    product_id: int,
+    analysis_version: Optional[int] = Query(None, description="Analysis version (default: latest)"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed product features for a specific analysis version.
+
+    Returns the granular feature list (10-25 features) that complements
+    the core_features (5-7 strategic features) in the analysis structure.
+
+    Requires VIEW permission on the product.
+
+    Args:
+        product_id: Product ID
+        analysis_version: Specific analysis version (default: latest)
+
+    Returns:
+        List of detailed features with metadata
+
+    Raises:
+        403: If user lacks VIEW permission
+        404: If product or analysis version not found
+    """
+    from app.models.competitor_intelligence import ProductFeature, CIProduct
+    from app.services.permission_service import PermissionService
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.VIEW
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have VIEW permission for product {product_id}"
+        )
+
+    # Get product
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product {product_id} not found"
+        )
+
+    # Use latest version if not specified
+    if analysis_version is None:
+        analysis_version = product.analysis_version
+
+    # Get detailed features
+    features = db.query(ProductFeature).filter(
+        ProductFeature.product_id == product_id,
+        ProductFeature.analysis_version == analysis_version,
+        ProductFeature.status == 'active'
+    ).order_by(ProductFeature.feature_category, ProductFeature.feature_name).all()
+
+    if not features:
+        return []
+
+    return [
+        {
+            "id": f.id,
+            "feature_name": f.feature_name,
+            "feature_description": f.feature_description,
+            "feature_category": f.feature_category,
+            "extraction_confidence": float(f.extraction_confidence) if f.extraction_confidence else None,
+            "source_reference": f.source_reference,
+            "created_at": f.created_at.isoformat() + 'Z' if f.created_at else None
+        }
+        for f in features
+    ]
+
+
 @router.get("/{product_id}/search")
 def search_product_content(
     product_id: int,

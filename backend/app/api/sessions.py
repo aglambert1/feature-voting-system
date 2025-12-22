@@ -196,9 +196,9 @@ def list_product_sessions(
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "completed_at": s.completed_at.isoformat() if s.completed_at else None,
                 "competitors_count": len([c for c in s.session_competitors if c.selected_by_user]),
-                "features_count": len([f for sc in s.session_competitors if sc.selected_by_user for f in sc.session_competitor_features if f.selected_by_user]),
+                "features_count": len([f for sc in s.session_competitors if sc.selected_by_user for f in sc.features if f.selected_by_user]),
                 "has_competitors": len([c for c in s.session_competitors if c.selected_by_user]) > 0,
-                "has_features": len([f for sc in s.session_competitors if sc.selected_by_user for f in sc.session_competitor_features if f.selected_by_user]) > 0
+                "has_features": len([f for sc in s.session_competitors if sc.selected_by_user for f in sc.features if f.selected_by_user]) > 0
             }
             for s in sessions
         ]
@@ -411,6 +411,87 @@ async def get_session_competitors(
     }
 
 
+@router.get("/{session_id}/competitors-feature-availability")
+async def get_competitors_feature_availability(
+    session_id: int,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Get which competitors have pre-extracted features available.
+
+    This endpoint checks if competitors already have features extracted
+    (either in this product or via global reuse from other products).
+    Used by the discovery UI to show indicators of which competitors
+    have already been analyzed.
+
+    Args:
+        session_id: Session ID
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Dict with competitor_id -> has_features_extracted mapping
+    """
+    from app.models.competitor_intelligence import (
+        SessionCompetitor,
+        ProductCompetitor,
+        ProductCompetitorFeature,
+        CompetitorAnalysisSession
+    )
+
+    # Get session to determine current product
+    session = db.query(CompetitorAnalysisSession).filter(
+        CompetitorAnalysisSession.id == session_id
+    ).first()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+
+    # Get all competitors in this session (discovered but not necessarily selected)
+    session_competitors = db.query(SessionCompetitor).filter(
+        SessionCompetitor.session_id == session_id
+    ).all()
+
+    # For each competitor, check if it has features extracted
+    competitors_availability = {}
+
+    for session_comp in session_competitors:
+        has_features = False
+
+        # Check 1: Global reusable features (product_competitor_features)
+        if session_comp.product_competitor_id:
+            features_count = db.query(ProductCompetitorFeature).filter(
+                ProductCompetitorFeature.product_competitor_id == session_comp.product_competitor_id
+            ).count()
+
+            if features_count > 0:
+                has_features = True
+
+        # Check 2: Session-specific features (competitor_features)
+        # This handles cases where features were extracted but not yet deduplicated
+        if not has_features:
+            from app.models.competitor_intelligence import CompetitorFeature
+            session_features_count = db.query(CompetitorFeature).filter(
+                CompetitorFeature.session_competitor_id == session_comp.id
+            ).count()
+
+            if session_features_count > 0:
+                has_features = True
+
+        competitors_availability[str(session_comp.id)] = {
+            "has_features": has_features,
+            "competitor_name": session_comp.competitor_name
+        }
+
+    return {
+        "competitors_availability": competitors_availability
+    }
+
+
 @router.post("/{session_id}/confirm-competitors")
 async def confirm_competitors(
     session_id: int,
@@ -570,8 +651,11 @@ async def check_competitor_feature_availability(
     """
     Check which selected competitors have extractable features from previous sessions.
 
-    For each selected competitor, checks if they have a ProductCompetitor record
-    with extracted features from ANY previous session (not just the comparison session).
+    For each selected competitor, checks for features in two ways:
+    1. Within the current product (product-scoped ProductCompetitor records)
+    2. Across all products with the same competitor name (cross-product reuse)
+
+    This enables reusing features extracted for the same competitor in other products.
 
     Args:
         session_id: Current session ID
@@ -587,7 +671,8 @@ async def check_competitor_feature_availability(
                     "product_competitor_id": int,
                     "competitor_name": str,
                     "features_count": int,
-                    "last_extraction_session_id": int
+                    "last_extraction_session_id": int,
+                    "from_product_id": int (cross-product source)
                 },
                 ...
             ],
@@ -595,7 +680,23 @@ async def check_competitor_feature_availability(
             "with_features": int
         }
     """
-    from app.models.competitor_intelligence import SessionCompetitor, ProductCompetitorFeature
+    from app.models.competitor_intelligence import (
+        SessionCompetitor,
+        ProductCompetitor,
+        ProductCompetitorFeature,
+        CompetitorAnalysisSession
+    )
+
+    # Get session to determine current product
+    session = db.query(CompetitorAnalysisSession).filter(
+        CompetitorAnalysisSession.id == session_id
+    ).first()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
 
     # Get selected competitors for this session
     competitors = db.query(SessionCompetitor).filter(
@@ -607,21 +708,43 @@ async def check_competitor_feature_availability(
     competitors_with_features = []
 
     for comp in competitors:
-        # Check if this ProductCompetitor has extracted features
+        # First check: product-scoped features (same ProductCompetitor)
         features_count = db.query(ProductCompetitorFeature).filter(
             ProductCompetitorFeature.product_competitor_id == comp.product_competitor_id
         ).count()
 
         if features_count > 0:
-            # Get the most recent session where features were extracted
-            # (We can infer this from the ProductCompetitor's last_seen_session_id)
             competitors_with_features.append({
                 "session_competitor_id": comp.id,
                 "product_competitor_id": comp.product_competitor_id,
                 "competitor_name": comp.competitor_name,
                 "features_count": features_count,
-                "last_extraction_session_id": comp.product_competitor.last_seen_session_id
+                "last_extraction_session_id": comp.product_competitor.last_seen_session_id,
+                "from_product_id": session.product_id  # Same product
             })
+        else:
+            # Second check: cross-product features (same competitor name in other products)
+            cross_product_competitors = db.query(ProductCompetitor).filter(
+                ProductCompetitor.product_id != session.product_id,
+                ProductCompetitor.competitor_name == comp.competitor_name,
+                ProductCompetitor.status == "active"
+            ).all()
+
+            for cross_comp in cross_product_competitors:
+                cross_product_features_count = db.query(ProductCompetitorFeature).filter(
+                    ProductCompetitorFeature.product_competitor_id == cross_comp.id
+                ).count()
+
+                if cross_product_features_count > 0:
+                    competitors_with_features.append({
+                        "session_competitor_id": comp.id,
+                        "product_competitor_id": comp.product_competitor_id,
+                        "competitor_name": comp.competitor_name,
+                        "features_count": cross_product_features_count,
+                        "last_extraction_session_id": cross_comp.last_seen_session_id,
+                        "from_product_id": cross_comp.product_id  # Different product (cross-product reuse)
+                    })
+                    break  # Use first match found
 
     return {
         "competitors_with_features": competitors_with_features,
@@ -695,6 +818,7 @@ async def get_session_features(
     Get all extracted features for a session.
 
     Returns features grouped by competitor with change tracking data.
+    Only returns features for selected competitors (selected_by_user=True).
 
     Args:
         session_id: Session ID
@@ -708,7 +832,8 @@ async def get_session_features(
     """
     service = FeatureExtractionService(db)
 
-    result = await service.get_session_features(session_id)
+    # Only return features for selected competitors
+    result = await service.get_session_features(session_id, include_unselected=False)
 
     return result
 

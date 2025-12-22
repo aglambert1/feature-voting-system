@@ -66,6 +66,7 @@ const Stage2_CompetitorDiscovery = ({
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [discoveryInitiated, setDiscoveryInitiated] = useState<boolean>(!!savedState);
   const [existingCompetitors, _setExistingCompetitors] = useState<Competitor[]>([]);
+  const [featuresAvailability, setFeaturesAvailability] = useState<Record<string, { has_features: boolean; competitor_name: string }>>({});
   const copyingRef = useRef<boolean>(false);
 
   // Persist state changes to parent
@@ -87,6 +88,40 @@ const Stage2_CompetitorDiscovery = ({
       checkExistingCompetitors();
     }
   }, [savedState, discoveryInitiated]);
+
+  // Refresh features availability when component mounts or when returning from Stage 3
+  useEffect(() => {
+    // If we have competitors (either from savedState or loaded), fetch their feature availability
+    if (competitors.length > 0 && mode === 'reviewing') {
+      console.log('[Stage2] Refreshing features availability for', competitors.length, 'competitors');
+      fetchFeaturesAvailability();
+    }
+  }, [sessionId]); // Only run on mount or when sessionId changes
+
+  const fetchFeaturesAvailability = async (): Promise<void> => {
+    try {
+      const response = await api.get<{
+        competitors_availability: Record<string, { has_features: boolean; competitor_name: string }>;
+      }>(`/product-intelligence/sessions/${sessionId}/competitors-feature-availability`);
+
+      setFeaturesAvailability(response.data.competitors_availability);
+      console.log('[Stage2] Features availability loaded:', response.data.competitors_availability);
+
+      // Debug: Log which competitors have features vs which don't
+      const withFeatures = Object.entries(response.data.competitors_availability)
+        .filter(([_, data]) => data.has_features)
+        .map(([id, data]) => `${data.competitor_name} (ID: ${id})`);
+      const withoutFeatures = Object.entries(response.data.competitors_availability)
+        .filter(([_, data]) => !data.has_features)
+        .map(([id, data]) => `${data.competitor_name} (ID: ${id})`);
+
+      console.log('[Stage2] Competitors WITH features:', withFeatures);
+      console.log('[Stage2] Competitors WITHOUT features:', withoutFeatures);
+    } catch (err: any) {
+      console.error('[Stage2] Failed to fetch features availability:', err);
+      // Non-critical, continue without it
+    }
+  };
 
   const checkExistingCompetitors = async (): Promise<void> => {
     // First check if THIS session already has competitors (handles legacy sessions)
@@ -110,6 +145,7 @@ const Stage2_CompetitorDiscovery = ({
         }));
         setCompetitors(mappedCompetitors);
         setMode('reviewing');
+        await fetchFeaturesAvailability();
         return;
       }
 
@@ -158,6 +194,7 @@ const Stage2_CompetitorDiscovery = ({
           }));
           setCompetitors(mappedCompetitors);
           setMode('reviewing');
+          await fetchFeaturesAvailability();
         } else {
           // Shouldn't happen, but fallback to discovery
           console.log('[Stage2] No competitors after copy, starting discovery');
@@ -198,13 +235,14 @@ const Stage2_CompetitorDiscovery = ({
       setChangeSummary(response.data.change_summary || null);
       setResearchSummary(response.data.research_summary || '');
       setMode('reviewing');
+      await fetchFeaturesAvailability();
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to discover competitors');
       setMode('error');
     }
   };
 
-  const handleUseExisting = (): void => {
+  const handleUseExisting = async (): Promise<void> => {
     // Map selected_by_user to selected for UI state
     const mappedCompetitors = existingCompetitors.map(c => ({
       ...c,
@@ -212,6 +250,7 @@ const Stage2_CompetitorDiscovery = ({
     }));
     setCompetitors(mappedCompetitors);
     setMode('reviewing');
+    await fetchFeaturesAvailability();
   };
 
   const handleRediscover = (): void => {
@@ -533,6 +572,7 @@ const Stage2_CompetitorDiscovery = ({
               onToggle={() => toggleCompetitor(competitor.id)}
               showStatus={hasPreviousAnalysis}
               onDelete={() => handleDeleteCompetitor(competitor.id)}
+              hasFeatures={featuresAvailability[competitor.id]?.has_features ?? false}
             />
           ))}
         </div>

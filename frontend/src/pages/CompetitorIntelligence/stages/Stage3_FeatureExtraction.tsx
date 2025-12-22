@@ -40,15 +40,19 @@ interface ChangeStats {
 }
 
 interface ExistingCompetitor {
+  session_competitor_id: number;
   product_competitor_id: number;
   competitor_name: string;
   features_count: number;
+  last_extraction_session_id?: number;
+  from_product_id?: number;
 }
 
 interface Stage3State {
   mode: string;
   features: FeaturesByCompetitor[];
   changeStats: ChangeStats | null;
+  expandedCompetitors?: Set<number>;
 }
 
 interface Stage3Props {
@@ -76,6 +80,10 @@ const Stage3_FeatureExtraction = ({
   const [showOnlyChanges, setShowOnlyChanges] = useState<boolean>(hasPreviousAnalysis);
   const [error, setError] = useState<string | null>(null);
   const [existingFeatures, setExistingFeatures] = useState<ExistingCompetitor[]>([]);
+  const [totalSelectedCompetitors, setTotalSelectedCompetitors] = useState<number>(0);
+  const [expandedCompetitors, setExpandedCompetitors] = useState<Set<number>>(
+    savedState?.expandedCompetitors || new Set(featuresByCompetitor.map(c => c.competitor_id))
+  );
 
   // Save state when it changes
   useEffect(() => {
@@ -84,9 +92,10 @@ const Stage3_FeatureExtraction = ({
         mode,
         features: featuresByCompetitor,
         changeStats,
+        expandedCompetitors,
       });
     }
-  }, [mode, featuresByCompetitor, changeStats, onStateChange]);
+  }, [mode, featuresByCompetitor, changeStats, expandedCompetitors, onStateChange]);
 
   useEffect(() => {
     // If we have saved state, don't re-extract
@@ -110,6 +119,9 @@ const Stage3_FeatureExtraction = ({
 
       const { competitors_with_features, total_selected, with_features } = response.data;
       console.log(`[Stage3] ${with_features} of ${total_selected} competitors have existing features`);
+
+      // Store total selected count for UI calculations
+      setTotalSelectedCompetitors(total_selected);
 
       if (with_features > 0) {
         // Some competitors have existing features - show choice UI
@@ -178,6 +190,18 @@ const Stage3_FeatureExtraction = ({
     );
   };
 
+  const toggleCompetitorExpanded = (competitorId: number): void => {
+    setExpandedCompetitors((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(competitorId)) {
+        newSet.delete(competitorId);
+      } else {
+        newSet.add(competitorId);
+      }
+      return newSet;
+    });
+  };
+
   const handleConfirmSelection = async (): Promise<void> => {
     // Collect all selected feature IDs
     const selectedIds: number[] = [];
@@ -208,6 +232,8 @@ const Stage3_FeatureExtraction = ({
 
   if (mode === 'choice') {
     const totalFeatures = existingFeatures.reduce((sum, comp) => sum + (comp.features_count || 0), 0);
+    const competitorsNeedingExtraction = totalSelectedCompetitors - existingFeatures.length;
+    const isInstant = competitorsNeedingExtraction === 0;
 
     return (
       <div>
@@ -235,15 +261,22 @@ const Stage3_FeatureExtraction = ({
           <h4 className="text-sm font-semibold text-gray-900 mb-3">Competitor Analysis Status:</h4>
           <div className="space-y-2">
             {existingFeatures.map((comp) => (
-              <div key={comp.product_competitor_id} className="flex items-center justify-between p-2 bg-white rounded border border-gray-200">
-                <div className="flex items-center">
-                  <svg className="w-5 h-5 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+              <div key={comp.session_competitor_id} className="flex items-center justify-between p-3 bg-white rounded border border-gray-200 hover:border-blue-300 transition-colors">
+                <div className="flex items-center flex-1">
+                  <svg className="w-5 h-5 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                   </svg>
-                  <span className="text-sm font-medium text-gray-900">{comp.competitor_name}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900">{comp.competitor_name}</p>
+                    {comp.from_product_id && (
+                      <p className="text-xs text-blue-600">
+                        From another product (cross-product reuse)
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <span className="text-xs text-green-600 font-medium">
-                  ✓ {comp.features_count} features available
+                <span className="text-xs text-green-600 font-medium whitespace-nowrap ml-2">
+                  ✓ {comp.features_count} features
                 </span>
               </div>
             ))}
@@ -255,17 +288,26 @@ const Stage3_FeatureExtraction = ({
           <div className="border-2 border-green-500 rounded-lg p-6 bg-green-50">
             <div className="flex items-start mb-3">
               <span className="px-2 py-1 bg-green-600 text-white text-xs font-semibold rounded mr-3">RECOMMENDED</span>
-              <h3 className="text-lg font-semibold text-gray-900">Use Existing Features (Instant)</h3>
+              <h3 className="text-lg font-semibold text-gray-900">
+                Use Existing Features{isInstant ? ' (Instant)' : ''}
+              </h3>
             </div>
             <p className="text-gray-700 mb-3">
               Reuse the {totalFeatures} feature(s) from these {existingFeatures.length} competitor(s).
-              Any other selected competitors without existing features will still be analyzed.
+              {competitorsNeedingExtraction > 0 && (
+                <> The other {competitorsNeedingExtraction} selected competitor{competitorsNeedingExtraction !== 1 ? 's' : ''} will be analyzed with AI extraction.</>
+              )}
             </p>
             <div className="flex items-center text-sm text-green-700 mb-4">
               <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
               </svg>
-              <span className="font-medium">Instant for existing • AI extraction only for new competitors</span>
+              <span className="font-medium">
+                {isInstant
+                  ? 'Instant - all competitors have existing features'
+                  : `Instant for ${existingFeatures.length} • AI extraction for ${competitorsNeedingExtraction} competitor${competitorsNeedingExtraction !== 1 ? 's' : ''}`
+                }
+              </span>
             </div>
 
             <button
@@ -415,51 +457,79 @@ const Stage3_FeatureExtraction = ({
         </div>
       )}
 
-      <div className="space-y-6 mb-6">
-        {displayCompetitors.map((competitor) => (
-          <div key={competitor.competitor_id} className="bg-white rounded-lg shadow">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">
-                {competitor.competitor_name}
-              </h3>
-              {competitor.competitor_url && (
-                <a
-                  href={competitor.competitor_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-blue-600 hover:underline"
-                >
-                  {competitor.competitor_url}
-                </a>
-              )}
-              <p className="text-sm text-gray-600 mt-1">
-                {competitor.features.length} features extracted
-              </p>
-            </div>
-            <div className="p-6">
-              {competitor.features.length === 0 ? (
-                <p className="text-center text-gray-500 py-4">
-                  {showOnlyChanges
-                    ? 'No new or modified features'
-                    : 'No features extracted'}
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {competitor.features.map((feature) => (
-                    <FeatureCard
-                      key={feature.id}
-                      feature={feature}
-                      onToggle={() =>
-                        toggleFeatureSelection(competitor.competitor_id, feature.id)
-                      }
-                      showChangeType={hasPreviousAnalysis}
-                    />
-                  ))}
+      <div className="space-y-4 mb-6">
+        {displayCompetitors.map((competitor) => {
+          const isExpanded = expandedCompetitors.has(competitor.competitor_id);
+          const selectedCount = competitor.features.filter(f => f.selected).length;
+
+          return (
+            <div key={competitor.competitor_id} className="bg-white rounded-lg shadow">
+              {/* Competitor Header - Always visible, clickable to expand/collapse */}
+              <button
+                onClick={() => toggleCompetitorExpanded(competitor.competitor_id)}
+                className="w-full text-left px-6 py-4 border-b border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-between"
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-3">
+                    <span className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
+                      ▶
+                    </span>
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">
+                        {competitor.competitor_name}
+                      </h3>
+                      {competitor.competitor_url && (
+                        <a
+                          href={competitor.competitor_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-blue-600 hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {competitor.competitor_url}
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-sm text-gray-600 whitespace-nowrap ml-4">
+                  {selectedCount > 0 && (
+                    <span className="font-semibold text-blue-600 mr-4">
+                      {selectedCount} selected
+                    </span>
+                  )}
+                  <span>{competitor.features.length} features</span>
+                </div>
+              </button>
+
+              {/* Features Section - Expandable */}
+              {isExpanded && (
+                <div className="p-6 border-t border-gray-100">
+                  {competitor.features.length === 0 ? (
+                    <p className="text-center text-gray-500 py-4">
+                      {showOnlyChanges
+                        ? 'No new or modified features'
+                        : 'No features extracted'}
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {competitor.features.map((feature) => (
+                        <FeatureCard
+                          key={feature.id}
+                          feature={feature}
+                          onToggle={() =>
+                            toggleFeatureSelection(competitor.competitor_id, feature.id)
+                          }
+                          showChangeType={hasPreviousAnalysis}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="flex justify-between">

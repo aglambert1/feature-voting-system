@@ -368,6 +368,7 @@ class ProductAnalysisHistory(Base):
 
     # Relationships
     product = relationship("CIProduct", back_populates="analysis_history")
+    detailed_features = relationship("ProductFeature", back_populates="analysis_history", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint('product_id', 'analysis_version', name='unique_product_analysis_version'),
@@ -375,3 +376,36 @@ class ProductAnalysisHistory(Base):
 
     def __repr__(self):
         return f"<ProductAnalysisHistory(product_id={self.product_id}, version={self.analysis_version})>"
+
+
+class ProductFeature(Base):
+    """
+    Detailed features extracted from product analysis.
+
+    Stores the granular feature list (10-25 features) for each product analysis version.
+    This complements the core_features (5-7 strategic features) stored in analyzed_structure.
+    """
+    __tablename__ = "product_features"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
+    analysis_history_id = Column(Integer, ForeignKey("product_analysis_history.id", ondelete="CASCADE"), nullable=False, index=True)
+    analysis_version = Column(Integer, nullable=False, index=True)
+
+    # Feature details
+    feature_name = Column(String(255), nullable=False)
+    feature_description = Column(Text)
+    feature_category = Column(String(100))
+    extraction_confidence = Column(DECIMAL(3, 2))
+    source_reference = Column(Text)
+
+    # Metadata
+    status = Column(String(50), nullable=False, default="active", index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    analysis_history = relationship("ProductAnalysisHistory", back_populates="detailed_features")
+
+    def __repr__(self):
+        return f"<ProductFeature(id={self.id}, name='{self.feature_name}', product_id={self.product_id}, version={self.analysis_version})>"
