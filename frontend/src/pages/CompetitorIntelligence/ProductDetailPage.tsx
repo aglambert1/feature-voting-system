@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import api from '../../services/api';
 import Navigation from '../../components/Navigation';
@@ -50,6 +50,7 @@ interface AnalysisHistory {
 
 export default function ProductDetailPage() {
   const { productId } = useParams<{ productId: string }>();
+  const location = useLocation();
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistory[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -64,11 +65,15 @@ export default function ProductDetailPage() {
   const [showSourceChangeWarning, setShowSourceChangeWarning] = useState<boolean>(false);
   const navigate = useNavigate();
 
+  // Fetch product data on mount and whenever navigation changes (location.key)
+  // This ensures data is refreshed when returning from other pages
   useEffect(() => {
     if (productId) {
+      console.log('[ProductDetail] Fetching product data (location.key:', location.key, ')');
       fetchProductData();
     }
-  }, [productId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productId, location.key]);
 
   const fetchProductData = async (): Promise<void> => {
     try {
@@ -377,28 +382,21 @@ export default function ProductDetailPage() {
                 </button>
               )}
 
-              {/* Scenario 2: Sessions exist - Three distinct options */}
+              {/* Scenario 2: Sessions exist - Show Competitors & Discover Changes */}
               {product.analysis_version > 0 && sessions.length > 0 && (
                 <>
-                  {/* Show existing competitors - only if they've been discovered */}
-                  {(() => {
-                    const mostRecentSession = sessions[0];
-                    const hasDiscoveredCompetitors = mostRecentSession?.stage_completed &&
-                      mostRecentSession.stage_completed !== 'product_analysis';
-                    return hasDiscoveredCompetitors;
-                  })() && (
-                    <button
-                      onClick={handleShowCompetitors}
-                      className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2"
-                    >
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                      <span className="hidden md:inline">Show Competitors</span>
-                      <span className="md:hidden">Competitors</span>
-                    </button>
-                  )}
+                  {/* Show existing competitors */}
+                  <button
+                    onClick={handleShowCompetitors}
+                    className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                    <span className="hidden md:inline">Show Competitors</span>
+                    <span className="md:hidden">Competitors</span>
+                  </button>
 
                   {/* Discover changes (differential) */}
                   <button

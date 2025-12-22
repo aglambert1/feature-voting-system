@@ -142,6 +142,8 @@ export default function SessionWorkflowPage() {
 
   const handleStage2Complete = (): void => {
     // Move to Stage 3 (feature analysis)
+    // Clear any old Stage 3 state since competitor selection may have changed
+    setStage3State(null);
     setCurrentStage(3);
   };
 
@@ -156,6 +158,8 @@ export default function SessionWorkflowPage() {
   };
 
   const handleBackToStage2 = (): void => {
+    // Clear stage 3 state so feature extraction restarts when returning
+    setStage3State(null);
     setCurrentStage(2);
   };
 

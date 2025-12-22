@@ -270,8 +270,18 @@ class CompetitorIntelligenceService:
         competitor_url: str,
         session_id: int
     ) -> ProductCompetitor:
-        """Get existing or create new product-level competitor"""
-        # Try to find existing by name
+        """
+        Get existing or create new product-level competitor.
+
+        Implements global competitor sharing:
+        1. Check for existing competitor in THIS product
+        2. Check for existing competitor in OTHER products (global)
+        3. If found globally, reuse it for this product
+        4. If not found, create new
+
+        This enables automatic reuse of competitor analysis across products.
+        """
+        # First: Try to find existing in THIS product
         existing = self.db.query(ProductCompetitor).filter(
             ProductCompetitor.product_id == product_id,
             ProductCompetitor.competitor_name == competitor_name
@@ -284,7 +294,21 @@ class CompetitorIntelligenceService:
             self.db.commit()
             return existing
 
-        # Create new
+        # Second: Try to find existing in OTHER products (global reuse)
+        global_competitor = self.db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id != product_id,
+            ProductCompetitor.competitor_name == competitor_name,
+            ProductCompetitor.status == "active"
+        ).first()
+
+        if global_competitor:
+            # Reuse the globally existing competitor record
+            # This creates a shared reference across products
+            global_competitor.last_seen_session_id = session_id
+            self.db.commit()
+            return global_competitor
+
+        # Third: Create new product-specific competitor
         product_competitor = ProductCompetitor(
             product_id=product_id,
             competitor_name=competitor_name,

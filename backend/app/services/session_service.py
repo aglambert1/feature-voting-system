@@ -10,12 +10,13 @@ Product creation and analysis are now independent operations handled by ProductS
 
 from typing import Optional
 from datetime import datetime
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from app.models.competitor_intelligence import (
-    CIProduct, CompetitorAnalysisSession, ProductPermissionLevel, SessionStage
+    CIProduct, CompetitorAnalysisSession, ProductPermissionLevel, SessionStage,
+    SessionCompetitor, CompetitorFeature
 )
 from app.services.permission_service import PermissionService
 
@@ -231,7 +232,10 @@ class SessionService:
                 f"User {user_id} does not have VIEW permission for product {product_id}"
             )
 
-        return self.db.query(CompetitorAnalysisSession).filter(
+        return self.db.query(CompetitorAnalysisSession).options(
+            joinedload(CompetitorAnalysisSession.session_competitors)
+            .joinedload(SessionCompetitor.features)
+        ).filter(
             CompetitorAnalysisSession.product_id == product_id
         ).order_by(CompetitorAnalysisSession.session_number.desc()).all()
 

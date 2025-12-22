@@ -25,9 +25,10 @@ interface CompetitorCardProps {
   onToggle: () => void;
   showStatus: boolean;
   onDelete?: () => void;
+  hasFeatures?: boolean;
 }
 
-const CompetitorCard = ({ competitor, onToggle, showStatus, onDelete }: CompetitorCardProps) => {
+const CompetitorCard = ({ competitor, onToggle, showStatus, onDelete, hasFeatures }: CompetitorCardProps) => {
   const getStatusBadge = () => {
     if (!showStatus || !competitor.status) return null;
 
@@ -67,9 +68,19 @@ const CompetitorCard = ({ competitor, onToggle, showStatus, onDelete }: Competit
             className="mt-1 mr-3"
           />
           <div className="flex-1">
-            <h3 className="font-semibold text-gray-900 mb-1">
-              {competitor.name}
-            </h3>
+            <div className="flex items-center gap-2 mb-1">
+              <h3 className="font-semibold text-gray-900">
+                {competitor.name}
+              </h3>
+              {hasFeatures && (
+                <span
+                  className="inline-block px-2 py-0.5 bg-green-100 text-green-800 text-xs rounded-full font-medium"
+                  title="Features have already been extracted for this competitor"
+                >
+                  ✓ Features Ready
+                </span>
+              )}
+            </div>
             {getStatusBadge()}
           </div>
         </div>
