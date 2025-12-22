@@ -27,18 +27,16 @@ class LLMService:
         # Use Claude 3 Haiku (fast and cost-effective for structuring tasks)
         self.model = "claude-3-haiku-20240307"
 
-    def structure_idea(self, freeform_text: str) -> Dict[str, any]:
+    def structure_idea(self, freeform_text: str, product_context: Dict[str, any] = None) -> Dict[str, any]:
         """
-        Structure freeform text into a structured idea format.
+        Structure freeform text into a structured idea format with product context.
 
-        Takes natural language input and returns structured data with:
-        - title: Short, descriptive title
-        - what_description: What the feature is
-        - why_description: Why it's valuable
-        - use_case_description: How it would be used
+        Takes natural language input and returns structured data adapted to the
+        specific product, similar to competitor intelligence idea generation.
 
         Args:
             freeform_text: User's freeform idea description
+            product_context: Optional product context for adaptation (name, description, features, etc.)
 
         Returns:
             Dictionary with structured idea and processing time
@@ -50,8 +48,83 @@ class LLMService:
         """
         start_time = time.time()
 
-        # Construct the prompt for Claude
-        prompt = f"""You are a product manager helping structure feature ideas.
+        # Build product-aware prompt if context provided
+        if product_context:
+            product_name = product_context.get('product_name', 'the product')
+            product_description = product_context.get('product_description', '')
+            product_category = product_context.get('product_category', '')
+            core_features = product_context.get('core_features', [])
+            detailed_features = product_context.get('detailed_features', [])
+            target_users = product_context.get('target_users', '')
+            value_propositions = product_context.get('value_propositions', [])
+
+            # Format features for context
+            core_features_str = "\n".join(f"  - {feat}" for feat in core_features) if core_features else "  (not specified)"
+            detailed_features_str = ""
+            if detailed_features:
+                detailed_features_str = "\n".join(f"  - {feat.get('feature_name', '')}: {feat.get('feature_description', '')}" for feat in detailed_features)
+            else:
+                detailed_features_str = "  (not available - use core features for comparison)"
+            value_props_str = "\n".join(f"  - {vp}" for vp in value_propositions) if value_propositions else "  (not specified)"
+
+            prompt = f"""You are a product manager helping structure feature ideas for a specific product.
+
+**Product Context:**
+
+Product Name: {product_name}
+Category: {product_category}
+Description: {product_description}
+
+Target Users: {target_users}
+
+Core Features (existing capabilities):
+{core_features_str}
+
+Detailed Product Features (for duplicate detection):
+{detailed_features_str}
+
+Value Propositions:
+{value_props_str}
+
+**User's Idea:**
+
+A user has submitted the following idea in their own words:
+
+<user_idea>
+{freeform_text}
+</user_idea>
+
+**Your Task:**
+
+Structure this idea into a clear, professional format adapted to {product_name}'s specific context:
+
+1. **FIRST:** Check if similar functionality already exists in the product's features above
+2. Adapt the idea to fit {product_name}'s unique context and terminology
+3. Tailor the value proposition to {product_name}'s target users: {target_users}
+4. Use language consistent with {product_name}'s domain
+5. Provide concrete use cases with {product_name}'s specific users
+
+**Duplicate Detection:**
+- If the idea is similar to an existing feature, still structure it but note the similarity in the "why" section
+- Consider if it adds incremental value or is a true duplicate
+- If it's an enhancement to existing functionality, frame it as such
+
+**Output Format:**
+
+Return ONLY a JSON object with these exact keys: title, what, why, use_case
+
+1. **title**: A concise, {product_name}-specific title (5-10 words)
+2. **what**: Clear description adapted to {product_name} (2-3 sentences)
+3. **why**: Value proposition for {product_name}'s users (2-3 sentences, mention if similar feature exists)
+4. **use_case**: Concrete example with {product_name}'s target users (2-3 sentences)
+
+Do not include any markdown formatting, code blocks, or additional text - just the raw JSON.
+
+Example format:
+{{"title": "Enhanced Dark Mode for {product_name}", "what": "A toggle switch in settings that...", "why": "This would improve... Note: Similar to existing theme feature but adds...", "use_case": "A {target_users} working late at night..."}}"""
+        else:
+            # Fallback to generic prompt if no product context
+            prompt = f"""You are a product manager helping structure feature ideas.
 
 A user has submitted the following idea in their own words:
 

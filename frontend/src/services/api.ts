@@ -245,11 +245,12 @@ export const voteOnIdea = async (ideaId: number, voteValue: number): Promise<Vot
 // ============================================================================
 
 /**
- * Structure freeform text using AI
+ * Structure freeform text using AI with product context
  */
-export const structureText = async (freeformText: string): Promise<StructureResponse> => {
+export const structureText = async (freeformText: string, productId: number): Promise<StructureResponse> => {
   const response = await api.post<StructureResponse>('/submissions/structure', {
     freeform_text: freeformText,
+    product_id: productId,
   });
   return response.data;
 };

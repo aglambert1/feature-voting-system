@@ -22,6 +22,7 @@ class SubmissionStructureRequest(BaseModel):
         max_length=5000,
         description="User's freeform idea description"
     )
+    product_id: int = Field(..., description="Product ID for context-aware structuring")
 
 
 class SubmissionStructureResponse(BaseModel):

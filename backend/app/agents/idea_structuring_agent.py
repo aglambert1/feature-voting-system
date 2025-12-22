@@ -33,16 +33,16 @@ class IdeaStructuringAgent(BaseAgent):
     """
     Adapts competitor features into product-specific ideas.
 
-    Unlike voter idea submission (which just reformats freeform text),
-    this agent performs strategic adaptation - translating competitor
-    features into ideas tailored to YOUR product's unique value
-    proposition, target users, and existing capabilities.
+    Both this agent and LLMService.structure_idea() now perform strategic
+    adaptation - translating input (competitor features or voter submissions)
+    into ideas tailored to the product's unique value proposition, target
+    users, and existing capabilities.
 
     Key Differences from LLMService.structure_idea():
-    - Has full product context (core features, target users, value props)
-    - Performs creative adaptation, not just reformatting
+    - This agent is used for batch processing of competitor features
     - Uses BaseAgent framework with logging and retry logic
-    - Generates product-specific language and use cases
+    - LLMService.structure_idea() is used for real-time voter submissions
+    - Both now perform duplicate detection and product-specific adaptation
     """
 
     def get_system_prompt(self) -> str:
@@ -52,10 +52,17 @@ Your role is to convert competitor features into product-specific ideas for a pa
 
 **Key Responsibilities:**
 1. Analyze competitor features and understand their value proposition
-2. Adapt features to the target product's specific context, users, and capabilities
-3. Generate ideas using the product's language and terminology
-4. Ensure ideas are actionable and relevant to the product's target audience
-5. Maintain traceability to source competitor features
+2. Check if similar functionality already exists in the product's current features
+3. Adapt features to the target product's specific context, users, and capabilities
+4. Generate ideas using the product's language and terminology
+5. Ensure ideas are actionable and relevant to the product's target audience
+6. Maintain traceability to source competitor features
+
+**Duplicate Detection:**
+- CRITICAL: Before generating each idea, verify it doesn't duplicate existing product features
+- If a competitor feature is similar to an existing feature, note this in adaptation_notes
+- Consider if the idea adds incremental value beyond what already exists
+- If functionality already exists but could be enhanced, frame the idea as an enhancement
 
 **Strategic Adaptation Guidelines:**
 - Don't just copy competitor feature descriptions - translate them
@@ -70,7 +77,7 @@ Your role is to convert competitor features into product-specific ideas for a pa
 - What: Clear description adapted to target product (2-3 sentences)
 - Why: Value proposition for the product's specific users (2-3 sentences)
 - Use Case: Concrete example with the product's target users (2-3 sentences)
-- Adaptation Notes: Brief explanation of how you adapted the competitor's approach
+- Adaptation Notes: Brief explanation of how you adapted the competitor's approach, INCLUDING any notes about similarity to existing features
 
 Always respond with valid JSON matching the specified schema.
 Focus on strategic adaptation, not generic copying."""
@@ -83,11 +90,19 @@ Focus on strategic adaptation, not generic copying."""
         product_name = product_context.get('product_name', 'the product')
         product_category = product_context.get('product_category', '')
         core_features = product_context.get('core_features', [])
+        detailed_features = product_context.get('detailed_features', [])
         target_users = product_context.get('target_users', '')
         value_propositions = product_context.get('value_propositions', [])
 
         # Format core features
         core_features_str = "\n".join(f"  - {feat}" for feat in core_features) if core_features else "  (not specified)"
+
+        # Format detailed features for duplicate detection
+        detailed_features_str = ""
+        if detailed_features:
+            detailed_features_str = "\n".join(f"  - {feat.get('feature_name', '')}: {feat.get('feature_description', '')}" for feat in detailed_features)
+        else:
+            detailed_features_str = "  (not available - use core features for comparison)"
 
         # Format value propositions
         value_props_str = "\n".join(f"  - {vp}" for vp in value_propositions) if value_propositions else "  (not specified)"
@@ -131,6 +146,9 @@ Target Users: {target_users}
 Core Features (existing capabilities):
 {core_features_str}
 
+Detailed Product Features (for duplicate detection):
+{detailed_features_str}
+
 Value Propositions (what makes this product unique):
 {value_props_str}
 
@@ -140,11 +158,18 @@ Value Propositions (what makes this product unique):
 **Your Task:**
 
 For each competitor feature above, generate a product-specific idea that:
-1. Adapts the competitor's approach to fit {product_name}'s unique context
-2. Uses language and terminology appropriate for {product_name}'s domain
-3. Tailors the value proposition to {product_name}'s target users: {target_users}
-4. Considers how it would integrate with {product_name}'s existing capabilities
-5. Provides a concrete use case with {product_name}'s specific users
+1. **FIRST:** Check if similar functionality already exists in the product's detailed features list above
+2. Adapts the competitor's approach to fit {product_name}'s unique context
+3. Uses language and terminology appropriate for {product_name}'s domain
+4. Tailors the value proposition to {product_name}'s target users: {target_users}
+5. Considers how it would integrate with {product_name}'s existing capabilities
+6. Provides a concrete use case with {product_name}'s specific users
+
+**Critical - Duplicate Detection:**
+- Before writing each idea, carefully review the "Detailed Product Features" list above
+- If the competitor feature is similar to an existing feature, mention this in adaptation_notes
+- Note whether the idea is: new functionality, enhancement of existing feature, or potential duplicate
+- If it's a duplicate/similar, explain what incremental value the idea would add (if any)
 
 **Important:**
 - Don't just copy the competitor's description - adapt it strategically

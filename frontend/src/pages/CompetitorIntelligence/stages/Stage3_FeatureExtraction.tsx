@@ -45,6 +45,7 @@ interface ExistingCompetitor {
   competitor_name: string;
   features_count: number;
   last_extraction_session_id?: number;
+  extraction_timestamp?: string;
   from_product_id?: number;
 }
 
@@ -219,14 +220,23 @@ const Stage3_FeatureExtraction = ({
     }
 
     try {
+      // First, select the features
       await api.post(
         `/product-intelligence/sessions/${sessionId}/select-features`,
         { feature_ids: selectedIds }
       );
 
+      // Then immediately trigger idea generation
+      setMode('generating-ideas');
+      await api.post(
+        `/product-intelligence/sessions/${sessionId}/generate-ideas`
+      );
+
+      // Navigate to Stage 4 to show generated ideas
       onComplete();
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to confirm selection');
+      setError(err.response?.data?.detail || 'Failed to generate ideas');
+      setMode('reviewing');
     }
   };
 
@@ -260,26 +270,43 @@ const Stage3_FeatureExtraction = ({
         <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
           <h4 className="text-sm font-semibold text-gray-900 mb-3">Competitor Analysis Status:</h4>
           <div className="space-y-2">
-            {existingFeatures.map((comp) => (
-              <div key={comp.session_competitor_id} className="flex items-center justify-between p-3 bg-white rounded border border-gray-200 hover:border-blue-300 transition-colors">
-                <div className="flex items-center flex-1">
-                  <svg className="w-5 h-5 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900">{comp.competitor_name}</p>
-                    {comp.from_product_id && (
-                      <p className="text-xs text-blue-600">
-                        From another product (cross-product reuse)
-                      </p>
-                    )}
+            {existingFeatures.map((comp) => {
+              const extractionDate = comp.extraction_timestamp
+                ? new Date(comp.extraction_timestamp).toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })
+                : null;
+
+              return (
+                <div key={comp.session_competitor_id} className="flex items-center justify-between p-3 bg-white rounded border border-gray-200 hover:border-blue-300 transition-colors">
+                  <div className="flex items-center flex-1">
+                    <svg className="w-5 h-5 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900">{comp.competitor_name}</p>
+                      {comp.from_product_id && (
+                        <p className="text-xs text-blue-600">
+                          From another product (cross-product reuse)
+                        </p>
+                      )}
+                      {extractionDate && (
+                        <p className="text-xs text-gray-500">
+                          Extracted: {extractionDate}
+                        </p>
+                      )}
+                    </div>
                   </div>
+                  <span className="text-xs text-green-600 font-medium whitespace-nowrap ml-2">
+                    ✓ {comp.features_count} features
+                  </span>
                 </div>
-                <span className="text-xs text-green-600 font-medium whitespace-nowrap ml-2">
-                  ✓ {comp.features_count} features
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -362,6 +389,23 @@ const Stage3_FeatureExtraction = ({
         </p>
         <p className="text-sm text-gray-500">
           ⏱️ This typically takes 1-3 minutes depending on number of competitors
+        </p>
+      </div>
+    );
+  }
+
+  if (mode === 'generating-ideas') {
+    return (
+      <div className="text-center py-12">
+        <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+        <h3 className="text-lg font-medium text-gray-900 mb-2">
+          Generating Ideas...
+        </h3>
+        <p className="text-gray-600 mb-2">
+          AI is adapting competitor features into product-specific ideas
+        </p>
+        <p className="text-sm text-gray-500">
+          ⏱️ This typically takes 30-60 seconds
         </p>
       </div>
     );

@@ -136,13 +136,17 @@ const SubmitIdeaPage = () => {
       setError('Please enter your idea first');
       return;
     }
+    if (!selectedProductId) {
+      setError('Please select a product first');
+      return;
+    }
 
     setIsStructuring(true);
     setError('');
 
     try {
-      // Call API to structure text using Claude
-      const result = await structureText(freeformText);
+      // Call API to structure text using Claude with product context
+      const result = await structureText(freeformText, parseInt(selectedProductId));
 
       // Update structured data with AI response
       setStructuredData({

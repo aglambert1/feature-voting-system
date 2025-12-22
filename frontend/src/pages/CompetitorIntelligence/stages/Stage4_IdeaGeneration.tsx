@@ -9,6 +9,7 @@
  */
 
 import { useState, useEffect, ChangeEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../../services/api';
 
 interface GeneratedIdea {
@@ -39,8 +40,10 @@ const Stage4_IdeaGeneration = ({
   onComplete,
   onBack
 }: Stage4Props) => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState<boolean>(false);
   const [generating, setGenerating] = useState<boolean>(false);
+  const [submitting, setSubmitting] = useState<boolean>(false);
   const [ideas, setIdeas] = useState<GeneratedIdea[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<EditForm>({
@@ -49,6 +52,7 @@ const Stage4_IdeaGeneration = ({
     use_case: ''
   });
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<boolean>(false);
 
   useEffect(() => {
     loadGeneratedIdeas();
@@ -95,11 +99,19 @@ const Stage4_IdeaGeneration = ({
       why: idea.why,
       use_case: idea.use_case
     });
+
+    // If idea was previously approved, unapprove it when editing starts
+    if (idea.user_approved) {
+      toggleApproval(idea.id, true);
+    }
   };
 
-  const cancelEdit = (): void => {
+  const cancelEdit = async (idea: GeneratedIdea): Promise<void> => {
     setEditingId(null);
     setEditForm({ what: '', why: '', use_case: '' });
+
+    // Reload to restore original approval state if user cancels
+    await loadGeneratedIdeas();
   };
 
   const saveEdit = async (ideaId: number): Promise<void> => {
@@ -132,13 +144,69 @@ const Stage4_IdeaGeneration = ({
     }
   };
 
+  const submitToVotingSystem = async (): Promise<void> => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await api.post(
+        `/product-intelligence/sessions/${sessionId}/finalize`
+      );
+
+      if (response.data.status === 'success') {
+        setSuccess(true);
+      }
+    } catch (err: any) {
+      console.error('Failed to submit ideas:', err);
+      setError(err.response?.data?.detail || 'Failed to submit ideas to voting system');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const approvedCount = ideas.filter(i => i.user_approved).length;
-  const canProceed = approvedCount > 0;
+  const canSubmit = approvedCount > 0 && editingId === null;
 
   if (loading) {
     return (
       <div className="flex justify-center items-center py-12">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  if (success) {
+    const approvedIdeas = ideas.filter(i => i.user_approved);
+    return (
+      <div className="max-w-4xl mx-auto">
+        <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+          <div className="mb-6">
+            <div className="mx-auto h-16 w-16 bg-green-100 rounded-full flex items-center justify-center">
+              <svg className="h-10 w-10 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">
+            Ideas Successfully Submitted!
+          </h2>
+          <p className="text-gray-600 mb-8">
+            {approvedIdeas.length} {approvedIdeas.length === 1 ? 'idea has' : 'ideas have'} been submitted to your voting system.
+          </p>
+          <div className="flex gap-4 justify-center">
+            <button
+              onClick={() => navigate('/ideas')}
+              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700"
+            >
+              View Ideas in Voting System
+            </button>
+            <button
+              onClick={() => navigate('/product-intelligence')}
+              className="bg-gray-200 text-gray-700 px-6 py-3 rounded-lg hover:bg-gray-300"
+            >
+              Start New Analysis
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -238,11 +306,15 @@ const Stage4_IdeaGeneration = ({
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => toggleApproval(idea.id, idea.user_approved)}
+                          disabled={isEditing}
                           className={`px-4 py-2 rounded font-medium ${
-                            idea.user_approved
+                            isEditing
+                              ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                              : idea.user_approved
                               ? 'bg-green-100 text-green-700 hover:bg-green-200'
                               : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                           }`}
+                          title={isEditing ? 'Save or cancel changes before approving' : ''}
                         >
                           {idea.user_approved ? '✓ Approved' : 'Approve'}
                         </button>
@@ -293,7 +365,7 @@ const Stage4_IdeaGeneration = ({
                             Save Changes
                           </button>
                           <button
-                            onClick={cancelEdit}
+                            onClick={() => cancelEdit(idea)}
                             className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
                           >
                             Cancel
@@ -334,16 +406,25 @@ const Stage4_IdeaGeneration = ({
       <div className="flex justify-between mt-8">
         <button
           onClick={onBack}
-          className="bg-gray-200 text-gray-700 px-6 py-3 rounded-lg hover:bg-gray-300"
+          disabled={submitting}
+          className="bg-gray-200 text-gray-700 px-6 py-3 rounded-lg hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           ← Back to Features
         </button>
         <button
-          onClick={onComplete}
-          disabled={!canProceed}
-          className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          onClick={submitToVotingSystem}
+          disabled={!canSubmit || submitting}
+          className="bg-green-600 text-white px-8 py-3 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold"
+          title={editingId !== null ? 'Save or cancel changes before submitting' : !canSubmit ? 'Approve at least one idea to submit' : ''}
         >
-          Continue to Review ({approvedCount} approved) →
+          {submitting ? (
+            <>
+              <span className="inline-block animate-spin mr-2">⚙️</span>
+              Submitting...
+            </>
+          ) : (
+            `Submit ${approvedCount} ${approvedCount === 1 ? 'Idea' : 'Ideas'} to Voting System`
+          )}
         </button>
       </div>
     </div>

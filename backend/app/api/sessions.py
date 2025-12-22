@@ -714,12 +714,23 @@ async def check_competitor_feature_availability(
         ).count()
 
         if features_count > 0:
+            # Get the last extraction session timestamp
+            last_session = None
+            extraction_timestamp = None
+            if comp.product_competitor.last_seen_session_id:
+                last_session = db.query(CompetitorAnalysisSession).filter(
+                    CompetitorAnalysisSession.id == comp.product_competitor.last_seen_session_id
+                ).first()
+                if last_session:
+                    extraction_timestamp = last_session.created_at.isoformat() if last_session.created_at else None
+
             competitors_with_features.append({
                 "session_competitor_id": comp.id,
                 "product_competitor_id": comp.product_competitor_id,
                 "competitor_name": comp.competitor_name,
                 "features_count": features_count,
                 "last_extraction_session_id": comp.product_competitor.last_seen_session_id,
+                "extraction_timestamp": extraction_timestamp,
                 "from_product_id": session.product_id  # Same product
             })
         else:
@@ -736,12 +747,22 @@ async def check_competitor_feature_availability(
                 ).count()
 
                 if cross_product_features_count > 0:
+                    # Get the last extraction session timestamp for cross-product
+                    cross_extraction_timestamp = None
+                    if cross_comp.last_seen_session_id:
+                        cross_session = db.query(CompetitorAnalysisSession).filter(
+                            CompetitorAnalysisSession.id == cross_comp.last_seen_session_id
+                        ).first()
+                        if cross_session:
+                            cross_extraction_timestamp = cross_session.created_at.isoformat() if cross_session.created_at else None
+
                     competitors_with_features.append({
                         "session_competitor_id": comp.id,
                         "product_competitor_id": comp.product_competitor_id,
                         "competitor_name": comp.competitor_name,
                         "features_count": cross_product_features_count,
                         "last_extraction_session_id": cross_comp.last_seen_session_id,
+                        "extraction_timestamp": cross_extraction_timestamp,
                         "from_product_id": cross_comp.product_id  # Different product (cross-product reuse)
                     })
                     break  # Use first match found

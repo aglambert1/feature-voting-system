@@ -35,29 +35,78 @@ router = APIRouter(prefix="/submissions", tags=["Submissions"])
 @router.post("/structure", response_model=SubmissionStructureResponse)
 async def structure_freeform_text(
     request: SubmissionStructureRequest,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
 ):
     """
     Structure freeform text into a structured idea format using AI.
 
     This endpoint takes natural language input and uses Claude API
-    to structure it into what/why/use_case format.
+    to structure it into what/why/use_case format, adapted to the
+    specific product context.
 
     This is a protected endpoint - requires authentication.
 
     Args:
-        request: Freeform text from user
+        request: Freeform text and product ID from user
         current_user: Authenticated user
+        db: Database session
 
     Returns:
         Structured idea with title, what, why, use_case
 
     Raises:
+        404 Not Found: If product doesn't exist
         500 Internal Server Error: If AI processing fails
     """
     try:
-        # Call LLM service to structure the text
-        structured_data = llm_service.structure_idea(request.freeform_text)
+        # Fetch product to get context
+        product = db.query(CIProduct).filter(CIProduct.id == request.product_id).first()
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product with id {request.product_id} not found"
+            )
+
+        # Get product context (similar to idea generation)
+        from app.models.competitor_intelligence import ProductFeature
+
+        product_context = {
+            'product_name': product.product_name,
+            'product_description': product.product_description,
+            'product_category': product.product_category
+        }
+
+        # Add structured product data if available
+        if product.structured_product_data:
+            product_context.update({
+                'core_features': product.structured_product_data.get('core_features', []),
+                'target_users': product.structured_product_data.get('target_users', ''),
+                'value_propositions': product.structured_product_data.get('value_propositions', [])
+            })
+
+        # Add detailed features for duplicate detection
+        if product.analysis_version:
+            detailed_features = db.query(ProductFeature).filter(
+                ProductFeature.product_id == product.id,
+                ProductFeature.analysis_version == product.analysis_version,
+                ProductFeature.status == "active"
+            ).all()
+
+            product_context['detailed_features'] = [
+                {
+                    'feature_name': feat.feature_name,
+                    'feature_description': feat.feature_description,
+                    'feature_category': feat.feature_category
+                }
+                for feat in detailed_features
+            ]
+
+        # Call LLM service to structure the text with product context
+        structured_data = llm_service.structure_idea(
+            freeform_text=request.freeform_text,
+            product_context=product_context
+        )
 
         # Return structured response
         return SubmissionStructureResponse(
@@ -68,6 +117,8 @@ async def structure_freeform_text(
             processing_time=structured_data["processing_time"]
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         # Log the error and return 500
         print(f"Error structuring text: {e}")

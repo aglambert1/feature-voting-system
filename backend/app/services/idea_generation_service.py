@@ -7,7 +7,9 @@ from app.models.competitor_intelligence import (
     CompetitorAnalysisSession,
     CompetitorFeature,
     SessionCompetitor,
-    CompetitorGeneratedIdea
+    CompetitorGeneratedIdea,
+    ProductFeature,
+    CIProduct
 )
 from app.models.idea import Idea, SourceType, IdeaStatus
 from app.agents.idea_structuring_agent import IdeaStructuringAgent
@@ -56,6 +58,44 @@ class IdeaGenerationService:
 
         # Get product context
         product_context = session.analyzed_product_structure or {}
+
+        # Enhance product context with detailed features for duplicate detection
+        if session.analysis_version:
+            detailed_features = self.db.query(ProductFeature).filter(
+                ProductFeature.product_id == session.product_id,
+                ProductFeature.analysis_version == session.analysis_version,
+                ProductFeature.status == "active"
+            ).all()
+
+            product_context['detailed_features'] = [
+                {
+                    'feature_name': feat.feature_name,
+                    'feature_description': feat.feature_description,
+                    'feature_category': feat.feature_category
+                }
+                for feat in detailed_features
+            ]
+        else:
+            # Fallback: try to get the latest product features if no analysis_version
+            product = self.db.query(CIProduct).filter(
+                CIProduct.id == session.product_id
+            ).first()
+
+            if product and product.analysis_version:
+                detailed_features = self.db.query(ProductFeature).filter(
+                    ProductFeature.product_id == session.product_id,
+                    ProductFeature.analysis_version == product.analysis_version,
+                    ProductFeature.status == "active"
+                ).all()
+
+                product_context['detailed_features'] = [
+                    {
+                        'feature_name': feat.feature_name,
+                        'feature_description': feat.feature_description,
+                        'feature_category': feat.feature_category
+                    }
+                    for feat in detailed_features
+                ]
 
         # Get all selected features
         selected_features = self.db.query(CompetitorFeature).join(
