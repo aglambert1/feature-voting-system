@@ -22,10 +22,23 @@ from app.models.competitor_intelligence import (
     ProductPermissionLevel,
     ProductAnalysisHistory
 )
+from app.models.queue import QueueJob, JobType, JobStatus, JobPriority
+from app.models.pm_review import (
+    PMReviewQueue,
+    CompetitorSnapshot,
+    MonitoringConfig,
+    ReviewQueueType,
+    ReviewQueueStatus,
+    ReviewQueuePriority,
+    AlertType
+)
 
 __all__ = [
     "User", "UserRole", "ProductAccessMode", "Idea", "SourceType", "IdeaStatus", "Vote", "Submission", "PasswordResetToken",
     "CIProduct", "CompetitorAnalysisSession", "ProductCompetitor", "SessionCompetitor",
     "ProductCompetitorFeature", "CompetitorFeature", "CompetitorGeneratedIdea", "AgentExecutionLog",
-    "ProductPermission", "ProductPermissionLevel", "ProductAnalysisHistory"
+    "ProductPermission", "ProductPermissionLevel", "ProductAnalysisHistory",
+    "QueueJob", "JobType", "JobStatus", "JobPriority",
+    "PMReviewQueue", "CompetitorSnapshot", "MonitoringConfig",
+    "ReviewQueueType", "ReviewQueueStatus", "ReviewQueuePriority", "AlertType"
 ]

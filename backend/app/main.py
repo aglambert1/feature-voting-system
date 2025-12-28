@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db, create_initial_admin
-from app.api import auth, ideas, votes, submissions, products, sessions
+from app.api import auth, ideas, votes, submissions, products, sessions, pm_review, monitoring
 
 
 @asynccontextmanager
@@ -85,6 +85,8 @@ app.include_router(submissions.router)
 app.include_router(products.router)
 app.include_router(products.jobs_router)  # Queue-based job endpoints
 app.include_router(sessions.router)
+app.include_router(pm_review.router)  # Phase 4: PM Review Queue
+app.include_router(monitoring.router)  # Phase 4: Competitive Monitoring
 
 
 @app.get("/")

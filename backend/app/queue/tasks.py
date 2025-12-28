@@ -1235,3 +1235,152 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
     finally:
         if db:
             db.close()
+
+
+# ============================================================================
+# Phase 4: Competitive Monitoring Tasks
+# ============================================================================
+
+@shared_task(bind=True, name='app.queue.tasks.monitor_competitors_task')
+def monitor_competitors_task(self, job_id: int, product_id: int, force_full: bool = False) -> Dict[str, Any]:
+    """
+    Background task to monitor competitors for changes.
+
+    This task:
+    1. Gets all competitors for the product
+    2. For each competitor:
+       - Extracts current features
+       - Creates a snapshot
+       - Compares with previous snapshot
+       - Detects changes
+    3. Generates alerts for significant changes
+    4. Updates monitoring config timestamps
+
+    Args:
+        job_id: QueueJob ID
+        product_id: Product ID to monitor
+        force_full: If True, perform full re-extraction instead of differential
+
+    Returns:
+        Dictionary with monitoring results
+    """
+    from app.services.competitive_monitor_service import CompetitiveMonitorService
+
+    db = None
+    try:
+        db = get_db()
+        queue_service = QueueService(db)
+
+        # Mark job as running
+        job = queue_service.mark_running(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        # Update progress
+        queue_service.update_progress(job_id, 10.0, "Initializing competitive monitoring...")
+
+        # Run monitoring
+        monitor_service = CompetitiveMonitorService(db)
+        result = monitor_service.run_monitoring(
+            product_id=product_id,
+            job_id=job_id,
+            force_full=force_full,
+            progress_callback=lambda pct, msg: queue_service.update_progress(job_id, pct, msg)
+        )
+
+        # Mark success
+        queue_service.mark_success(job_id, result)
+
+        return result
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[monitor_competitors_task] Error: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
+            except Exception:
+                pass
+
+        raise
+
+    finally:
+        if db:
+            db.close()
+
+
+@shared_task(bind=True, name='app.queue.tasks.scheduled_monitoring_task')
+def scheduled_monitoring_task(self) -> Dict[str, Any]:
+    """
+    Scheduled task that runs monitoring for all products due for monitoring.
+
+    Called by Celery Beat on a schedule (e.g., daily).
+    Checks monitoring configs and runs monitoring for products that are due.
+
+    Returns:
+        Dictionary with list of products monitored
+    """
+    db = None
+    try:
+        db = get_db()
+        queue_service = QueueService(db)
+
+        from app.services.pm_review_service import PMReviewService
+        from app.models.queue import JobType, JobStatus
+
+        pm_service = PMReviewService(db)
+
+        # Get products due for monitoring
+        configs = pm_service.get_products_due_for_monitoring()
+
+        products_monitored = []
+        jobs_created = []
+
+        for config in configs:
+            try:
+                # Create a job for each product
+                job = queue_service.create_job(
+                    job_type=JobType.COMPETITIVE_MONITORING,
+                    input_data={
+                        'product_id': config.product_id,
+                        'triggered_by': 'scheduled',
+                    },
+                    product_id=config.product_id,
+                    user_id=None,  # System-triggered
+                )
+                db.commit()
+
+                # Queue the monitoring task
+                result = monitor_competitors_task.delay(
+                    job_id=job.id,
+                    product_id=config.product_id,
+                    force_full=False
+                )
+
+                job.celery_task_id = result.id
+                job.status = JobStatus.QUEUED
+                db.commit()
+
+                products_monitored.append(config.product_id)
+                jobs_created.append(job.job_uuid)
+
+            except Exception as e:
+                print(f"[scheduled_monitoring_task] Error scheduling product {config.product_id}: {e}")
+
+        return {
+            'products_monitored': products_monitored,
+            'jobs_created': jobs_created,
+            'total': len(products_monitored),
+        }
+
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[scheduled_monitoring_task] Error: {error_msg}")
+        raise
+
+    finally:
+        if db:
+            db.close()

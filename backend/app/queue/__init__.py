@@ -60,9 +60,15 @@ celery_app.conf.update(
         'idea_generation': {},
     },
 
-    # Beat schedule (Phase 4+ - competitive monitoring)
+    # Beat schedule (Phase 4 - competitive monitoring)
     beat_schedule={
-        # Will be populated in Phase 4 for scheduled monitoring
+        'scheduled-monitoring-daily': {
+            'task': 'app.queue.tasks.scheduled_monitoring_task',
+            'schedule': 86400.0,  # Run once per day (24 * 60 * 60 seconds)
+            # Note: The task checks each product's individual schedule
+            # (daily, weekly, biweekly, monthly) and only runs monitoring
+            # for products that are due based on their configuration.
+        },
     },
 )
 
