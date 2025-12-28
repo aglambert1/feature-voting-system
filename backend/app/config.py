@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     brave_api_key: str = "your-brave-api-key-here"  # Get free key at https://brave.com/search/api/
     enable_web_search: bool = True  # Enable web search for competitor discovery
 
+    # Redis/Celery settings (for background task processing)
+    redis_url: str = "redis://localhost:6379/0"
+    celery_broker_url: str = ""  # Defaults to redis_url if not set
+    celery_result_backend: str = ""  # Defaults to redis_url if not set
+
     # Development mode settings for OTP bypass
     # SECURITY WARNING: Only use in development! Never enable in production!
     dev_otp_bypass: str = "000000"  # Fixed OTP that always works in debug mode

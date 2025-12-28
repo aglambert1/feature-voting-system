@@ -94,7 +94,9 @@ class User(Base):
     )
 
     # Relationships
-    ideas = relationship("Idea", back_populates="submitter")
+    # Note: foreign_keys specified because Idea has multiple FKs to User (submitter_id, reviewed_by_user_id)
+    ideas = relationship("Idea", back_populates="submitter", foreign_keys="[Idea.submitter_id]")
+    reviewed_ideas = relationship("Idea", foreign_keys="[Idea.reviewed_by_user_id]")
     votes = relationship("Vote", back_populates="user")
     submissions = relationship("Submission", back_populates="submitter")
 

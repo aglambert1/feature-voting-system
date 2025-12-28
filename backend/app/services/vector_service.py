@@ -297,3 +297,115 @@ class VectorService:
                 text("DELETE FROM product_chunks WHERE product_id = :id"),
                 {"id": product_id}
             )
+
+    # ============================================================================
+    # Competitor Feature Embedding Methods
+    # ============================================================================
+
+    @staticmethod
+    def store_competitor_feature_embedding(
+        db: Session,
+        feature_id: int,
+        embedding: List[float]
+    ) -> None:
+        """
+        Store embedding for a competitor feature.
+
+        Args:
+            db: SQLAlchemy database session
+            feature_id: ID of the ProductCompetitorFeature
+            embedding: Embedding vector (384 dimensions for all-MiniLM-L6-v2)
+        """
+        if VectorService.is_postgres(db):
+            # PostgreSQL: Update feature embedding column
+            db.execute(
+                text("UPDATE product_competitor_features SET embedding = :emb WHERE id = :id"),
+                {"id": feature_id, "emb": embedding}
+            )
+        else:
+            # SQLite: Insert into vec_competitor_features virtual table
+            serialized_emb = sqlite_vec.serialize_float32(embedding)
+
+            # Delete existing embedding if any
+            db.execute(
+                text("DELETE FROM vec_competitor_features WHERE feature_id = :id"),
+                {"id": feature_id}
+            )
+
+            # Insert new embedding
+            db.execute(
+                text("INSERT INTO vec_competitor_features(feature_id, embedding) VALUES (:id, :emb)"),
+                {"id": feature_id, "emb": serialized_emb}
+            )
+
+    @staticmethod
+    def find_similar_competitor_features(
+        db: Session,
+        query_embedding: List[float],
+        product_id: int,
+        limit: int = 10,
+        threshold: float = 0.5
+    ) -> List[Tuple[int, str, str, int, str, float]]:
+        """
+        Find similar competitor features using vector similarity search.
+
+        Args:
+            db: SQLAlchemy database session
+            query_embedding: Query embedding vector
+            product_id: Filter by product ID (via ProductCompetitor)
+            limit: Maximum number of results to return
+            threshold: Minimum similarity score (0-1, where 1 is identical)
+
+        Returns:
+            List of tuples: (feature_id, feature_name, feature_description,
+                           competitor_id, competitor_name, distance)
+            Distance is cosine distance (0=identical, 2=opposite)
+        """
+        # Convert threshold to distance (distance = 2 * (1 - similarity))
+        max_distance = 2 * (1 - threshold)
+
+        if VectorService.is_postgres(db):
+            # PostgreSQL: Use pgvector <=> operator
+            results = db.execute(text("""
+                SELECT pcf.id, pcf.feature_name, pcf.feature_description,
+                       pc.id as competitor_id, pc.competitor_name,
+                       pcf.embedding <=> :query_emb::vector as distance
+                FROM product_competitor_features pcf
+                JOIN product_competitors pc ON pcf.product_competitor_id = pc.id
+                WHERE pc.product_id = :product_id
+                  AND pc.status = 'active'
+                  AND pcf.status = 'active'
+                  AND pcf.embedding IS NOT NULL
+                  AND (pcf.embedding <=> :query_emb::vector) <= :max_distance
+                ORDER BY pcf.embedding <=> :query_emb::vector
+                LIMIT :limit
+            """), {
+                "query_emb": query_embedding,
+                "product_id": product_id,
+                "max_distance": max_distance,
+                "limit": limit
+            })
+        else:
+            # SQLite: Use vec_distance_cosine function
+            serialized_query = sqlite_vec.serialize_float32(query_embedding)
+            results = db.execute(text("""
+                SELECT pcf.id, pcf.feature_name, pcf.feature_description,
+                       pc.id as competitor_id, pc.competitor_name,
+                       vec_distance_cosine(v.embedding, :query_emb) as distance
+                FROM vec_competitor_features v
+                JOIN product_competitor_features pcf ON v.feature_id = pcf.id
+                JOIN product_competitors pc ON pcf.product_competitor_id = pc.id
+                WHERE pc.product_id = :product_id
+                  AND pc.status = 'active'
+                  AND pcf.status = 'active'
+                  AND vec_distance_cosine(v.embedding, :query_emb) <= :max_distance
+                ORDER BY distance ASC
+                LIMIT :limit
+            """), {
+                "query_emb": serialized_query,
+                "product_id": product_id,
+                "max_distance": max_distance,
+                "limit": limit
+            })
+
+        return results.fetchall()

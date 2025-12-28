@@ -21,8 +21,10 @@ from pathlib import Path
 
 from app.database import get_db
 from app.models.user import User
-from app.models.competitor_intelligence import ProductPermissionLevel
+from app.models.competitor_intelligence import ProductPermissionLevel, CIProduct
+from app.models.queue import QueueJob, JobType, JobStatus
 from app.services.product_service import ProductService
+from app.services.queue_service import QueueService
 from app.services.llm_service import llm_service
 from app.services.document_parsing_service import DocumentParsingService
 from app.services.vector_service import VectorService
@@ -843,3 +845,999 @@ async def fetch_url(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+
+
+# ============================================================================
+# Queue-Based Analysis Endpoints (Phase 1)
+# ============================================================================
+
+class QueueAnalyzeRequest(BaseModel):
+    """Schema for queue-based product analysis."""
+    product_description: Optional[str] = Field(None, min_length=10)
+    source_type: Optional[str] = Field(None, pattern="^(text|document|url)$")
+    source_data: Optional[dict] = None
+
+
+class JobResponse(BaseModel):
+    """Schema for job status response."""
+    id: int
+    job_uuid: str
+    job_type: str
+    status: str
+    priority: str
+    progress_percent: Optional[float]
+    progress_message: Optional[str]
+    error_message: Optional[str]
+    created_at: datetime
+    queued_at: Optional[datetime]
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    duration_seconds: Optional[float]
+    product_id: Optional[int]
+    output_data: Optional[dict]
+
+    class Config:
+        from_attributes = True
+
+
+@router.post("/{product_id}/analyze/queue", response_model=JobResponse)
+def queue_product_analysis(
+    product_id: int,
+    request: QueueAnalyzeRequest = None,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Queue a product for background analysis (async version of /analyze).
+
+    This endpoint queues the analysis job and returns immediately.
+    Use GET /jobs/{job_uuid} to check status and retrieve results.
+
+    Requires EDIT permission on the product.
+
+    Returns:
+        Job record with job_uuid for status tracking
+
+    Raises:
+        403: If user lacks EDIT permission
+        404: If product not found
+        409: If analysis job already running for this product
+    """
+    from app.services.permission_service import PermissionService
+    from app.queue.tasks import analyze_product_task
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.EDIT
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have EDIT permission for product {product_id}"
+        )
+
+    # Get product
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product {product_id} not found"
+        )
+
+    # Check for existing active job
+    queue_service = QueueService(db)
+    active_jobs = queue_service.get_active_jobs(product_id=product_id)
+    analysis_jobs = [j for j in active_jobs if j.job_type == JobType.PRODUCT_ANALYSIS]
+    if analysis_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Analysis job already active for product {product_id}. "
+                   f"Job ID: {analysis_jobs[0].job_uuid}"
+        )
+
+    # Prepare input data
+    input_data = {}
+    if request:
+        if request.product_description:
+            input_data['product_description'] = request.product_description
+        if request.source_type:
+            input_data['source_type'] = request.source_type
+        if request.source_data:
+            input_data['source_data'] = request.source_data
+
+    # Use product's current data if not provided
+    if not input_data.get('product_description'):
+        input_data['product_description'] = product.product_description
+    if not input_data.get('source_type'):
+        input_data['source_type'] = product.product_source_type or 'text'
+    input_data['product_name'] = product.product_name
+
+    # Create job
+    job = queue_service.create_job(
+        job_type=JobType.PRODUCT_ANALYSIS,
+        input_data=input_data,
+        product_id=product_id,
+        user_id=current_user.id,
+    )
+
+    # Queue the Celery task
+    try:
+        celery_result = analyze_product_task.delay(job.id)
+        queue_service.mark_queued(job.id, celery_result.id)
+    except Exception as e:
+        queue_service.mark_failure(job.id, f"Failed to queue task: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to queue analysis task: {str(e)}"
+        )
+
+    return JobResponse(
+        id=job.id,
+        job_uuid=job.job_uuid,
+        job_type=job.job_type.value,
+        status=job.status.value,
+        priority=job.priority.value,
+        progress_percent=job.progress_percent,
+        progress_message=job.progress_message,
+        error_message=job.error_message,
+        created_at=job.created_at,
+        queued_at=job.queued_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        duration_seconds=job.duration_seconds,
+        product_id=job.product_id,
+        output_data=job.output_data,
+    )
+
+
+@router.get("/{product_id}/jobs", response_model=List[JobResponse])
+def list_product_jobs(
+    product_id: int,
+    status: Optional[str] = Query(None, description="Filter by status"),
+    job_type: Optional[str] = Query(None, description="Filter by job type"),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    List jobs for a specific product.
+
+    Requires VIEW permission on the product.
+
+    Args:
+        product_id: Product ID
+        status: Filter by job status (pending, queued, running, success, failure)
+        job_type: Filter by job type (product_analysis, etc.)
+        limit: Maximum number of jobs to return (default 20, max 100)
+
+    Returns:
+        List of jobs for the product
+    """
+    from app.services.permission_service import PermissionService
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.VIEW
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have VIEW permission for product {product_id}"
+        )
+
+    # Convert string filters to enums
+    status_filter = None
+    if status:
+        try:
+            status_filter = JobStatus(status.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status: {status}"
+            )
+
+    type_filter = None
+    if job_type:
+        try:
+            type_filter = JobType(job_type.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid job type: {job_type}"
+            )
+
+    queue_service = QueueService(db)
+    jobs = queue_service.get_jobs_for_product(
+        product_id=product_id,
+        status=status_filter,
+        job_type=type_filter,
+        limit=limit,
+    )
+
+    return [
+        JobResponse(
+            id=j.id,
+            job_uuid=j.job_uuid,
+            job_type=j.job_type.value,
+            status=j.status.value,
+            priority=j.priority.value,
+            progress_percent=j.progress_percent,
+            progress_message=j.progress_message,
+            error_message=j.error_message,
+            created_at=j.created_at,
+            queued_at=j.queued_at,
+            started_at=j.started_at,
+            completed_at=j.completed_at,
+            duration_seconds=j.duration_seconds,
+            product_id=j.product_id,
+            output_data=j.output_data,
+        )
+        for j in jobs
+    ]
+
+
+# ============================================================================
+# Global Job Endpoints
+# ============================================================================
+
+# Create a separate router for job endpoints
+jobs_router = APIRouter(
+    prefix="/product-intelligence/jobs",
+    tags=["Product Intelligence - Jobs"]
+)
+
+
+@jobs_router.get("/{job_uuid}", response_model=JobResponse)
+def get_job_status(
+    job_uuid: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get status of a specific job by UUID.
+
+    Returns the job status, progress, and results (if complete).
+    Poll this endpoint to track job progress.
+
+    Requires VIEW permission on the associated product.
+
+    Returns:
+        Job details including status and output_data (if complete)
+
+    Raises:
+        403: If user lacks permission
+        404: If job not found
+    """
+    from app.services.permission_service import PermissionService
+
+    queue_service = QueueService(db)
+    job = queue_service.get_job_by_uuid(job_uuid)
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_uuid} not found"
+        )
+
+    # Check permission if job is associated with a product
+    if job.product_id:
+        permission_service = PermissionService(db)
+        if not permission_service.can_access_product(
+            user_id=current_user.id,
+            product_id=job.product_id,
+            required_level=ProductPermissionLevel.VIEW
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to view this job"
+            )
+
+    return JobResponse(
+        id=job.id,
+        job_uuid=job.job_uuid,
+        job_type=job.job_type.value,
+        status=job.status.value,
+        priority=job.priority.value,
+        progress_percent=job.progress_percent,
+        progress_message=job.progress_message,
+        error_message=job.error_message,
+        created_at=job.created_at,
+        queued_at=job.queued_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        duration_seconds=job.duration_seconds,
+        product_id=job.product_id,
+        output_data=job.output_data,
+    )
+
+
+@jobs_router.post("/{job_uuid}/cancel", response_model=JobResponse)
+def cancel_job(
+    job_uuid: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Cancel a pending or running job.
+
+    Only jobs that haven't completed can be cancelled.
+
+    Requires EDIT permission on the associated product.
+
+    Returns:
+        Updated job with cancelled status
+
+    Raises:
+        400: If job cannot be cancelled (already complete)
+        403: If user lacks permission
+        404: If job not found
+    """
+    from app.services.permission_service import PermissionService
+    from app.services.queue_service import QueueServiceError
+
+    queue_service = QueueService(db)
+    job = queue_service.get_job_by_uuid(job_uuid)
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_uuid} not found"
+        )
+
+    # Check permission if job is associated with a product
+    if job.product_id:
+        permission_service = PermissionService(db)
+        if not permission_service.can_access_product(
+            user_id=current_user.id,
+            product_id=job.product_id,
+            required_level=ProductPermissionLevel.EDIT
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to cancel this job"
+            )
+
+    try:
+        job = queue_service.cancel_job(job.id)
+    except QueueServiceError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+    return JobResponse(
+        id=job.id,
+        job_uuid=job.job_uuid,
+        job_type=job.job_type.value,
+        status=job.status.value,
+        priority=job.priority.value,
+        progress_percent=job.progress_percent,
+        progress_message=job.progress_message,
+        error_message=job.error_message,
+        created_at=job.created_at,
+        queued_at=job.queued_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        duration_seconds=job.duration_seconds,
+        product_id=job.product_id,
+        output_data=job.output_data,
+    )
+
+
+# ============================================================================
+# Phase 2: Workflow and Advanced Queue Endpoints
+# ============================================================================
+
+class WorkflowStartRequest(BaseModel):
+    """Schema for starting a full analysis workflow."""
+    skip_analysis: bool = Field(
+        default=False,
+        description="Skip product analysis (use existing) if already analyzed"
+    )
+    competitor_ids: Optional[List[int]] = Field(
+        default=None,
+        description="Specific competitor IDs to analyze (skip discovery if provided)"
+    )
+
+
+class WorkflowStatusResponse(BaseModel):
+    """Schema for workflow status response."""
+    workflow: dict
+    steps: List[dict]
+    summary: dict
+
+
+class CompetitorDiscoveryRequest(BaseModel):
+    """Schema for competitor discovery request."""
+    max_competitors: int = Field(default=5, ge=1, le=20)
+
+
+class FeatureExtractionRequest(BaseModel):
+    """Schema for feature extraction request."""
+    competitor_ids: List[int] = Field(..., min_items=1)
+    parallel: bool = Field(default=True)
+
+
+@router.post("/{product_id}/workflows/full-analysis", response_model=JobResponse)
+def start_full_analysis_workflow(
+    product_id: int,
+    request: WorkflowStartRequest = None,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Start a full analysis workflow for a product (Phase 2).
+
+    This workflow chains multiple jobs:
+    1. Product Analysis (if not skipped)
+    2. Competitor Discovery (if no specific competitors provided)
+    3. Feature Extraction (parallel for all competitors)
+
+    Use GET /jobs/{job_uuid} to track the parent workflow job.
+    Use GET /jobs/{job_uuid}/workflow to see all child job statuses.
+
+    Requires EDIT permission on the product.
+
+    Returns:
+        Parent workflow job for tracking
+
+    Raises:
+        400: If product not analyzed and skip_analysis=True
+        403: If user lacks EDIT permission
+        404: If product not found
+        409: If workflow already running for this product
+    """
+    from app.services.permission_service import PermissionService
+    from app.queue.workflows import WorkflowService, WorkflowError
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.EDIT
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have EDIT permission for product {product_id}"
+        )
+
+    # Check for existing active workflow
+    queue_service = QueueService(db)
+    active_jobs = queue_service.get_active_jobs(product_id=product_id)
+    workflow_jobs = [j for j in active_jobs if j.job_type == JobType.FULL_WORKFLOW]
+    if workflow_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Workflow already active for product {product_id}. "
+                   f"Job ID: {workflow_jobs[0].job_uuid}"
+        )
+
+    # Parse request
+    skip_analysis = False
+    competitor_ids = None
+    if request:
+        skip_analysis = request.skip_analysis
+        competitor_ids = request.competitor_ids
+
+    # Start workflow
+    workflow_service = WorkflowService(db)
+    try:
+        workflow_job = workflow_service.start_full_analysis_workflow(
+            product_id=product_id,
+            user_id=current_user.id,
+            skip_analysis=skip_analysis,
+            competitor_ids=competitor_ids,
+        )
+    except WorkflowError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+    return JobResponse(
+        id=workflow_job.id,
+        job_uuid=workflow_job.job_uuid,
+        job_type=workflow_job.job_type.value,
+        status=workflow_job.status.value,
+        priority=workflow_job.priority.value,
+        progress_percent=workflow_job.progress_percent,
+        progress_message=workflow_job.progress_message,
+        error_message=workflow_job.error_message,
+        created_at=workflow_job.created_at,
+        queued_at=workflow_job.queued_at,
+        started_at=workflow_job.started_at,
+        completed_at=workflow_job.completed_at,
+        duration_seconds=workflow_job.duration_seconds,
+        product_id=workflow_job.product_id,
+        output_data=workflow_job.output_data,
+    )
+
+
+@router.post("/{product_id}/competitors/discover/queue", response_model=JobResponse)
+def queue_competitor_discovery(
+    product_id: int,
+    request: CompetitorDiscoveryRequest = None,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Queue competitor discovery for a product (Phase 2).
+
+    Discovers competitors using AI-powered web search based on
+    the product's analysis data (keywords, category, etc.).
+
+    Requires EDIT permission on the product.
+    Product must be analyzed first.
+
+    Returns:
+        Job record for tracking
+
+    Raises:
+        400: If product not analyzed
+        403: If user lacks EDIT permission
+        404: If product not found
+        409: If discovery job already running
+    """
+    from app.services.permission_service import PermissionService
+    from app.queue.tasks import discover_competitors_task
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.EDIT
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have EDIT permission for product {product_id}"
+        )
+
+    # Get product
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product {product_id} not found"
+        )
+
+    # Check product is analyzed
+    if not product.structured_product_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Product {product_id} must be analyzed before competitor discovery"
+        )
+
+    # Check for existing active job
+    queue_service = QueueService(db)
+    active_jobs = queue_service.get_active_jobs(product_id=product_id)
+    discovery_jobs = [j for j in active_jobs if j.job_type == JobType.COMPETITOR_DISCOVERY]
+    if discovery_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Discovery job already active for product {product_id}. "
+                   f"Job ID: {discovery_jobs[0].job_uuid}"
+        )
+
+    # Parse request
+    max_competitors = 5
+    if request:
+        max_competitors = request.max_competitors
+
+    # Create job
+    job = queue_service.create_job(
+        job_type=JobType.COMPETITOR_DISCOVERY,
+        input_data={'max_competitors': max_competitors},
+        product_id=product_id,
+        user_id=current_user.id,
+    )
+
+    # Queue the Celery task
+    try:
+        celery_result = discover_competitors_task.delay(job.id)
+        queue_service.mark_queued(job.id, celery_result.id)
+    except Exception as e:
+        queue_service.mark_failure(job.id, f"Failed to queue task: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to queue discovery task: {str(e)}"
+        )
+
+    return JobResponse(
+        id=job.id,
+        job_uuid=job.job_uuid,
+        job_type=job.job_type.value,
+        status=job.status.value,
+        priority=job.priority.value,
+        progress_percent=job.progress_percent,
+        progress_message=job.progress_message,
+        error_message=job.error_message,
+        created_at=job.created_at,
+        queued_at=job.queued_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        duration_seconds=job.duration_seconds,
+        product_id=job.product_id,
+        output_data=job.output_data,
+    )
+
+
+@router.post("/{product_id}/features/extract/queue", response_model=JobResponse)
+def queue_feature_extraction(
+    product_id: int,
+    request: FeatureExtractionRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Queue feature extraction for specified competitors (Phase 2).
+
+    Extracts features from competitor products using AI analysis.
+    Can run in parallel mode (default) for faster execution.
+
+    Requires EDIT permission on the product.
+
+    Returns:
+        Job record for tracking
+
+    Raises:
+        400: If no valid competitors provided
+        403: If user lacks EDIT permission
+        404: If product not found
+        409: If extraction job already running
+    """
+    from app.services.permission_service import PermissionService
+    from app.queue.tasks import extract_features_parallel, extract_features_task
+    from app.models.competitor_intelligence import ProductCompetitor
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.EDIT
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have EDIT permission for product {product_id}"
+        )
+
+    # Get product
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product {product_id} not found"
+        )
+
+    # Validate competitor IDs belong to this product
+    valid_competitors = db.query(ProductCompetitor).filter(
+        ProductCompetitor.id.in_(request.competitor_ids),
+        ProductCompetitor.product_id == product_id
+    ).all()
+
+    if not valid_competitors:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid competitors found for the provided IDs"
+        )
+
+    valid_ids = [c.id for c in valid_competitors]
+
+    # Check for existing active job
+    queue_service = QueueService(db)
+    active_jobs = queue_service.get_active_jobs(product_id=product_id)
+    extraction_jobs = [j for j in active_jobs if j.job_type == JobType.FEATURE_EXTRACTION]
+    if extraction_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Extraction job already active for product {product_id}. "
+                   f"Job ID: {extraction_jobs[0].job_uuid}"
+        )
+
+    # Create job
+    job = queue_service.create_job(
+        job_type=JobType.FEATURE_EXTRACTION,
+        input_data={
+            'competitor_ids': valid_ids,
+            'parallel': request.parallel
+        },
+        product_id=product_id,
+        user_id=current_user.id,
+    )
+
+    # Queue the Celery task
+    try:
+        if request.parallel:
+            celery_result = extract_features_parallel.delay(job.id, valid_ids)
+        else:
+            # Sequential execution (first competitor only for single task)
+            celery_result = extract_features_task.delay(job.id, valid_ids[0])
+        queue_service.mark_queued(job.id, celery_result.id)
+    except Exception as e:
+        queue_service.mark_failure(job.id, f"Failed to queue task: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to queue extraction task: {str(e)}"
+        )
+
+    return JobResponse(
+        id=job.id,
+        job_uuid=job.job_uuid,
+        job_type=job.job_type.value,
+        status=job.status.value,
+        priority=job.priority.value,
+        progress_percent=job.progress_percent,
+        progress_message=job.progress_message,
+        error_message=job.error_message,
+        created_at=job.created_at,
+        queued_at=job.queued_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        duration_seconds=job.duration_seconds,
+        product_id=job.product_id,
+        output_data=job.output_data,
+    )
+
+
+@router.get("/{product_id}/competitors", response_model=List[dict])
+def list_product_competitors(
+    product_id: int,
+    status_filter: Optional[str] = Query(None, alias="status", description="Filter by status (active, inactive)"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    List competitors discovered for a product (Phase 2).
+
+    Returns persistent competitor records with their current feature counts.
+
+    Requires VIEW permission on the product.
+
+    Returns:
+        List of competitors with metadata
+    """
+    from app.services.permission_service import PermissionService
+    from app.models.competitor_intelligence import ProductCompetitor, ProductCompetitorFeature
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.VIEW
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have VIEW permission for product {product_id}"
+        )
+
+    # Build query
+    query = db.query(ProductCompetitor).filter(ProductCompetitor.product_id == product_id)
+
+    if status_filter:
+        query = query.filter(ProductCompetitor.status == status_filter)
+
+    competitors = query.order_by(ProductCompetitor.created_at.desc()).all()
+
+    # Get feature counts
+    result = []
+    for comp in competitors:
+        feature_count = db.query(ProductCompetitorFeature).filter(
+            ProductCompetitorFeature.product_competitor_id == comp.id,
+            ProductCompetitorFeature.status == 'active'
+        ).count()
+
+        result.append({
+            'id': comp.id,
+            'competitor_name': comp.competitor_name,
+            'competitor_url': comp.competitor_url,
+            'competitor_description': comp.competitor_description,
+            'status': comp.status,
+            'monitoring_enabled': comp.monitoring_enabled,
+            'last_monitored_at': comp.last_monitored_at.isoformat() if comp.last_monitored_at else None,
+            'feature_count': feature_count,
+            'created_at': comp.created_at.isoformat() if comp.created_at else None,
+            'updated_at': comp.updated_at.isoformat() if comp.updated_at else None,
+        })
+
+    return result
+
+
+@router.get("/{product_id}/competitors/{competitor_id}/features", response_model=List[dict])
+def list_competitor_features(
+    product_id: int,
+    competitor_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    List features extracted from a competitor (Phase 2).
+
+    Returns persistent feature records for the specified competitor.
+
+    Requires VIEW permission on the product.
+
+    Returns:
+        List of features with metadata
+    """
+    from app.services.permission_service import PermissionService
+    from app.models.competitor_intelligence import ProductCompetitor, ProductCompetitorFeature
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.VIEW
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have VIEW permission for product {product_id}"
+        )
+
+    # Verify competitor belongs to product
+    competitor = db.query(ProductCompetitor).filter(
+        ProductCompetitor.id == competitor_id,
+        ProductCompetitor.product_id == product_id
+    ).first()
+
+    if not competitor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Competitor {competitor_id} not found for product {product_id}"
+        )
+
+    # Get features
+    features = db.query(ProductCompetitorFeature).filter(
+        ProductCompetitorFeature.product_competitor_id == competitor_id,
+        ProductCompetitorFeature.status == 'active'
+    ).order_by(
+        ProductCompetitorFeature.feature_category,
+        ProductCompetitorFeature.feature_name
+    ).all()
+
+    return [
+        {
+            'id': f.id,
+            'feature_name': f.feature_name,
+            'feature_description': f.feature_description,
+            'feature_category': f.feature_category,
+            'extraction_confidence': float(f.extraction_confidence) if f.extraction_confidence else None,
+            'source_url': f.source_url,
+            'first_seen_at': f.first_seen_at.isoformat() if f.first_seen_at else None,
+            'last_seen_at': f.last_seen_at.isoformat() if f.last_seen_at else None,
+            'status': f.status,
+        }
+        for f in features
+    ]
+
+
+@jobs_router.get("/{job_uuid}/workflow", response_model=WorkflowStatusResponse)
+def get_workflow_status(
+    job_uuid: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed workflow status including all child jobs (Phase 2).
+
+    For workflow jobs (FULL_WORKFLOW type), returns the parent job
+    and all child jobs with progress summary.
+
+    Requires VIEW permission on the associated product.
+
+    Returns:
+        Workflow status with all child job details
+
+    Raises:
+        400: If job is not a workflow job
+        403: If user lacks permission
+        404: If job not found
+    """
+    from app.services.permission_service import PermissionService
+    from app.queue.workflows import WorkflowService, WorkflowError
+
+    queue_service = QueueService(db)
+    job = queue_service.get_job_by_uuid(job_uuid)
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_uuid} not found"
+        )
+
+    # Check this is a workflow job
+    if job.job_type != JobType.FULL_WORKFLOW:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job {job_uuid} is not a workflow job. Type: {job.job_type.value}"
+        )
+
+    # Check permission
+    if job.product_id:
+        permission_service = PermissionService(db)
+        if not permission_service.can_access_product(
+            user_id=current_user.id,
+            product_id=job.product_id,
+            required_level=ProductPermissionLevel.VIEW
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to view this workflow"
+            )
+
+    workflow_service = WorkflowService(db)
+    try:
+        status_data = workflow_service.get_workflow_status(job.id)
+        return WorkflowStatusResponse(**status_data)
+    except WorkflowError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+
+
+# ============================================================================
+# Utility Endpoints
+# ============================================================================
+
+@router.post("/{product_id}/backfill-embeddings")
+def backfill_competitor_feature_embeddings(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Backfill embeddings for all competitor features of a product.
+
+    This enables vector-based similarity search for competitive matching.
+    Run this after importing existing competitor data or if embeddings
+    were not generated during feature extraction.
+
+    Requires EDIT permission on the product.
+
+    Returns:
+        Count of features processed
+
+    Raises:
+        403: If user lacks EDIT permission
+        404: If product not found
+    """
+    from app.services.permission_service import PermissionService
+    from app.services.similarity_detector import SimilarityDetectorService
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.EDIT
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to modify this product"
+        )
+
+    # Verify product exists
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product {product_id} not found"
+        )
+
+    # Backfill embeddings
+    similarity_service = SimilarityDetectorService(db)
+    count = similarity_service.bulk_store_competitor_feature_embeddings(product_id)
+
+    return {
+        "product_id": product_id,
+        "features_processed": count,
+        "message": f"Successfully generated embeddings for {count} competitor features"
+    }

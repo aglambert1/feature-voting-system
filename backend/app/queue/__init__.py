@@ -1,0 +1,72 @@
+"""
+Celery application configuration for background task processing.
+
+This module sets up the Celery app with Redis as the message broker
+and result backend. Tasks are auto-discovered from the tasks module.
+
+NOTE: On macOS, Celery must be started with --pool=solo or --pool=threads
+to avoid SIGABRT crashes when loading PyTorch/SentenceTransformers models.
+The default 'fork' pool is incompatible with these libraries on macOS.
+
+Example:
+    celery -A app.queue worker --loglevel=info --pool=solo
+"""
+
+import sys
+from celery import Celery
+from app.config import settings
+
+# Configure broker and result backend URLs
+broker_url = settings.celery_broker_url or settings.redis_url
+result_backend = settings.celery_result_backend or settings.redis_url
+
+# Create Celery application
+celery_app = Celery(
+    'feature_voting',
+    broker=broker_url,
+    backend=result_backend,
+    include=['app.queue.tasks']
+)
+
+# Celery configuration
+celery_app.conf.update(
+    # Task settings
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+    timezone='UTC',
+    enable_utc=True,
+
+    # Task execution settings
+    task_acks_late=True,  # Acknowledge tasks after completion (for reliability)
+    task_reject_on_worker_lost=True,  # Requeue tasks if worker dies
+    task_track_started=True,  # Track when tasks start executing
+
+    # Result settings
+    result_expires=3600,  # Results expire after 1 hour
+    result_extended=True,  # Store task name and args in result
+
+    # Worker settings
+    worker_prefetch_multiplier=1,  # One task at a time per worker for fairness
+    worker_concurrency=1 if sys.platform == 'darwin' else 4,  # Solo on macOS
+
+    # Task routing (for future use with dedicated queues)
+    task_default_queue='default',
+    task_queues={
+        'default': {},
+        'product_analysis': {},
+        'competitor_research': {},
+        'feature_extraction': {},
+        'idea_generation': {},
+    },
+
+    # Beat schedule (Phase 4+ - competitive monitoring)
+    beat_schedule={
+        # Will be populated in Phase 4 for scheduled monitoring
+    },
+)
+
+
+def get_celery_app() -> Celery:
+    """Return the configured Celery app instance."""
+    return celery_app

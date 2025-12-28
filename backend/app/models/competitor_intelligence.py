@@ -146,8 +146,15 @@ class ProductCompetitor(Base):
     product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
     competitor_name = Column(String(255), nullable=False)
     competitor_url = Column(String(500))
-    first_discovered_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=False)
-    last_seen_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"))
+    competitor_description = Column(Text)  # Added for queue-based discovery
+    # Session references - nullable for queue-based workflows (Phase 2+)
+    first_discovered_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=True)
+    last_seen_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=True)
+    # Queue job reference for queue-based workflows
+    first_discovered_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
+    # Monitoring fields
+    monitoring_enabled = Column(Boolean, default=False)
+    last_monitored_at = Column(DateTime, nullable=True)
     status = Column(String(50), nullable=False, default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -209,8 +216,17 @@ class ProductCompetitorFeature(Base):
     feature_name = Column(String(255), nullable=False)
     feature_description = Column(Text)
     feature_category = Column(String(100))
-    first_discovered_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=False)
-    last_seen_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"))
+    # Additional fields for queue-based extraction
+    extraction_confidence = Column(DECIMAL(3, 2), nullable=True)  # 0.00-1.00
+    source_url = Column(String(500), nullable=True)
+    # Session references - nullable for queue-based workflows (Phase 2+)
+    first_discovered_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=True)
+    last_seen_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=True)
+    # Queue job reference for queue-based workflows
+    first_discovered_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
+    # Tracking fields
+    first_seen_at = Column(DateTime, server_default=func.now())
+    last_seen_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     status = Column(String(50), nullable=False, default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

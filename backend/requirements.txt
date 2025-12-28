@@ -96,3 +96,9 @@ beautifulsoup4==4.12.3
 lxml==5.1.0
 markdownify==0.11.6
 python-magic==0.4.27
+
+# Queue/Task dependencies (Celery + Redis)
+celery[redis]==5.4.0
+redis==5.0.1
+kombu==5.4.2
+flower==2.0.1

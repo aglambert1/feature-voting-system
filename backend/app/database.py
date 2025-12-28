@@ -95,6 +95,7 @@ def init_db():
     import app.models.idea  # noqa: F401
     import app.models.vote  # noqa: F401
     import app.models.competitor_intelligence  # noqa: F401
+    import app.models.queue  # noqa: F401
 
     # Create standard tables
     Base.metadata.create_all(bind=engine)
@@ -149,6 +150,16 @@ def init_db():
                 )
             """))
             print("✓ sqlite-vec vec_products virtual table created")
+
+            # SQLite: Create vec_competitor_features virtual table for competitor feature embeddings
+            db.execute(text("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS vec_competitor_features
+                USING vec0(
+                    feature_id INTEGER PRIMARY KEY,
+                    embedding FLOAT[384]
+                )
+            """))
+            print("✓ sqlite-vec vec_competitor_features virtual table created")
 
         db.commit()
     except Exception as e:

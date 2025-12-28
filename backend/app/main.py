@@ -83,6 +83,7 @@ app.include_router(ideas.router)
 app.include_router(votes.router)
 app.include_router(submissions.router)
 app.include_router(products.router)
+app.include_router(products.jobs_router)  # Queue-based job endpoints
 app.include_router(sessions.router)
 
 
