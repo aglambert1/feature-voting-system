@@ -1,10 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import api from '../services/api';
+import type { ProductListItem } from '../types';
 
-export interface ProductListItem {
-  id: number;
-  product_name: string;
-}
+// Re-export for backward compatibility
+export type { ProductListItem };
 
 interface ProductContextType {
   products: ProductListItem[];
@@ -51,6 +50,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         const fetchedProducts = Array.isArray(response.data) ? response.data : [];
         setProducts(fetchedProducts);
         setHasProducts(fetchedProducts.length > 0);
+
+        // Store products in sessionStorage for dashboard access
+        sessionStorage.setItem('products', JSON.stringify(fetchedProducts));
 
         // If we have a stored selection, validate it still exists
         const storedId = selectedProductId;

@@ -27,6 +27,13 @@ import type {
   FeatureCreate,
   AnalysisSession,
   SimilarIdea,
+  QueueJob,
+  PMReviewQueueItem,
+  PMReviewQueueResponse,
+  PMReviewQueueStats,
+  MonitoringConfig,
+  MonitoringConfigUpdate,
+  CompetitorSnapshotsResponse,
 } from '../types';
 
 // Create axios instance with base configuration
@@ -420,6 +427,210 @@ export const updateUserRole = async (userId: number, role: string): Promise<User
  */
 export const toggleUserActive = async (userId: number): Promise<User> => {
   const response = await api.put<User>(`/users/${userId}/toggle-active`);
+  return response.data;
+};
+
+// ============================================================================
+// QUEUE JOBS API METHODS (Phase 1-4)
+// ============================================================================
+
+/**
+ * Get job by UUID
+ */
+export const getJob = async (jobUuid: string): Promise<QueueJob> => {
+  const response = await api.get<QueueJob>(`/product-intelligence/jobs/${jobUuid}`);
+  return response.data;
+};
+
+/**
+ * Get jobs for a product
+ */
+export const getProductJobs = async (productId: number, limit: number = 10): Promise<QueueJob[]> => {
+  const response = await api.get<QueueJob[]>(`/product-intelligence/products/${productId}/jobs`, {
+    params: { limit },
+  });
+  return response.data;
+};
+
+/**
+ * Cancel a job
+ */
+export const cancelJob = async (jobUuid: string): Promise<QueueJob> => {
+  const response = await api.post<QueueJob>(`/product-intelligence/jobs/${jobUuid}/cancel`);
+  return response.data;
+};
+
+// ============================================================================
+// PM REVIEW QUEUE API METHODS (Phase 4)
+// ============================================================================
+
+interface GetQueueParams {
+  product_id?: number;
+  queue_type?: string;
+  status?: string;
+  priority?: string;
+  skip?: number;
+  limit?: number;
+}
+
+/**
+ * Get PM review queue items
+ */
+export const getReviewQueue = async (params: GetQueueParams = {}): Promise<PMReviewQueueResponse> => {
+  const response = await api.get<PMReviewQueueResponse>('/pm-review/queue', { params });
+  return response.data;
+};
+
+/**
+ * Get single queue item by ID
+ */
+export const getReviewQueueItem = async (itemId: number): Promise<PMReviewQueueItem> => {
+  const response = await api.get<PMReviewQueueItem>(`/pm-review/queue/${itemId}`);
+  return response.data;
+};
+
+/**
+ * Get queue stats for a product
+ */
+export const getReviewQueueStats = async (productId: number): Promise<PMReviewQueueStats> => {
+  const response = await api.get<PMReviewQueueStats>(`/pm-review/stats/${productId}`);
+  return response.data;
+};
+
+/**
+ * Assign queue item to user
+ */
+export const assignQueueItem = async (itemId: number, userId: number | null): Promise<PMReviewQueueItem> => {
+  const response = await api.post<PMReviewQueueItem>(`/pm-review/queue/${itemId}/assign`, {
+    user_id: userId,
+  });
+  return response.data;
+};
+
+/**
+ * Start review of queue item
+ */
+export const startReviewQueueItem = async (itemId: number): Promise<PMReviewQueueItem> => {
+  const response = await api.post<PMReviewQueueItem>(`/pm-review/queue/${itemId}/start-review`);
+  return response.data;
+};
+
+/**
+ * Approve queue item
+ */
+export const approveQueueItem = async (itemId: number, notes?: string): Promise<PMReviewQueueItem> => {
+  const response = await api.post<PMReviewQueueItem>(`/pm-review/queue/${itemId}/approve`, {
+    notes,
+  });
+  return response.data;
+};
+
+/**
+ * Reject queue item
+ */
+export const rejectQueueItem = async (itemId: number, notes?: string): Promise<PMReviewQueueItem> => {
+  const response = await api.post<PMReviewQueueItem>(`/pm-review/queue/${itemId}/reject`, {
+    notes,
+  });
+  return response.data;
+};
+
+/**
+ * Defer queue item
+ */
+export const deferQueueItem = async (itemId: number, notes?: string): Promise<PMReviewQueueItem> => {
+  const response = await api.post<PMReviewQueueItem>(`/pm-review/queue/${itemId}/defer`, {
+    notes,
+  });
+  return response.data;
+};
+
+/**
+ * Batch approve queue items
+ */
+export const batchApproveQueueItems = async (itemIds: number[], notes?: string): Promise<{ updated: number }> => {
+  const response = await api.post<{ updated: number }>('/pm-review/queue/batch/approve', {
+    item_ids: itemIds,
+    notes,
+  });
+  return response.data;
+};
+
+/**
+ * Batch reject queue items
+ */
+export const batchRejectQueueItems = async (itemIds: number[], notes?: string): Promise<{ updated: number }> => {
+  const response = await api.post<{ updated: number }>('/pm-review/queue/batch/reject', {
+    item_ids: itemIds,
+    notes,
+  });
+  return response.data;
+};
+
+// ============================================================================
+// MONITORING API METHODS (Phase 4)
+// ============================================================================
+
+/**
+ * Get monitoring config for a product
+ */
+export const getMonitoringConfig = async (productId: number): Promise<MonitoringConfig> => {
+  const response = await api.get<MonitoringConfig>(`/monitoring/config/${productId}`);
+  return response.data;
+};
+
+/**
+ * Update monitoring config
+ */
+export const updateMonitoringConfig = async (
+  productId: number,
+  config: MonitoringConfigUpdate
+): Promise<MonitoringConfig> => {
+  const response = await api.put<MonitoringConfig>(`/monitoring/config/${productId}`, config);
+  return response.data;
+};
+
+/**
+ * Enable monitoring for a product
+ */
+export const enableMonitoring = async (productId: number): Promise<MonitoringConfig> => {
+  const response = await api.post<MonitoringConfig>(`/monitoring/config/${productId}/enable`);
+  return response.data;
+};
+
+/**
+ * Disable monitoring for a product
+ */
+export const disableMonitoring = async (productId: number): Promise<MonitoringConfig> => {
+  const response = await api.post<MonitoringConfig>(`/monitoring/config/${productId}/disable`);
+  return response.data;
+};
+
+/**
+ * Get competitor snapshots for a product
+ */
+export const getCompetitorSnapshots = async (
+  productId: number,
+  params: { competitor_id?: number; has_changes?: boolean; limit?: number } = {}
+): Promise<CompetitorSnapshotsResponse> => {
+  const response = await api.get<CompetitorSnapshotsResponse>(`/monitoring/snapshots/${productId}`, {
+    params,
+  });
+  return response.data;
+};
+
+/**
+ * Trigger manual monitoring for a product
+ */
+export const triggerMonitoring = async (
+  productId: number,
+  forceFull: boolean = false
+): Promise<{ job_uuid: string; status: string }> => {
+  const response = await api.post<{ job_uuid: string; status: string }>(
+    `/monitoring/trigger/${productId}`,
+    null,
+    { params: { force_full: forceFull } }
+  );
   return response.data;
 };
 

@@ -25,6 +25,8 @@ import CreateProductPage from './pages/CompetitorIntelligence/CreateProductPage'
 import AnalyzeProductPage from './pages/CompetitorIntelligence/AnalyzeProductPage';
 import ProductDetailPage from './pages/CompetitorIntelligence/ProductDetailPage';
 import SessionWorkflowPage from './pages/CompetitorIntelligence/SessionWorkflowPage';
+import ReviewQueuePage from './pages/ReviewQueuePage';
+import ProductDashboardPage from './pages/ProductDashboardPage';
 
 function App() {
   return (
@@ -132,6 +134,28 @@ function App() {
               <ProtectedRoute>
                 <ProductOwnerRoute>
                   <SessionWorkflowPage />
+                </ProductOwnerRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/product-intelligence/products/:productId/dashboard"
+            element={
+              <ProtectedRoute>
+                <ProductOwnerRoute>
+                  <ProductDashboardPage />
+                </ProductOwnerRoute>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Review Queue - restricted to Product Owners and Admins */}
+          <Route
+            path="/review-queue"
+            element={
+              <ProtectedRoute>
+                <ProductOwnerRoute>
+                  <ReviewQueuePage />
                 </ProductOwnerRoute>
               </ProtectedRoute>
             }

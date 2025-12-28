@@ -279,3 +279,196 @@ declare module 'axios' {
     skipAuthRedirect?: boolean;
   }
 }
+
+// ============================================================================
+// QUEUE JOB TYPES (Phase 1-4)
+// ============================================================================
+
+export enum JobType {
+  PRODUCT_ANALYSIS = 'product_analysis',
+  COMPETITOR_DISCOVERY = 'competitor_discovery',
+  FEATURE_EXTRACTION = 'feature_extraction',
+  IDEA_GENERATION = 'idea_generation',
+  IDEA_TRIAGE = 'idea_triage',
+  COMPETITIVE_MONITORING = 'competitive_monitoring',
+  FULL_WORKFLOW = 'full_workflow',
+}
+
+export enum JobStatus {
+  PENDING = 'pending',
+  QUEUED = 'queued',
+  RUNNING = 'running',
+  SUCCESS = 'success',
+  FAILURE = 'failure',
+  CANCELLED = 'cancelled',
+}
+
+export interface QueueJob {
+  id: number;
+  job_uuid: string;
+  job_type: JobType;
+  status: JobStatus;
+  progress_percent: number;
+  progress_message: string | null;
+  input_data: Record<string, any>;
+  output_data: Record<string, any> | null;
+  error_message: string | null;
+  product_id: number | null;
+  user_id: number | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+// ============================================================================
+// PM REVIEW QUEUE TYPES (Phase 4)
+// ============================================================================
+
+export enum ReviewQueueType {
+  IDEA = 'idea',
+  COMPETITIVE_ALERT = 'competitive_alert',
+  REPORT = 'report',
+}
+
+export enum ReviewQueueStatus {
+  PENDING = 'pending',
+  IN_REVIEW = 'in_review',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+  DEFERRED = 'deferred',
+  DISMISSED = 'dismissed',
+}
+
+export enum ReviewQueuePriority {
+  LOW = 'low',
+  NORMAL = 'normal',
+  HIGH = 'high',
+  URGENT = 'urgent',
+}
+
+export enum AlertType {
+  NEW_COMPETITOR = 'new_competitor',
+  COMPETITOR_REMOVED = 'competitor_removed',
+  MAJOR_FEATURE_LAUNCH = 'major_feature_launch',
+  FEATURE_REMOVED = 'feature_removed',
+  PRICING_CHANGE = 'pricing_change',
+  TREND_DETECTED = 'trend_detected',
+}
+
+export interface PMReviewQueueItem {
+  id: number;
+  queue_type: ReviewQueueType;
+  status: ReviewQueueStatus;
+  priority: ReviewQueuePriority;
+  item_type: string;
+  item_id: number;
+  title: string;
+  summary: string | null;
+  alert_type: AlertType | null;
+  alert_severity: 'info' | 'warning' | 'critical' | null;
+  metadata: Record<string, any> | null;
+  product_id: number;
+  assigned_to_user_id: number | null;
+  reviewed_by_user_id: number | null;
+  reviewed_at: string | null;
+  review_notes: string | null;
+  review_action: string | null;
+  created_at: string;
+  due_by: string | null;
+}
+
+export interface PMReviewQueueResponse {
+  items: PMReviewQueueItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface PMReviewQueueStats {
+  total_pending: number;
+  total_in_review: number;
+  total_approved: number;
+  total_rejected: number;
+  by_type: Record<string, number>;
+  by_priority: Record<string, number>;
+}
+
+// ============================================================================
+// MONITORING TYPES (Phase 4)
+// ============================================================================
+
+export interface MonitoringConfig {
+  id: number;
+  product_id: number;
+  monitoring_enabled: boolean;
+  monitoring_frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly';
+  last_monitored_at: string | null;
+  next_scheduled_at: string | null;
+  alert_on_new_features: boolean;
+  alert_on_removed_features: boolean;
+  alert_on_new_competitors: boolean;
+  min_feature_change_threshold: number;
+  auto_generate_ideas: boolean;
+  auto_idea_confidence_threshold: number;
+  notify_product_owners: boolean;
+  notification_settings: Record<string, any> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MonitoringConfigUpdate {
+  monitoring_enabled?: boolean;
+  monitoring_frequency?: 'daily' | 'weekly' | 'biweekly' | 'monthly';
+  alert_on_new_features?: boolean;
+  alert_on_removed_features?: boolean;
+  alert_on_new_competitors?: boolean;
+  min_feature_change_threshold?: number;
+  auto_generate_ideas?: boolean;
+  auto_idea_confidence_threshold?: number;
+  notify_product_owners?: boolean;
+}
+
+export interface CompetitorSnapshot {
+  id: number;
+  product_competitor_id: number;
+  competitor_name: string;
+  snapshot_date: string;
+  feature_count: number;
+  features_hash: string;
+  has_changes: boolean;
+  change_summary: string | null;
+  changes_detected: {
+    new_features: Array<{ name: string; description: string }>;
+    removed_features: Array<{ name: string; id?: number }>;
+    modified_features: Array<{ feature: { name: string }; changes: Record<string, any> }>;
+    is_new_competitor: boolean;
+  } | null;
+  alert_generated: boolean;
+  alert_type: AlertType | null;
+  previous_snapshot_id: number | null;
+  created_at: string;
+}
+
+export interface CompetitorSnapshotsResponse {
+  snapshots: CompetitorSnapshot[];
+  total: number;
+}
+
+// ============================================================================
+// PRODUCT DASHBOARD TYPES
+// ============================================================================
+
+export interface ProductListItem {
+  id: number;
+  product_name: string;
+  product_description: string | null;
+  product_category: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  pending_ideas_count?: number;
+  pending_alerts_count?: number;
+  pending_reports_count?: number;
+  last_monitored_at?: string | null;
+  monitoring_enabled?: boolean;
+}
