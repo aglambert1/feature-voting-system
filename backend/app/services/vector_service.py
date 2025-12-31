@@ -51,6 +51,14 @@ class VectorService:
             # SQLite: Insert into vec_ideas virtual table
             # Serialize embedding for sqlite-vec
             serialized_emb = sqlite_vec.serialize_float32(embedding)
+
+            # Delete any existing embedding first to make this idempotent
+            # (allows re-processing ideas without duplicate key errors)
+            db.execute(
+                text("DELETE FROM vec_ideas WHERE idea_id = :id"),
+                {"id": idea_id}
+            )
+
             db.execute(
                 text("INSERT INTO vec_ideas(idea_id, embedding) VALUES (:id, :emb)"),
                 {"id": idea_id, "emb": serialized_emb}

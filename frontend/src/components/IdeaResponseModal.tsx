@@ -83,14 +83,20 @@ export default function IdeaResponseModal({
           setIsUsingAiRecommendation(false);
         }
         // Otherwise, pre-fill form if recommendation exists (AI recommendation mode)
-        else if (rec.has_recommendation && rec.recommended_status) {
-          setSelectedStatus(rec.recommended_status);
+        else if (rec.has_recommendation) {
+          // Pre-select status only if agent made a specific recommendation
+          // (agent can recommend "review" which means "you decide" - no status pre-selected)
+          if (rec.recommended_status) {
+            setSelectedStatus(rec.recommended_status);
+          }
           setInitialStatus(null);  // No initial response
+          // Always pre-fill the suggested comment if available
           setComment(rec.suggested_comment || '');
           if (rec.duplicate_of_idea_id) {
             setDuplicateOfIdeaId(rec.duplicate_of_idea_id);
           }
-          setIsUsingAiRecommendation(true);
+          // Show AI recommendation context if we have reasoning or suggested comment
+          setIsUsingAiRecommendation(!!rec.reasoning || !!rec.suggested_comment);
         }
 
         // If recommendation has similar ideas, use those
@@ -425,7 +431,9 @@ export default function IdeaResponseModal({
                           )}
                         </div>
                         <p className="text-xs text-purple-700 mt-0.5">
-                          Form pre-filled with AI suggestion. Edit as needed — your response replaces the recommendation.
+                          {recommendation.recommended_status
+                            ? 'Form pre-filled with AI suggestion. Edit as needed — your response replaces the recommendation.'
+                            : 'AI recommends PM review. Comment pre-filled — please select a status and edit as needed.'}
                         </p>
                       </div>
                       {recommendation.reasoning && (
