@@ -6,7 +6,7 @@
  * - Form validation
  * - Error handling
  * - Loading states
- * - Redirect to ideas page on success
+ * - Role-based redirect on success (PO/Admin to Product Dashboard, Voter to Ideas)
  * - Link to registration
  */
 
@@ -50,8 +50,8 @@ const LoginPage = () => {
       const result = await login(formData.username, formData.password);
 
       if (result.success) {
-        // Redirect to ideas page on success
-        navigate('/ideas');
+        // Redirect to root - RootRedirect will handle role-based navigation
+        navigate('/');
       } else {
         // Show error message
         setError(result.error || 'Login failed');

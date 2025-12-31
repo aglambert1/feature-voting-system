@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import Navigation from '../components/Navigation';
 import ReviewQueueCard from '../components/ReviewQueueCard';
 import MonitoringConfigPanel from '../components/MonitoringConfigPanel';
@@ -20,13 +20,14 @@ import {
   getMonitoringConfig,
   getProductJobs,
   triggerMonitoring,
+  getTriageSettings,
+  updateTriageSettings,
 } from '../services/api';
-import type { PMReviewQueueStats, MonitoringConfig, QueueJob, ApiError } from '../types';
+import type { PMReviewQueueStats, MonitoringConfig, QueueJob, ApiError, TriageSettings } from '../types';
 import { JobStatus } from '../types';
 
 const ProductDashboardPage = () => {
   const { productId } = useParams<{ productId: string }>();
-  const navigate = useNavigate();
 
   const [productName, setProductName] = useState<string>('');
   const [stats, setStats] = useState<PMReviewQueueStats | null>(null);
@@ -37,6 +38,11 @@ const ProductDashboardPage = () => {
   const [showMonitoringConfig, setShowMonitoringConfig] = useState(false);
   const [triggeringMonitoring, setTriggeringMonitoring] = useState(false);
 
+  // Triage automation state
+  const [triageSettings, setTriageSettings] = useState<TriageSettings | null>(null);
+  const [savingTriageSettings, setSavingTriageSettings] = useState(false);
+  const [triageError, setTriageError] = useState('');
+
   const numProductId = productId ? parseInt(productId) : null;
 
   const fetchDashboardData = useCallback(async () => {
@@ -46,15 +52,17 @@ const ProductDashboardPage = () => {
     setError('');
 
     try {
-      const [statsData, configData, jobsData] = await Promise.all([
+      const [statsData, configData, jobsData, triageData] = await Promise.all([
         getReviewQueueStats(numProductId),
         getMonitoringConfig(numProductId),
         getProductJobs(numProductId, 5),
+        getTriageSettings(numProductId),
       ]);
 
       setStats(statsData);
       setMonitoringConfig(configData);
       setRecentJobs(jobsData);
+      setTriageSettings(triageData);
     } catch (err) {
       setError((err as ApiError).message);
     } finally {
@@ -95,6 +103,42 @@ const ProductDashboardPage = () => {
       setError((err as ApiError).message);
     } finally {
       setTriggeringMonitoring(false);
+    }
+  };
+
+  const handleTriageToggle = async (enabled: boolean) => {
+    if (!numProductId || !triageSettings) return;
+
+    setSavingTriageSettings(true);
+    setTriageError('');
+    try {
+      const updated = await updateTriageSettings(numProductId, {
+        auto_enabled: enabled,
+        auto_threshold: triageSettings.auto_threshold,
+      });
+      setTriageSettings(updated);
+    } catch (err) {
+      setTriageError((err as ApiError).message || 'Failed to update settings');
+    } finally {
+      setSavingTriageSettings(false);
+    }
+  };
+
+  const handleThresholdChange = async (threshold: number) => {
+    if (!numProductId || !triageSettings) return;
+
+    setSavingTriageSettings(true);
+    setTriageError('');
+    try {
+      const updated = await updateTriageSettings(numProductId, {
+        auto_enabled: triageSettings.auto_enabled,
+        auto_threshold: threshold,
+      });
+      setTriageSettings(updated);
+    } catch (err) {
+      setTriageError((err as ApiError).message || 'Failed to update settings');
+    } finally {
+      setSavingTriageSettings(false);
     }
   };
 
@@ -218,19 +262,19 @@ const ProductDashboardPage = () => {
                   title="Ideas"
                   count={stats?.by_type?.idea || 0}
                   icon="ideas"
-                  linkTo={`/review-queue?type=idea&product_id=${productId}`}
+                  linkTo={`/ideas?product=${productId}`}
                 />
                 <ReviewQueueCard
                   title="Competitive Alerts"
                   count={stats?.by_type?.competitive_alert || 0}
                   icon="alerts"
-                  linkTo={`/review-queue?type=competitive_alert&product_id=${productId}`}
+                  linkTo={`/product-intelligence/products/${productId}`}
                 />
                 <ReviewQueueCard
                   title="Reports"
                   count={stats?.by_type?.report || 0}
                   icon="reports"
-                  linkTo={`/review-queue?type=report&product_id=${productId}`}
+                  linkTo={`/product-intelligence/products/${productId}`}
                 />
               </div>
             </div>
@@ -281,6 +325,100 @@ const ProductDashboardPage = () => {
               )}
             </div>
 
+            {/* Idea Triage Automation */}
+            <div className="mb-8">
+              <h2 className="text-lg font-medium text-gray-900 mb-4">Idea Triage Automation</h2>
+              <div className="bg-white border border-gray-200 rounded-lg p-6">
+                {triageError && (
+                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-600 text-sm">
+                    {triageError}
+                  </div>
+                )}
+
+                {/* Enable Toggle */}
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center space-x-3">
+                    <button
+                      onClick={() => handleTriageToggle(!triageSettings?.auto_enabled)}
+                      disabled={savingTriageSettings || !triageSettings}
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                        triageSettings?.auto_enabled ? 'bg-blue-600' : 'bg-gray-200'
+                      } ${savingTriageSettings ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      role="switch"
+                      aria-checked={triageSettings?.auto_enabled || false}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                          triageSettings?.auto_enabled ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                    <div>
+                      <div className="font-medium text-gray-900">Enable automatic responses</div>
+                      <div className="text-sm text-gray-500">
+                        AI will automatically respond to ideas when confidence exceeds threshold
+                      </div>
+                    </div>
+                  </div>
+                  {savingTriageSettings && (
+                    <div className="text-sm text-gray-500">Saving...</div>
+                  )}
+                </div>
+
+                {/* Confidence Threshold Slider */}
+                <div className={triageSettings?.auto_enabled ? '' : 'opacity-50 pointer-events-none'}>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium text-gray-700">
+                      Confidence threshold
+                    </label>
+                    <span className="text-sm font-semibold text-blue-600">
+                      {Math.round((triageSettings?.auto_threshold || 0.9) * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="50"
+                    max="99"
+                    value={Math.round((triageSettings?.auto_threshold || 0.9) * 100)}
+                    onChange={(e) => {
+                      // Update local state immediately for smooth slider
+                      if (triageSettings) {
+                        setTriageSettings({
+                          ...triageSettings,
+                          auto_threshold: parseInt(e.target.value) / 100,
+                        });
+                      }
+                    }}
+                    onMouseUp={(e) => handleThresholdChange(parseInt((e.target as HTMLInputElement).value) / 100)}
+                    onTouchEnd={(e) => handleThresholdChange(parseInt((e.target as HTMLInputElement).value) / 100)}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    disabled={!triageSettings?.auto_enabled || savingTriageSettings}
+                  />
+                  <div className="flex justify-between text-xs text-gray-400 mt-1">
+                    <span>50% (More auto-responses)</span>
+                    <span>99% (Fewer auto-responses)</span>
+                  </div>
+                </div>
+
+                {/* Info Box */}
+                <div className="mt-6 p-4 bg-blue-50 border border-blue-100 rounded-lg">
+                  <div className="flex items-start space-x-3">
+                    <svg className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    <div className="text-sm text-blue-800">
+                      <p className="font-medium mb-1">How it works</p>
+                      <p>
+                        When enabled, the AI will analyze each submitted idea and automatically respond
+                        if it's confident about the appropriate action (accept, mark as duplicate, etc.).
+                        Auto-responded ideas are marked with a robot icon and can be reviewed or changed at any time.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Recent Activity / Jobs */}
             <div className="mb-8">
               <h2 className="text-lg font-medium text-gray-900 mb-4">Recent Activity</h2>
@@ -320,10 +458,10 @@ const ProductDashboardPage = () => {
                   View Comparison
                 </Link>
                 <Link
-                  to={`/review-queue?product_id=${productId}`}
+                  to={`/ideas?product=${productId}`}
                   className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50"
                 >
-                  Review All Items
+                  Review Ideas
                 </Link>
               </div>
             </div>

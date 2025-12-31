@@ -1,21 +1,59 @@
 /**
- * ProductListPage
+ * ProductListPage (Product Dashboard)
  *
- * Main page for Competitor Intelligence - lists all products
+ * Main page for Competitor Intelligence - lists all products with pending counts.
+ * This is the default landing page for PO/Admin users.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../../services/api';
+import api, { getProductPendingCounts } from '../../services/api';
 import ProductCard from './ProductCard';
 import Navigation from '../../components/Navigation';
-import { Product } from '../../types';
+import { Product, ProductPendingCounts } from '../../types';
+
+// Extended product type with pending counts
+interface ProductWithCounts extends Product {
+  product_name?: string;
+  product_description?: string;
+  product_category?: string;
+  analysis_version?: number;
+  analysis_count?: number;
+  last_analyzed_at?: string;
+  pendingCounts?: ProductPendingCounts;
+}
 
 export default function ProductListPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<ProductWithCounts[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  const fetchPendingCounts = useCallback(async (productList: ProductWithCounts[]) => {
+    // Fetch pending counts for each product in parallel
+    const countsPromises = productList.map(async (product) => {
+      try {
+        const counts = await getProductPendingCounts(product.id);
+        return { productId: product.id, counts };
+      } catch {
+        // If we can't get counts, return null (product might not have the new fields yet)
+        return { productId: product.id, counts: null };
+      }
+    });
+
+    const results = await Promise.all(countsPromises);
+
+    // Update products with pending counts
+    setProducts((prevProducts) =>
+      prevProducts.map((product) => {
+        const result = results.find((r) => r.productId === product.id);
+        return {
+          ...product,
+          pendingCounts: result?.counts || undefined,
+        };
+      })
+    );
+  }, []);
 
   useEffect(() => {
     fetchProducts();
@@ -24,8 +62,14 @@ export default function ProductListPage() {
   const fetchProducts = async (): Promise<void> => {
     try {
       setLoading(true);
-      const response = await api.get<Product[]>('/product-intelligence/products');
+      const response = await api.get<ProductWithCounts[]>('/product-intelligence/products');
       setProducts(response.data);
+
+      // Store products in sessionStorage for other pages to use
+      sessionStorage.setItem('products', JSON.stringify(response.data));
+
+      // Fetch pending counts after products are loaded
+      fetchPendingCounts(response.data);
     } catch (err: any) {
       setError(err.message || err.data?.detail || 'Failed to load products');
     } finally {

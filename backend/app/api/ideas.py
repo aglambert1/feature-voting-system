@@ -22,8 +22,10 @@ from pydantic import BaseModel, Field
 
 from app.database import get_db
 from app.models.idea import Idea, IdeaStatus, SourceType, TriageStatus, TriageAction
+from app.models.idea_comment import IdeaComment
+from app.models.idea_status_history import IdeaStatusHistory
 from app.models.vote import Vote
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.queue import JobType
 from app.models.competitor_intelligence import CIProduct, ProductPermissionLevel
 from app.schemas.idea import IdeaCreate, IdeaResponse, IdeaListItem, IdeaListResponse, VoteCount, SimilarIdeaResponse
@@ -211,6 +213,13 @@ def list_ideas(
             if product:
                 product_name = product.product_name
 
+        # Get duplicate title if exists
+        duplicate_title = None
+        if idea.duplicate_of_idea_id:
+            duplicate_idea = db.query(Idea).filter(Idea.id == idea.duplicate_of_idea_id).first()
+            if duplicate_idea:
+                duplicate_title = duplicate_idea.title
+
         idea_items.append(IdeaListItem(
             id=idea.id,
             title=idea.title,
@@ -221,6 +230,11 @@ def list_ideas(
             created_at=idea.created_at,
             product_id=idea.product_id,
             product_name=product_name,
+            triage_status=idea.triage_status.value if idea.triage_status else None,
+            is_active=idea.is_active,
+            auto_responded=idea.auto_responded,
+            duplicate_of_idea_id=idea.duplicate_of_idea_id,
+            duplicate_of_title=duplicate_title,
             vote_counts=vote_counts,
             user_vote=user_vote,
             user_vote_timestamp=user_vote_timestamp
@@ -602,6 +616,78 @@ class PMReviewRequest(BaseModel):
     publish_for_voting: bool = Field(True, description="Publish for voting on approval")
 
 
+class IdeaRespondRequest(BaseModel):
+    """Request schema for PO structured response to an idea."""
+    status: str = Field(..., description="New status: approved, duplicate, feature_exists, not_appropriate")
+    comment: str = Field(..., min_length=1, description="Comment explaining the response")
+    duplicate_of_idea_id: Optional[int] = Field(None, description="Required if status is 'duplicate'")
+
+
+class IdeaCommentRequest(BaseModel):
+    """Request schema for adding a comment to an idea."""
+    comment_text: str = Field(..., min_length=1, max_length=5000, description="Comment text")
+
+
+class IdeaCommentResponse(BaseModel):
+    """Response schema for a comment."""
+    id: int
+    idea_id: int
+    user_id: int
+    username: Optional[str] = None
+    comment_text: str
+    is_system_generated: bool
+    created_at: datetime
+
+
+class StatusHistoryEntryResponse(BaseModel):
+    """Response schema for a status history entry."""
+    id: int
+    previous_status: Optional[str]
+    new_status: Optional[str]
+    changed_by_user_id: Optional[int]
+    changed_by_username: Optional[str] = None
+    is_automated: bool
+    change_source: str
+    comment: Optional[str]
+    confidence: Optional[int]
+    created_at: datetime
+
+
+class IdeaDetailResponse(BaseModel):
+    """Extended idea response with comments and triage details."""
+    id: int
+    title: str
+    what_description: str
+    why_description: str
+    use_case_description: str
+    source_type: str
+    category: Optional[str]
+    status: str
+    triage_status: str
+    triage_confidence: Optional[float]
+    triage_recommendation: Optional[str]
+    triage_reasoning: Optional[str]
+    duplicate_of_idea_id: Optional[int]
+    duplicate_of_title: Optional[str] = None
+    similarity_score: Optional[float]
+    auto_response_text: Optional[str]
+    is_active: bool
+    auto_responded: bool
+    published_for_voting: bool
+    product_id: int
+    product_name: Optional[str] = None
+    submitter_id: Optional[int]
+    submitter_username: Optional[str] = None
+    reviewed_by_user_id: Optional[int]
+    reviewer_username: Optional[str] = None
+    reviewed_at: Optional[datetime]
+    review_notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    comments: List[IdeaCommentResponse] = []
+    status_history: List[StatusHistoryEntryResponse] = []
+
+
 @router.post("/submit", response_model=JobQueueResponse, status_code=status.HTTP_202_ACCEPTED)
 def submit_idea_with_triage(
     request: IdeaSubmissionRequest,
@@ -951,4 +1037,583 @@ def publish_idea(
         'title': idea.title,
         'published_for_voting': True,
         'message': "Idea is now available for voting"
+    }
+
+
+# ============================================================================
+# Structured Response Workflow (New Plan Phase 2)
+# ============================================================================
+
+def can_respond_to_idea(db: Session, user: User, idea: Idea) -> bool:
+    """
+    Check if user can respond to an idea.
+
+    Admins can respond to any idea.
+    Product Owners can respond to ideas for products they have EDIT permission on.
+    """
+    if user.role == UserRole.ADMIN:
+        return True
+
+    if user.role == UserRole.PRODUCT_OWNER:
+        permission_service = PermissionService(db)
+        return permission_service.can_access_product(
+            user_id=user.id,
+            product_id=idea.product_id,
+            required_level=ProductPermissionLevel.EDIT
+        )
+
+    return False
+
+
+@router.get("/{idea_id}/detail", response_model=IdeaDetailResponse)
+def get_idea_detail(
+    idea_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed idea information including comments and triage details.
+
+    Returns full idea details with:
+    - Triage recommendation and reasoning
+    - All comments
+    - Duplicate link info
+    - Reviewer info
+    """
+    idea = db.query(Idea).filter(Idea.id == idea_id).first()
+    if not idea:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Idea {idea_id} not found"
+        )
+
+    # Get product name
+    product_name = None
+    product = db.query(CIProduct).filter(CIProduct.id == idea.product_id).first()
+    if product:
+        product_name = product.product_name
+
+    # Get submitter username
+    submitter_username = None
+    if idea.submitter_id:
+        submitter = db.query(User).filter(User.id == idea.submitter_id).first()
+        if submitter:
+            submitter_username = submitter.username
+
+    # Get reviewer username
+    reviewer_username = None
+    if idea.reviewed_by_user_id:
+        reviewer = db.query(User).filter(User.id == idea.reviewed_by_user_id).first()
+        if reviewer:
+            reviewer_username = reviewer.username
+
+    # Get duplicate title
+    duplicate_of_title = None
+    if idea.duplicate_of_idea_id:
+        duplicate = db.query(Idea).filter(Idea.id == idea.duplicate_of_idea_id).first()
+        if duplicate:
+            duplicate_of_title = duplicate.title
+
+    # Get comments with usernames
+    comments = []
+    for comment in idea.comments:
+        user = db.query(User).filter(User.id == comment.user_id).first()
+        comments.append(IdeaCommentResponse(
+            id=comment.id,
+            idea_id=comment.idea_id,
+            user_id=comment.user_id,
+            username=user.username if user else None,
+            comment_text=comment.comment_text,
+            is_system_generated=comment.is_system_generated,
+            created_at=comment.created_at,
+        ))
+
+    # Get status history (most recent first)
+    status_history_records = db.query(IdeaStatusHistory).filter(
+        IdeaStatusHistory.idea_id == idea_id
+    ).order_by(IdeaStatusHistory.created_at.desc()).all()
+
+    status_history = []
+    for record in status_history_records:
+        changed_by_username = None
+        if record.changed_by_user_id:
+            changed_by_user = db.query(User).filter(User.id == record.changed_by_user_id).first()
+            if changed_by_user:
+                changed_by_username = changed_by_user.username
+
+        status_history.append(StatusHistoryEntryResponse(
+            id=record.id,
+            previous_status=record.previous_status.value if record.previous_status else None,
+            new_status=record.new_status.value if record.new_status else None,
+            changed_by_user_id=record.changed_by_user_id,
+            changed_by_username=changed_by_username,
+            is_automated=record.is_automated,
+            change_source=record.change_source,
+            comment=record.comment,
+            confidence=record.confidence,
+            created_at=record.created_at,
+        ))
+
+    return IdeaDetailResponse(
+        id=idea.id,
+        title=idea.title,
+        what_description=idea.what_description,
+        why_description=idea.why_description,
+        use_case_description=idea.use_case_description,
+        source_type=idea.source_type.value,
+        category=idea.category,
+        status=idea.status.value,
+        triage_status=idea.triage_status.value,
+        triage_confidence=idea.triage_confidence,
+        triage_recommendation=idea.triage_recommendation.value if idea.triage_recommendation else None,
+        triage_reasoning=idea.triage_reasoning,
+        duplicate_of_idea_id=idea.duplicate_of_idea_id,
+        duplicate_of_title=duplicate_of_title,
+        similarity_score=idea.similarity_score,
+        auto_response_text=idea.auto_response_text,
+        is_active=idea.is_active,
+        auto_responded=idea.auto_responded,
+        published_for_voting=idea.published_for_voting,
+        product_id=idea.product_id,
+        product_name=product_name,
+        submitter_id=idea.submitter_id,
+        submitter_username=submitter_username,
+        reviewed_by_user_id=idea.reviewed_by_user_id,
+        reviewer_username=reviewer_username,
+        reviewed_at=idea.reviewed_at,
+        review_notes=idea.review_notes,
+        created_at=idea.created_at,
+        updated_at=idea.updated_at,
+        comments=comments,
+        status_history=status_history,
+    )
+
+
+@router.post("/{idea_id}/respond")
+def respond_to_idea(
+    idea_id: int,
+    request: IdeaRespondRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Submit PO structured response to an idea.
+
+    Statuses:
+    - approved: Accept the idea for voting (is_active=True)
+    - duplicate: Mark as duplicate of another idea (is_active=False)
+    - feature_exists: Feature already exists in product (is_active=False)
+    - not_appropriate: Inappropriate or off-topic (is_active=False)
+
+    A comment is always required explaining the response.
+    For 'duplicate' status, duplicate_of_idea_id is required.
+
+    Only PO of the product or Admin can respond.
+    """
+    idea = db.query(Idea).filter(Idea.id == idea_id).first()
+    if not idea:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Idea {idea_id} not found"
+        )
+
+    # Check permission
+    if not can_respond_to_idea(db, current_user, idea):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the product owner or admin can respond to this idea"
+        )
+
+    # Validate status
+    valid_statuses = ['approved', 'duplicate', 'feature_exists', 'not_appropriate']
+    if request.status not in valid_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status. Must be one of: {valid_statuses}"
+        )
+
+    # Handle duplicate status with vote transfer
+    votes_transferred = 0
+    if request.status == 'duplicate':
+        if not request.duplicate_of_idea_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="duplicate_of_idea_id is required for 'duplicate' status"
+            )
+
+        # Validate duplicate target exists and is in same product
+        duplicate_target = db.query(Idea).filter(
+            Idea.id == request.duplicate_of_idea_id,
+            Idea.product_id == idea.product_id
+        ).first()
+
+        if not duplicate_target:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Duplicate target idea {request.duplicate_of_idea_id} not found in same product"
+            )
+
+        idea.duplicate_of_idea_id = request.duplicate_of_idea_id
+
+        # Transfer votes from duplicate to original idea
+        # Get all votes from the duplicate idea
+        duplicate_votes = db.query(Vote).filter(Vote.idea_id == idea.id).all()
+
+        # Get users who already voted on the original idea
+        original_voter_ids = set(
+            v.user_id for v in db.query(Vote).filter(Vote.idea_id == duplicate_target.id).all()
+        )
+
+        for vote in duplicate_votes:
+            if vote.user_id not in original_voter_ids:
+                # Transfer vote: create new vote on original idea
+                new_vote = Vote(
+                    idea_id=duplicate_target.id,
+                    user_id=vote.user_id,
+                    vote_value=vote.vote_value,
+                )
+                db.add(new_vote)
+                votes_transferred += 1
+            # Delete original vote from duplicate idea
+            db.delete(vote)
+
+        # Add system comment to the ORIGINAL idea about the duplicate closure
+        duplicate_notification = IdeaComment(
+            idea_id=duplicate_target.id,
+            user_id=current_user.id,
+            comment_text=f"Similar idea \"{idea.title}\" (ID: {idea.id}) was closed as a duplicate of this idea.",
+            is_system_generated=True,
+        )
+        db.add(duplicate_notification)
+
+        # Add system comment about vote transfer if any votes were transferred
+        if votes_transferred > 0:
+            vote_transfer_comment = IdeaComment(
+                idea_id=duplicate_target.id,
+                user_id=current_user.id,
+                comment_text=f"{votes_transferred} vote(s) transferred from the duplicate idea.",
+                is_system_generated=True,
+            )
+            db.add(vote_transfer_comment)
+
+    # Update triage status and is_active based on response
+    status_map = {
+        'approved': (TriageStatus.APPROVED, True),
+        'duplicate': (TriageStatus.DUPLICATE, False),
+        'feature_exists': (TriageStatus.FEATURE_EXISTS, False),
+        'not_appropriate': (TriageStatus.NOT_APPROPRIATE, False),
+    }
+
+    previous_status = idea.triage_status
+    triage_status, is_active = status_map[request.status]
+    idea.triage_status = triage_status
+    idea.is_active = is_active
+
+    # For approved ideas, also publish for voting
+    if request.status == 'approved':
+        idea.published_for_voting = True
+
+    # Update review metadata
+    idea.reviewed_by_user_id = current_user.id
+    idea.reviewed_at = datetime.utcnow()
+    idea.review_notes = request.comment
+
+    # Create comment record
+    comment = IdeaComment(
+        idea_id=idea.id,
+        user_id=current_user.id,
+        comment_text=request.comment,
+        is_system_generated=False,
+    )
+    db.add(comment)
+
+    # Create status history record
+    status_history = IdeaStatusHistory(
+        idea_id=idea.id,
+        previous_status=previous_status,
+        new_status=triage_status,
+        changed_by_user_id=current_user.id,
+        is_automated=False,
+        change_source='po_response',
+        comment=request.comment,
+    )
+    db.add(status_history)
+
+    db.commit()
+
+    response = {
+        'id': idea.id,
+        'title': idea.title,
+        'status': request.status,
+        'triage_status': idea.triage_status.value,
+        'is_active': idea.is_active,
+        'published_for_voting': idea.published_for_voting,
+        'duplicate_of_idea_id': idea.duplicate_of_idea_id,
+        'responded_by': current_user.username,
+        'responded_at': idea.reviewed_at.isoformat(),
+    }
+
+    # Include vote transfer info for duplicate responses
+    if request.status == 'duplicate':
+        response['votes_transferred'] = votes_transferred
+
+    return response
+
+
+@router.post("/{idea_id}/comments", response_model=IdeaCommentResponse)
+def add_comment(
+    idea_id: int,
+    request: IdeaCommentRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Add a comment to an idea.
+
+    Comments can be added by:
+    - Any authenticated user with product access (for active/published ideas)
+    - The idea submitter (even for non-published ideas)
+    - Product owners with EDIT permission
+    - Admins
+
+    Used for discussion and follow-up on ideas.
+    """
+    idea = db.query(Idea).filter(Idea.id == idea_id).first()
+    if not idea:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Idea {idea_id} not found"
+        )
+
+    # Check permission
+    is_submitter = idea.submitter_id == current_user.id
+    is_po_or_admin = can_respond_to_idea(db, current_user, idea)
+    is_idea_active = idea.is_active and idea.published_for_voting
+
+    # All authenticated users can comment on active/published ideas
+    # Submitter, PO, Admin can comment on any idea
+    if not is_idea_active and not is_submitter and not is_po_or_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Can only comment on active ideas, or if you are the submitter/admin"
+        )
+
+    # Create comment
+    comment = IdeaComment(
+        idea_id=idea.id,
+        user_id=current_user.id,
+        comment_text=request.comment_text,
+        is_system_generated=False,
+    )
+    db.add(comment)
+    db.commit()
+    db.refresh(comment)
+
+    return IdeaCommentResponse(
+        id=comment.id,
+        idea_id=comment.idea_id,
+        user_id=comment.user_id,
+        username=current_user.username,
+        comment_text=comment.comment_text,
+        is_system_generated=comment.is_system_generated,
+        created_at=comment.created_at,
+    )
+
+
+@router.get("/{idea_id}/comments", response_model=List[IdeaCommentResponse])
+def get_comments(
+    idea_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all comments for an idea.
+    """
+    idea = db.query(Idea).filter(Idea.id == idea_id).first()
+    if not idea:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Idea {idea_id} not found"
+        )
+
+    comments = []
+    for comment in idea.comments:
+        user = db.query(User).filter(User.id == comment.user_id).first()
+        comments.append(IdeaCommentResponse(
+            id=comment.id,
+            idea_id=comment.idea_id,
+            user_id=comment.user_id,
+            username=user.username if user else None,
+            comment_text=comment.comment_text,
+            is_system_generated=comment.is_system_generated,
+            created_at=comment.created_at,
+        ))
+
+    return comments
+
+
+@router.get("/{idea_id}/triage-recommendation")
+def get_triage_recommendation(
+    idea_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get AI triage recommendation for an idea.
+
+    Returns the agent's suggested response with:
+    - Recommended status
+    - Confidence score
+    - Suggested comment
+    - Reasoning
+    - Similar ideas found
+
+    Requires EDIT permission on the product (PO or Admin).
+    """
+    idea = db.query(Idea).filter(Idea.id == idea_id).first()
+    if not idea:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Idea {idea_id} not found"
+        )
+
+    # Check permission
+    if not can_respond_to_idea(db, current_user, idea):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the product owner or admin can view triage recommendations"
+        )
+
+    # Map triage_recommendation to the new status values
+    recommended_status = None
+    if idea.triage_recommendation:
+        recommendation_map = {
+            TriageAction.APPROVE: 'approved',
+            TriageAction.REJECT: 'not_appropriate',
+            TriageAction.MERGE: 'duplicate',
+            TriageAction.REVIEW: None,  # No specific recommendation
+        }
+        recommended_status = recommendation_map.get(idea.triage_recommendation)
+
+    # Get similar ideas
+    similar_ideas = []
+    if idea.duplicate_of_idea_id:
+        duplicate = db.query(Idea).filter(Idea.id == idea.duplicate_of_idea_id).first()
+        if duplicate:
+            similar_ideas.append({
+                'id': duplicate.id,
+                'title': duplicate.title,
+                'similarity_score': idea.similarity_score,
+            })
+
+    # Get vote counts and voter names
+    votes = db.query(Vote).filter(Vote.idea_id == idea_id).all()
+    upvotes = [v for v in votes if v.vote_value > 0]
+    downvotes = [v for v in votes if v.vote_value < 0]
+
+    # Get voter usernames
+    voter_ids = [v.user_id for v in upvotes]
+    voters = []
+    if voter_ids:
+        voter_users = db.query(User).filter(User.id.in_(voter_ids)).all()
+        voters = [{'id': u.id, 'username': u.username} for u in voter_users]
+
+    # Get competitive context
+    competitive_context = idea.competitive_context or {}
+    competitors_with_feature = competitive_context.get('competitors_with_feature', [])
+    competitive_urgency = competitive_context.get('competitive_urgency', None)
+
+    # Map triage_status to user-facing status for current response
+    current_status = None
+    if idea.triage_status and idea.triage_status != TriageStatus.PENDING:
+        status_to_response = {
+            TriageStatus.APPROVED: 'approved',
+            TriageStatus.AUTO_APPROVED: 'approved',
+            TriageStatus.DUPLICATE: 'duplicate',
+            TriageStatus.FEATURE_EXISTS: 'feature_exists',
+            TriageStatus.NOT_APPROPRIATE: 'not_appropriate',
+            TriageStatus.REJECTED: 'not_appropriate',
+            TriageStatus.NEEDS_REVIEW: None,
+        }
+        current_status = status_to_response.get(idea.triage_status)
+
+    # Get status history
+    status_history_records = db.query(IdeaStatusHistory).filter(
+        IdeaStatusHistory.idea_id == idea_id
+    ).order_by(IdeaStatusHistory.created_at.desc()).all()
+
+    status_history = []
+    for record in status_history_records:
+        # Get user who made the change
+        changed_by_username = None
+        if record.changed_by_user_id:
+            changed_by_user = db.query(User).filter(User.id == record.changed_by_user_id).first()
+            if changed_by_user:
+                changed_by_username = changed_by_user.username
+
+        status_history.append({
+            'id': record.id,
+            'previous_status': record.previous_status.value if record.previous_status else None,
+            'new_status': record.new_status.value if record.new_status else None,
+            'changed_by_user_id': record.changed_by_user_id,
+            'changed_by_username': changed_by_username,
+            'is_automated': record.is_automated,
+            'change_source': record.change_source,
+            'comment': record.comment,
+            'confidence': record.confidence,
+            'created_at': record.created_at.isoformat() if record.created_at else None,
+        })
+
+    return {
+        'idea_id': idea.id,
+        'has_recommendation': idea.triage_recommendation is not None,
+        'recommended_status': recommended_status,
+        'confidence': idea.triage_confidence,
+        'suggested_comment': idea.auto_response_text,
+        'reasoning': idea.triage_reasoning,
+        'duplicate_of_idea_id': idea.duplicate_of_idea_id,
+        'similar_ideas': similar_ideas,
+        # Source summary for PO context
+        'source_summary': {
+            'vote_count': len(upvotes),
+            'downvote_count': len(downvotes),
+            'voters': voters,
+            'competitors_with_feature': competitors_with_feature,
+            'competitive_urgency': competitive_urgency,
+        },
+        # Current response (if already responded)
+        'current_response': {
+            'status': current_status,
+            'comment': idea.review_notes,
+            'reviewed_at': idea.reviewed_at.isoformat() if idea.reviewed_at else None,
+        } if current_status else None,
+        # Status history for audit trail
+        'status_history': status_history,
+    }
+
+
+@router.get("/{idea_id}/can-respond")
+def check_can_respond(
+    idea_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Check if the current user can respond to an idea.
+
+    Returns whether the user has permission to respond (Edit Response).
+    """
+    idea = db.query(Idea).filter(Idea.id == idea_id).first()
+    if not idea:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Idea {idea_id} not found"
+        )
+
+    can_respond = can_respond_to_idea(db, current_user, idea)
+
+    return {
+        'idea_id': idea_id,
+        'can_respond': can_respond,
+        'product_id': idea.product_id,
     }

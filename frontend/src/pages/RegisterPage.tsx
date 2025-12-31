@@ -113,8 +113,8 @@ const RegisterPage = () => {
       const result = await register(formData);
 
       if (result.success) {
-        // Redirect to ideas page on success
-        navigate('/ideas');
+        // Redirect to root - RootRedirect will handle role-based navigation
+        navigate('/');
       } else {
         // Show error message
         setError(result.error || 'Registration failed');

@@ -5,23 +5,72 @@
  * - Title and descriptions (what, why, use_case)
  * - Vote counts (score, upvotes, downvotes)
  * - VoteButtons component
- * - Expandable details
+ * - Expandable details with status history
  * - Timestamp
+ * - Triage status badge (for PO view)
+ * - Respond button (for PO view)
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import VoteButtons from './VoteButtons';
-import type { IdeaListItem } from '../types';
+import { getIdeaDetail } from '../services/api';
+import type { IdeaListItem, IdeaDetail } from '../types';
 
 interface IdeaCardProps {
   idea: IdeaListItem;
   onVoteUpdate?: (ideaId: number) => void;
+  // PO mode props
+  showPOControls?: boolean;
+  onRespond?: (ideaId: number) => void;
 }
 
-const IdeaCard = ({ idea, onVoteUpdate }: IdeaCardProps) => {
+const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [userVote, setUserVote] = useState<number | null>(idea.user_vote || null);
   const [voteTimestamp, setVoteTimestamp] = useState<string | null>(idea.user_vote_timestamp || null);
+  const [ideaDetail, setIdeaDetail] = useState<IdeaDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+
+  // Fetch idea detail when expanded (to get status history)
+  useEffect(() => {
+    if (isExpanded && !ideaDetail && !loadingDetail) {
+      const fetchDetail = async () => {
+        setLoadingDetail(true);
+        try {
+          const detail = await getIdeaDetail(idea.id);
+          setIdeaDetail(detail);
+        } catch (err) {
+          console.error('Failed to fetch idea detail:', err);
+        } finally {
+          setLoadingDetail(false);
+        }
+      };
+      fetchDetail();
+    }
+  }, [isExpanded, idea.id, ideaDetail, loadingDetail]);
+
+  // Determine if voting should be disabled (only approved ideas can be voted on)
+  const isVotingDisabled = showPOControls && idea.triage_status && idea.triage_status !== 'approved';
+
+  // Get status badge config
+  const getStatusBadge = () => {
+    if (!idea.triage_status) return null;
+
+    const badges: Record<string, { label: string; className: string }> = {
+      pending: { label: 'Awaiting Response', className: 'bg-yellow-100 text-yellow-800' },
+      approved: { label: 'Accepted', className: 'bg-green-100 text-green-800' },
+      duplicate: { label: 'Duplicate', className: 'bg-gray-100 text-gray-600 line-through' },
+      feature_exists: { label: 'Feature Exists', className: 'bg-orange-100 text-orange-800' },
+      not_appropriate: { label: 'Not Appropriate', className: 'bg-red-100 text-red-800' },
+      needs_review: { label: 'Needs Review', className: 'bg-blue-100 text-blue-800' },
+      auto_approved: { label: 'Auto-approved', className: 'bg-green-100 text-green-800' },
+      rejected: { label: 'Rejected', className: 'bg-red-100 text-red-800' },
+    };
+
+    return badges[idea.triage_status] || null;
+  };
+
+  const statusBadge = getStatusBadge();
 
   // Handle vote change from VoteButtons
   const handleVoteChange = (newVote: number | null) => {
@@ -74,17 +123,29 @@ const IdeaCard = ({ idea, onVoteUpdate }: IdeaCardProps) => {
     return words.slice(0, wordLimit).join(' ') + '...';
   };
 
+  // Determine if this is an inactive idea
+  const isInactive = idea.is_active === false;
+
   return (
-    <div className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow">
+    <div className={`bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow ${isInactive ? 'opacity-60' : ''}`}>
       <div className="idea-card-inner">
         <div className="flex">
           {/* Vote Section */}
           <div className="vote-section flex-shrink-0">
-            <VoteButtons
-              ideaId={idea.id}
-              currentVote={userVote}
-              onVoteChange={handleVoteChange}
-            />
+            {isVotingDisabled ? (
+              <div className="text-center text-gray-400">
+                <svg className="w-6 h-6 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+                <span className="text-xs">Voting disabled</span>
+              </div>
+            ) : (
+              <VoteButtons
+                ideaId={idea.id}
+                currentVote={userVote}
+                onVoteChange={handleVoteChange}
+              />
+            )}
             {/* Total Votes Display */}
             <div className="text-center mt-2">
               <span className="text-sm font-semibold text-gray-700">
@@ -98,20 +159,57 @@ const IdeaCard = ({ idea, onVoteUpdate }: IdeaCardProps) => {
 
           {/* Content Section */}
           <div className="flex-1 min-w-0">
-            {/* Title */}
-            <h3 className="text-xl font-bold text-gray-900 mb-2">
-              {idea.title}
-            </h3>
+            {/* Title with PO Respond Button */}
+            <div className="flex items-start justify-between gap-4 mb-2">
+              <h3 className={`text-xl font-bold text-gray-900 ${isInactive ? 'line-through text-gray-500' : ''}`}>
+                {idea.title}
+              </h3>
 
-            {/* Product Badge */}
-            {idea.product_name && (
-              <div className="mb-3">
+              {/* PO Respond Button */}
+              {showPOControls && onRespond && (
+                <button
+                  onClick={() => onRespond(idea.id)}
+                  className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
+                >
+                  {idea.triage_status === 'pending' ? 'Respond' : 'Edit Response'}
+                </button>
+              )}
+            </div>
+
+            {/* Badges Row */}
+            <div className="flex flex-wrap gap-2 mb-3">
+              {/* Status Badge - shown for all users */}
+              {statusBadge && (
+                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusBadge.className}`}>
+                  {statusBadge.label}
+                </span>
+              )}
+
+              {/* Auto-responded indicator (PO view only) */}
+              {showPOControls && idea.auto_responded && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                  <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  </svg>
+                  AI Auto-responded
+                </span>
+              )}
+
+              {/* Product Badge */}
+              {idea.product_name && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                   <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
                   </svg>
                   {idea.product_name}
                 </span>
+              )}
+            </div>
+
+            {/* Duplicate link */}
+            {idea.duplicate_of_idea_id && idea.duplicate_of_title && (
+              <div className="mb-3 text-sm text-gray-500">
+                Duplicate of: <span className="font-medium text-blue-600">#{idea.duplicate_of_idea_id} {idea.duplicate_of_title}</span>
               </div>
             )}
 
@@ -154,6 +252,80 @@ const IdeaCard = ({ idea, onVoteUpdate }: IdeaCardProps) => {
                     <span className="bg-gray-100 px-3 py-1 rounded text-gray-700">
                       {idea.category}
                     </span>
+                  </div>
+                )}
+
+                {/* Status History Timeline */}
+                {loadingDetail ? (
+                  <div className="flex items-center gap-2 text-gray-500 py-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                    <span className="text-sm">Loading history...</span>
+                  </div>
+                ) : ideaDetail?.status_history && ideaDetail.status_history.length > 0 && (
+                  <div className="border-t border-gray-200 pt-3 mt-3">
+                    <h4 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Status History
+                    </h4>
+                    <div className="space-y-2">
+                      {ideaDetail.status_history.map((entry) => (
+                        <div key={entry.id} className="flex items-start gap-2 text-sm">
+                          {/* Timeline dot */}
+                          <div className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${
+                            entry.is_automated ? 'bg-purple-500' : 'bg-blue-500'
+                          }`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {/* Status badge */}
+                              {entry.new_status && (
+                                <span className={`inline-flex items-center px-1.5 py-0.5 text-xs font-medium rounded ${
+                                  entry.new_status === 'approved' || entry.new_status === 'auto_approved' ? 'bg-green-100 text-green-800' :
+                                  entry.new_status === 'pending' ? 'bg-gray-100 text-gray-800' :
+                                  entry.new_status === 'needs_review' ? 'bg-yellow-100 text-yellow-800' :
+                                  entry.new_status === 'duplicate' ? 'bg-yellow-100 text-yellow-800' :
+                                  entry.new_status === 'feature_exists' ? 'bg-orange-100 text-orange-800' :
+                                  entry.new_status === 'not_appropriate' ? 'bg-red-100 text-red-800' :
+                                  'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {entry.new_status.replace(/_/g, ' ')}
+                                </span>
+                              )}
+                              {/* Who made the change */}
+                              {entry.is_automated ? (
+                                <span className="text-xs text-purple-600 flex items-center gap-1">
+                                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                  </svg>
+                                  AI
+                                </span>
+                              ) : entry.changed_by_username && (
+                                <span className="text-xs text-gray-500">
+                                  by {entry.changed_by_username}
+                                </span>
+                              )}
+                              {/* Confidence for AI */}
+                              {entry.confidence && (
+                                <span className="text-xs text-purple-600">
+                                  ({entry.confidence}%)
+                                </span>
+                              )}
+                              {/* Timestamp */}
+                              <span className="text-xs text-gray-400 ml-auto">
+                                {new Date(entry.created_at).toLocaleDateString()}
+                              </span>
+                            </div>
+                            {/* Comment */}
+                            {entry.comment && (
+                              <p className="text-xs text-gray-600 mt-1 italic truncate" title={entry.comment}>
+                                "{entry.comment}"
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

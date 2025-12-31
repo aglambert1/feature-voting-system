@@ -14,9 +14,11 @@ import { ProductProvider } from './contexts/ProductContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
 import ProductOwnerRoute from './components/ProductOwnerRoute';
+import RootRedirect from './components/RootRedirect';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import IdeasPage from './pages/IdeasPage';
+import IdeaDetailPage from './pages/IdeaDetailPage';
 import SubmitIdeaPage from './pages/SubmitIdeaPage';
 import ProfilePage from './pages/ProfilePage';
 import UserManagementPage from './pages/UserManagementPage';
@@ -25,7 +27,6 @@ import CreateProductPage from './pages/CompetitorIntelligence/CreateProductPage'
 import AnalyzeProductPage from './pages/CompetitorIntelligence/AnalyzeProductPage';
 import ProductDetailPage from './pages/CompetitorIntelligence/ProductDetailPage';
 import SessionWorkflowPage from './pages/CompetitorIntelligence/SessionWorkflowPage';
-import ReviewQueuePage from './pages/ReviewQueuePage';
 import ProductDashboardPage from './pages/ProductDashboardPage';
 
 function App() {
@@ -34,8 +35,8 @@ function App() {
       <AuthProvider>
         <ProductProvider>
           <Routes>
-          {/* Root - redirect to ideas */}
-          <Route path="/" element={<Navigate to="/ideas" replace />} />
+          {/* Root - role-aware redirect */}
+          <Route path="/" element={<RootRedirect />} />
 
           {/* Public routes */}
           <Route path="/login" element={<LoginPage />} />
@@ -47,6 +48,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <IdeasPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ideas/:ideaId"
+            element={
+              <ProtectedRoute>
+                <IdeaDetailPage />
               </ProtectedRoute>
             }
           />
@@ -144,18 +153,6 @@ function App() {
               <ProtectedRoute>
                 <ProductOwnerRoute>
                   <ProductDashboardPage />
-                </ProductOwnerRoute>
-              </ProtectedRoute>
-            }
-          />
-
-          {/* Review Queue - restricted to Product Owners and Admins */}
-          <Route
-            path="/review-queue"
-            element={
-              <ProtectedRoute>
-                <ProductOwnerRoute>
-                  <ReviewQueuePage />
                 </ProductOwnerRoute>
               </ProtectedRoute>
             }

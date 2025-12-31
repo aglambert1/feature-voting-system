@@ -168,7 +168,7 @@ def queue_item_to_response(item: PMReviewQueue) -> QueueItemResponse:
 
 @router.get("/queue", response_model=QueueListResponse)
 def get_review_queue(
-    product_id: int = Query(..., description="Product ID"),
+    product_id: Optional[int] = Query(None, description="Product ID (optional - omit for all products)"),
     queue_type: Optional[str] = Query(None, description="Filter by type: idea, competitive_alert, report"),
     status_filter: Optional[str] = Query(None, alias="status", description="Filter by status"),
     priority: Optional[str] = Query(None, description="Filter by priority"),
@@ -182,11 +182,13 @@ def get_review_queue(
     """
     Get PM review queue items with filtering.
 
-    Returns items needing review for a product.
-    Requires EDIT permission on the product.
+    Returns items needing review. When product_id is provided, requires EDIT
+    permission on that product. When omitted, returns items for all products
+    the user has EDIT access to.
     """
-    # Check permission
-    check_product_permission(db, current_user, product_id, ProductPermissionLevel.EDIT)
+    # Check permission if specific product requested
+    if product_id:
+        check_product_permission(db, current_user, product_id, ProductPermissionLevel.EDIT)
 
     service = PMReviewService(db)
 

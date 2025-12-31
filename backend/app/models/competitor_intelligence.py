@@ -78,6 +78,10 @@ class CIProduct(Base):
     # Source change tracking
     last_source_hash = Column(String(64))
 
+    # Idea Triage Automation Settings
+    idea_triage_auto_enabled = Column(Boolean, default=False, nullable=False)
+    idea_triage_auto_threshold = Column(DECIMAL(3, 2), default=0.90, nullable=False)  # Confidence threshold (0.00-1.00)
+
     status = Column(String(50), default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

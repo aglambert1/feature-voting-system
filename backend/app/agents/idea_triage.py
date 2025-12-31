@@ -427,12 +427,39 @@ IMPORTANT:
         # Return as dict
         return validated.model_dump(mode='json')
 
-    def determine_triage_status(self, result: Dict[str, Any]) -> str:
+    def determine_triage_status(
+        self,
+        result: Dict[str, Any],
+        auto_respond_enabled: bool = False,
+        auto_respond_threshold: float = 0.9
+    ) -> str:
         """
         Determine the triage status based on agent output.
 
+        Args:
+            result: The agent's triage result
+            auto_respond_enabled: Whether auto-respond is enabled for the product
+            auto_respond_threshold: Confidence threshold for auto-approval
+
         Returns one of: 'auto_approved', 'needs_review', 'duplicate', 'rejected'
+
+        When auto_respond_enabled is False:
+            - Always returns 'needs_review' so PO can review the recommendation
+            - The agent's recommendation is stored but not acted upon
+
+        When auto_respond_enabled is True:
+            - Returns the appropriate status based on agent recommendation
+            - 'auto_approved' if action=approve and confidence >= threshold
+            - 'duplicate' if action=merge
+            - 'rejected' if action=reject and confidence >= 0.7
+            - 'needs_review' otherwise
         """
+        # When auto-respond is OFF, always return needs_review
+        # The PO will see the agent's recommendation and decide
+        if not auto_respond_enabled:
+            return 'needs_review'
+
+        # Auto-respond is ON - apply the agent's recommendation
         recommendation = result.get('recommendation', {})
         action = recommendation.get('action', 'review')
         confidence = recommendation.get('confidence', 0.5)
@@ -442,7 +469,7 @@ IMPORTANT:
         elif action == 'reject' and confidence >= self.REJECT_THRESHOLD:
             # Only auto-reject if we're confident
             return 'rejected' if confidence >= 0.7 else 'needs_review'
-        elif action == 'approve' and confidence >= self.AUTO_APPROVE_THRESHOLD:
+        elif action == 'approve' and confidence >= auto_respond_threshold:
             return 'auto_approved'
         else:
             return 'needs_review'

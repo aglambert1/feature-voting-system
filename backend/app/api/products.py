@@ -1841,3 +1841,194 @@ def backfill_competitor_feature_embeddings(
         "features_processed": count,
         "message": f"Successfully generated embeddings for {count} competitor features"
     }
+
+
+# ============================================================================
+# Pending Counts & Triage Settings (Plan Phase 1, 8)
+# ============================================================================
+
+class ProductPendingCountsResponse(BaseModel):
+    """Response schema for product pending counts."""
+    product_id: int
+    ideas_pending: int  # Ideas with triage_status=PENDING
+    ideas_auto_responded: int  # Ideas where auto_responded=true and not yet reviewed by PO
+    competitive_alerts: int  # Pending competitive alerts from PMReviewQueue
+
+
+class TriageSettingsRequest(BaseModel):
+    """Request schema for updating triage automation settings."""
+    auto_enabled: bool = Field(..., description="Enable/disable automatic triage responses")
+    auto_threshold: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Confidence threshold for auto-responses (0.0-1.0)"
+    )
+
+
+class TriageSettingsResponse(BaseModel):
+    """Response schema for triage settings."""
+    product_id: int
+    auto_enabled: bool
+    auto_threshold: float
+
+
+@router.get("/{product_id}/pending-counts", response_model=ProductPendingCountsResponse)
+def get_product_pending_counts(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get pending counts for a product.
+
+    Returns counts of items awaiting PO action:
+    - ideas_pending: Ideas with triage_status=PENDING
+    - ideas_auto_responded: Ideas where auto_responded=True and PO hasn't reviewed
+    - competitive_alerts: Pending competitive alerts
+
+    Requires VIEW permission on the product.
+    """
+    from app.services.permission_service import PermissionService
+    from app.models.idea import Idea, TriageStatus
+    from app.models.pm_review import PMReviewQueue, ReviewQueueStatus, ReviewQueueType
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.VIEW
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have VIEW permission for product {product_id}"
+        )
+
+    # Verify product exists
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product {product_id} not found"
+        )
+
+    # Count ideas with PENDING triage status
+    ideas_pending = db.query(Idea).filter(
+        Idea.product_id == product_id,
+        Idea.triage_status == TriageStatus.PENDING
+    ).count()
+
+    # Count ideas with auto_responded=True that haven't been reviewed by PO
+    ideas_auto_responded = db.query(Idea).filter(
+        Idea.product_id == product_id,
+        Idea.auto_responded == True,
+        Idea.reviewed_by_user_id == None  # Not yet reviewed by PO
+    ).count()
+
+    # Count pending competitive alerts from PM Review Queue
+    competitive_alerts = db.query(PMReviewQueue).filter(
+        PMReviewQueue.product_id == product_id,
+        PMReviewQueue.queue_type == ReviewQueueType.COMPETITIVE_ALERT,
+        PMReviewQueue.status == ReviewQueueStatus.PENDING
+    ).count()
+
+    return ProductPendingCountsResponse(
+        product_id=product_id,
+        ideas_pending=ideas_pending,
+        ideas_auto_responded=ideas_auto_responded,
+        competitive_alerts=competitive_alerts,
+    )
+
+
+@router.get("/{product_id}/triage-settings", response_model=TriageSettingsResponse)
+def get_triage_settings(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get triage automation settings for a product.
+
+    Returns the current auto-response configuration.
+
+    Requires VIEW permission on the product.
+    """
+    from app.services.permission_service import PermissionService
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.VIEW
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have VIEW permission for product {product_id}"
+        )
+
+    # Get product
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product {product_id} not found"
+        )
+
+    return TriageSettingsResponse(
+        product_id=product_id,
+        auto_enabled=product.idea_triage_auto_enabled,
+        auto_threshold=float(product.idea_triage_auto_threshold),
+    )
+
+
+@router.put("/{product_id}/triage-settings", response_model=TriageSettingsResponse)
+def update_triage_settings(
+    product_id: int,
+    request: TriageSettingsRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update triage automation settings for a product.
+
+    Controls automatic idea triage behavior:
+    - auto_enabled: When True, ideas with high confidence are automatically responded to
+    - auto_threshold: Minimum confidence (0.0-1.0) required for auto-response
+
+    Requires EDIT permission on the product.
+    """
+    from app.services.permission_service import PermissionService
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.EDIT
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have EDIT permission for product {product_id}"
+        )
+
+    # Get product
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product {product_id} not found"
+        )
+
+    # Update settings
+    product.idea_triage_auto_enabled = request.auto_enabled
+    product.idea_triage_auto_threshold = request.auto_threshold
+
+    db.commit()
+
+    return TriageSettingsResponse(
+        product_id=product_id,
+        auto_enabled=product.idea_triage_auto_enabled,
+        auto_threshold=float(product.idea_triage_auto_threshold),
+    )

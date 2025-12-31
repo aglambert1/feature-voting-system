@@ -14,9 +14,12 @@ export default function Navigation() {
     <nav className="bg-white shadow-lg">
       <div className="w-full px-3 sm:px-4 lg:px-6">
         <div className="flex items-center justify-between h-14 sm:h-16">
-          {/* Logo - compact on all screens */}
+          {/* Logo - compact on all screens, role-aware navigation */}
           <div className="flex-shrink-0 flex items-center">
-            <a href="/ideas" className="text-lg sm:text-xl font-bold text-blue-600 whitespace-nowrap">
+            <a
+              href={isProductOwnerOrAdmin ? '/product-intelligence' : '/ideas'}
+              className="text-lg sm:text-xl font-bold text-blue-600 whitespace-nowrap"
+            >
               Feature Voting
             </a>
           </div>
@@ -24,20 +27,12 @@ export default function Navigation() {
           {/* Main navigation links - horizontal on medium+ screens */}
           <div className="hidden md:flex items-center space-x-1 lg:space-x-2">
             {isProductOwnerOrAdmin && (
-              <>
-                <a
-                  href="/product-intelligence"
-                  className="text-gray-700 hover:text-blue-600 hover:bg-blue-50 px-2 lg:px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
-                >
-                  Products
-                </a>
-                <a
-                  href="/review-queue"
-                  className="text-gray-700 hover:text-blue-600 hover:bg-blue-50 px-2 lg:px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
-                >
-                  Review Queue
-                </a>
-              </>
+              <a
+                href="/product-intelligence"
+                className="text-gray-700 hover:text-blue-600 hover:bg-blue-50 px-2 lg:px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
+              >
+                Product Dashboard
+              </a>
             )}
             <a
               href="/ideas"
@@ -164,20 +159,12 @@ export default function Navigation() {
         {/* Mobile menu - vertical layout for small/medium screens */}
         <div className="md:hidden border-t border-gray-200 pt-2 pb-3 space-y-1">
           {isProductOwnerOrAdmin && (
-            <>
-              <a
-                href="/product-intelligence"
-                className="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-              >
-                Products
-              </a>
-              <a
-                href="/review-queue"
-                className="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-              >
-                Review Queue
-              </a>
-            </>
+            <a
+              href="/product-intelligence"
+              className="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+            >
+              Product Dashboard
+            </a>
           )}
           <a
             href="/ideas"

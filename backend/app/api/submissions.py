@@ -11,10 +11,12 @@ from sqlalchemy.orm import Session
 import time
 
 from app.database import get_db
-from app.models.idea import Idea, IdeaStatus, SourceType
+from app.models.idea import Idea, IdeaStatus, SourceType, TriageStatus
+from app.models.idea_status_history import IdeaStatusHistory
 from app.models.submission import Submission
 from app.models.user import User
 from app.models.competitor_intelligence import CIProduct, ProductPermissionLevel
+from app.models.queue import JobType
 from app.schemas.submission import (
     SubmissionStructureRequest,
     SubmissionStructureResponse,
@@ -25,6 +27,7 @@ from app.schemas.submission import (
 from app.services.llm_service import llm_service
 from app.services.permission_service import PermissionService
 from app.services.vector_service import VectorService
+from app.services.queue_service import QueueService
 from app.utils.security import get_current_active_user
 
 
@@ -167,7 +170,7 @@ async def submit_idea(
     # Note: All authenticated users (VOTER, PRODUCT_OWNER, ADMIN) can submit ideas for any product
     # Product permissions are only enforced for product management operations, not idea submission
 
-    # Create the idea first
+    # Create the idea first with PENDING triage status
     new_idea = Idea(
         title=submission_data.title,
         what_description=submission_data.what_description,
@@ -175,13 +178,27 @@ async def submit_idea(
         use_case_description=submission_data.use_case_description,
         category=submission_data.category,
         product_id=submission_data.product_id,
-        source_type=SourceType.MANUAL,
+        source_type=SourceType.CUSTOMER_SUBMISSION,
         submitter_id=current_user.id,
-        status=IdeaStatus.ACTIVE
+        status=IdeaStatus.ACTIVE,
+        triage_status=TriageStatus.PENDING,
+        is_active=True,
     )
 
     db.add(new_idea)
     db.flush()  # Get the idea ID without committing
+
+    # Create initial status history record
+    initial_status = IdeaStatusHistory(
+        idea_id=new_idea.id,
+        previous_status=None,  # First status
+        new_status=TriageStatus.PENDING,
+        changed_by_user_id=current_user.id,
+        is_automated=False,
+        change_source='submission',
+        comment=None  # No comment for system status transitions
+    )
+    db.add(initial_status)
 
     # Generate and store embedding for vector similarity search
     if request and hasattr(request.app.state, 'embedding_model') and request.app.state.embedding_model:
@@ -231,6 +248,29 @@ async def submit_idea(
     db.commit()
     db.refresh(new_idea)
     db.refresh(new_submission)
+
+    # Queue triage job to run agent analysis in background
+    try:
+        from app.queue.tasks import triage_idea_task
+
+        queue_service = QueueService(db)
+        job = queue_service.create_job(
+            job_type=JobType.IDEA_TRIAGE,
+            input_data={
+                'idea_id': new_idea.id,
+                'source_type': SourceType.CUSTOMER_SUBMISSION.value,
+            },
+            product_id=submission_data.product_id,
+            user_id=current_user.id,
+        )
+
+        # Queue the triage task
+        celery_result = triage_idea_task.delay(job.id)
+        queue_service.mark_queued(job.id, celery_result.id)
+        print(f"✓ Queued triage job {job.id} for idea {new_idea.id}")
+    except Exception as e:
+        # Log warning but don't fail submission - triage can be run later
+        print(f"Warning: Failed to queue triage job for idea {new_idea.id}: {e}")
 
     # Build response
     submission_response = SubmissionResponse(

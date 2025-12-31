@@ -80,6 +80,13 @@ export interface IdeaListItem {
   created_at: string;
   product_id: number;
   product_name: string | null;
+  // Triage status fields
+  triage_status: TriageStatus | null;
+  is_active: boolean | null;
+  auto_responded: boolean | null;
+  duplicate_of_idea_id: number | null;
+  duplicate_of_title: string | null;
+  // Vote counts
   vote_counts: VoteCount;
   user_vote: number | null;
   user_vote_timestamp: string | null;  // Timestamp when user voted
@@ -471,4 +478,184 @@ export interface ProductListItem {
   pending_reports_count?: number;
   last_monitored_at?: string | null;
   monitoring_enabled?: boolean;
+}
+
+// ============================================================================
+// TRIAGE STATUS TYPES (Plan Phase 2)
+// ============================================================================
+
+export enum TriageStatus {
+  PENDING = 'pending',
+  AUTO_APPROVED = 'auto_approved',
+  NEEDS_REVIEW = 'needs_review',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+  DUPLICATE = 'duplicate',
+  FEATURE_EXISTS = 'feature_exists',
+  NOT_APPROPRIATE = 'not_appropriate',
+}
+
+// User-facing status for PO response workflow
+export type IdeaResponseStatus = 'approved' | 'duplicate' | 'feature_exists' | 'not_appropriate';
+
+// ============================================================================
+// IDEA COMMENT TYPES (Plan Phase 2)
+// ============================================================================
+
+export interface IdeaComment {
+  id: number;
+  idea_id: number;
+  user_id: number;
+  username: string | null;
+  comment_text: string;
+  is_system_generated: boolean;
+  created_at: string;
+}
+
+// ============================================================================
+// IDEA DETAIL TYPES (Extended for PO workflow)
+// ============================================================================
+
+export interface IdeaDetail {
+  id: number;
+  title: string;
+  what_description: string;
+  why_description: string;
+  use_case_description: string;
+  source_type: string;
+  category: string | null;
+  status: string;
+  triage_status: TriageStatus;
+  triage_confidence: number | null;
+  triage_recommendation: string | null;
+  triage_reasoning: string | null;
+  duplicate_of_idea_id: number | null;
+  duplicate_of_title: string | null;
+  similarity_score: number | null;
+  auto_response_text: string | null;
+  is_active: boolean;
+  auto_responded: boolean;
+  published_for_voting: boolean;
+  product_id: number;
+  product_name: string | null;
+  submitter_id: number | null;
+  submitter_username: string | null;
+  reviewed_by_user_id: number | null;
+  reviewer_username: string | null;
+  reviewed_at: string | null;
+  review_notes: string | null;
+  created_at: string;
+  updated_at: string;
+  comments: IdeaComment[];
+  status_history: StatusHistoryEntry[];
+}
+
+// ============================================================================
+// IDEA RESPONSE TYPES (PO Workflow)
+// ============================================================================
+
+export interface IdeaRespondRequest {
+  status: IdeaResponseStatus;
+  comment: string;
+  duplicate_of_idea_id?: number;
+}
+
+export interface IdeaRespondResponse {
+  id: number;
+  title: string;
+  status: IdeaResponseStatus;
+  triage_status: TriageStatus;
+  is_active: boolean;
+  published_for_voting: boolean;
+  duplicate_of_idea_id: number | null;
+  responded_by: string;
+  responded_at: string;
+}
+
+// ============================================================================
+// TRIAGE RECOMMENDATION TYPES (Agent-generated suggestions)
+// ============================================================================
+
+export interface SimilarIdeaForTriage {
+  id: number;
+  title: string;
+  similarity_score: number;
+}
+
+export interface IdeaVoter {
+  id: number;
+  username: string;
+}
+
+export interface SourceSummary {
+  vote_count: number;
+  downvote_count: number;
+  voters: IdeaVoter[];
+  competitors_with_feature: string[];
+  competitive_urgency: string | null;
+}
+
+export interface CurrentResponse {
+  status: IdeaResponseStatus | null;
+  comment: string | null;
+  reviewed_at: string | null;
+}
+
+export interface StatusHistoryEntry {
+  id: number;
+  previous_status: string | null;
+  new_status: string | null;
+  changed_by_user_id: number | null;
+  changed_by_username: string | null;
+  is_automated: boolean;
+  change_source: string;  // 'submission', 'agent_triage', 'po_response', 'po_edit'
+  comment: string | null;
+  confidence: number | null;  // For agent triage, confidence as percentage (0-100)
+  created_at: string;
+}
+
+export interface TriageRecommendation {
+  idea_id: number;
+  has_recommendation: boolean;
+  recommended_status: IdeaResponseStatus | null;
+  confidence: number | null;
+  suggested_comment: string | null;
+  reasoning: string | null;
+  duplicate_of_idea_id: number | null;
+  similar_ideas: SimilarIdeaForTriage[];
+  source_summary: SourceSummary;
+  current_response: CurrentResponse | null;
+  status_history: StatusHistoryEntry[];
+}
+
+export interface CanRespondResponse {
+  idea_id: number;
+  can_respond: boolean;
+  product_id: number;
+}
+
+// ============================================================================
+// PRODUCT PENDING COUNTS (Plan Phase 1)
+// ============================================================================
+
+export interface ProductPendingCounts {
+  product_id: number;
+  ideas_pending: number;
+  ideas_auto_responded: number;
+  competitive_alerts: number;
+}
+
+// ============================================================================
+// TRIAGE AUTOMATION SETTINGS (Plan Phase 8)
+// ============================================================================
+
+export interface TriageSettings {
+  product_id: number;
+  auto_enabled: boolean;
+  auto_threshold: number;
+}
+
+export interface TriageSettingsUpdate {
+  auto_enabled: boolean;
+  auto_threshold: number;
 }

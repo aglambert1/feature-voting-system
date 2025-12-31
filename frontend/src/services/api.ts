@@ -34,6 +34,15 @@ import type {
   MonitoringConfig,
   MonitoringConfigUpdate,
   CompetitorSnapshotsResponse,
+  IdeaDetail,
+  IdeaComment,
+  IdeaRespondRequest,
+  IdeaRespondResponse,
+  TriageRecommendation,
+  ProductPendingCounts,
+  TriageSettings,
+  TriageSettingsUpdate,
+  CanRespondResponse,
 } from '../types';
 
 // Create axios instance with base configuration
@@ -85,8 +94,19 @@ api.interceptors.response.use(
       }
 
       // Return error with meaningful message
+      // Handle Pydantic validation errors (422) where detail is an array of error objects
+      const detail = (error.response.data as any)?.detail;
+      let message: string;
+      if (Array.isArray(detail)) {
+        // Pydantic validation error - extract the message from each error
+        message = detail.map((e: { msg?: string }) => e.msg || 'Validation error').join(', ');
+      } else if (typeof detail === 'string') {
+        message = detail;
+      } else {
+        message = 'An error occurred';
+      }
       const apiError: ApiError = {
-        message: (error.response.data as any)?.detail || 'An error occurred',
+        message,
         status: status,
         data: error.response.data,
       };
@@ -469,7 +489,7 @@ interface GetQueueParams {
   queue_type?: string;
   status?: string;
   priority?: string;
-  skip?: number;
+  offset?: number;
   limit?: number;
 }
 
@@ -630,6 +650,105 @@ export const triggerMonitoring = async (
     `/monitoring/trigger/${productId}`,
     null,
     { params: { force_full: forceFull } }
+  );
+  return response.data;
+};
+
+// ============================================================================
+// IDEA RESPONSE WORKFLOW API METHODS (Plan Phase 2)
+// ============================================================================
+
+/**
+ * Get detailed idea information including comments and triage details
+ */
+export const getIdeaDetail = async (ideaId: number): Promise<IdeaDetail> => {
+  const response = await api.get<IdeaDetail>(`/ideas/${ideaId}/detail`);
+  return response.data;
+};
+
+/**
+ * Respond to an idea (PO workflow)
+ */
+export const respondToIdea = async (
+  ideaId: number,
+  request: IdeaRespondRequest
+): Promise<IdeaRespondResponse> => {
+  const response = await api.post<IdeaRespondResponse>(`/ideas/${ideaId}/respond`, request);
+  return response.data;
+};
+
+/**
+ * Add a comment to an idea
+ */
+export const addIdeaComment = async (ideaId: number, commentText: string): Promise<IdeaComment> => {
+  const response = await api.post<IdeaComment>(`/ideas/${ideaId}/comments`, {
+    comment_text: commentText,
+  });
+  return response.data;
+};
+
+/**
+ * Get comments for an idea
+ */
+export const getIdeaComments = async (ideaId: number): Promise<IdeaComment[]> => {
+  const response = await api.get<IdeaComment[]>(`/ideas/${ideaId}/comments`);
+  return response.data;
+};
+
+/**
+ * Get triage recommendation for an idea
+ */
+export const getTriageRecommendation = async (ideaId: number): Promise<TriageRecommendation> => {
+  const response = await api.get<TriageRecommendation>(`/ideas/${ideaId}/triage-recommendation`);
+  return response.data;
+};
+
+/**
+ * Check if user can respond to an idea
+ */
+export const checkCanRespond = async (ideaId: number): Promise<CanRespondResponse> => {
+  const response = await api.get<CanRespondResponse>(`/ideas/${ideaId}/can-respond`);
+  return response.data;
+};
+
+// ============================================================================
+// PRODUCT PENDING COUNTS API METHODS (Plan Phase 1)
+// ============================================================================
+
+/**
+ * Get pending counts for a product
+ */
+export const getProductPendingCounts = async (productId: number): Promise<ProductPendingCounts> => {
+  const response = await api.get<ProductPendingCounts>(
+    `/product-intelligence/products/${productId}/pending-counts`
+  );
+  return response.data;
+};
+
+// ============================================================================
+// TRIAGE AUTOMATION SETTINGS API METHODS (Plan Phase 8)
+// ============================================================================
+
+/**
+ * Get triage automation settings for a product
+ */
+export const getTriageSettings = async (productId: number): Promise<TriageSettings> => {
+  const response = await api.get<TriageSettings>(
+    `/product-intelligence/products/${productId}/triage-settings`
+  );
+  return response.data;
+};
+
+/**
+ * Update triage automation settings for a product
+ */
+export const updateTriageSettings = async (
+  productId: number,
+  settings: TriageSettingsUpdate
+): Promise<TriageSettings> => {
+  const response = await api.put<TriageSettings>(
+    `/product-intelligence/products/${productId}/triage-settings`,
+    settings
   );
   return response.data;
 };

@@ -82,6 +82,7 @@ class VectorService:
         """
         if VectorService.is_postgres(db):
             # PostgreSQL: Use pgvector <=> operator
+            # Exclude pending and duplicate ideas - only show active, evaluated ideas
             results = db.execute(text("""
                 SELECT id, title, what_description,
                        embedding <=> :query_emb::vector as distance
@@ -89,6 +90,8 @@ class VectorService:
                 WHERE UPPER(status) = 'ACTIVE'
                   AND product_id = :product_id
                   AND embedding IS NOT NULL
+                  AND is_active = true
+                  AND triage_status NOT IN ('pending', 'duplicate')
                 ORDER BY embedding <=> :query_emb::vector
                 LIMIT :limit
             """), {
@@ -99,6 +102,7 @@ class VectorService:
         else:
             # SQLite: Use vec_distance_cosine function
             # Serialize query embedding for sqlite-vec
+            # Exclude pending and duplicate ideas - only show active, evaluated ideas
             serialized_query = sqlite_vec.serialize_float32(query_embedding)
             results = db.execute(text("""
                 SELECT v.idea_id, i.title, i.what_description,
@@ -107,6 +111,8 @@ class VectorService:
                 JOIN ideas i ON v.idea_id = i.id
                 WHERE UPPER(i.status) = 'ACTIVE'
                   AND i.product_id = :product_id
+                  AND i.is_active = 1
+                  AND i.triage_status NOT IN ('pending', 'duplicate')
                 ORDER BY distance ASC
                 LIMIT :limit
             """), {

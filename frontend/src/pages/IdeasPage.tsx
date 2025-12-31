@@ -10,16 +10,19 @@
  * - "Submit New Idea" button
  * - Navigation header
  * - Pagination controls
+ * - PO mode: status filtering, respond modal, auto-responded filter
  */
 
 import { useState, useEffect, useCallback, ChangeEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useProduct } from '../contexts/ProductContext';
-import { getIdeas } from '../services/api';
+import { getIdeas, checkCanRespond } from '../services/api';
 import IdeaCard from '../components/IdeaCard';
+import IdeaResponseModal from '../components/IdeaResponseModal';
 import Navigation from '../components/Navigation';
 import type { IdeaListItem, ApiError } from '../types';
+import { UserRole } from '../types';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -34,10 +37,17 @@ const IdeasPage = () => {
     hasProducts
   } = useProduct();
 
+  // Determine if user is PO or Admin
+  const isPOOrAdmin = user?.role === UserRole.PRODUCT_OWNER || user?.role === UserRole.ADMIN;
+
   // State
   const [ideas, setIdeas] = useState<IdeaListItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
+
+  // PO mode state
+  const [respondingToIdeaId, setRespondingToIdeaId] = useState<number | null>(null);
+  const [respondingToIdeaTitle, setRespondingToIdeaTitle] = useState<string>('');
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -118,6 +128,48 @@ const IdeasPage = () => {
     setCurrentPage(newPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
+
+  // Handle opening the respond modal (with permission check)
+  const handleRespond = useCallback(async (ideaId: number) => {
+    const idea = ideas.find(i => i.id === ideaId);
+    if (!idea) return;
+
+    try {
+      // Check if user has permission to respond to this idea
+      const response = await checkCanRespond(ideaId);
+      if (!response.can_respond) {
+        setError('You do not have permission to respond to this idea. Only the product owner can respond.');
+        return;
+      }
+
+      setRespondingToIdeaId(ideaId);
+      setRespondingToIdeaTitle(idea.title);
+    } catch (err) {
+      console.error('Error checking respond permission:', err);
+      setError('Failed to verify permission. Please try again.');
+    }
+  }, [ideas]);
+
+  // Handle closing the respond modal
+  const handleCloseResponseModal = useCallback(() => {
+    setRespondingToIdeaId(null);
+    setRespondingToIdeaTitle('');
+  }, []);
+
+  // Handle successful response
+  const handleResponseSuccess = useCallback(() => {
+    handleCloseResponseModal();
+    fetchIdeas(); // Refresh the list
+  }, [handleCloseResponseModal, fetchIdeas]);
+
+  // Get product ID for the modal (use the selected product or the idea's product)
+  const getProductIdForModal = (): number => {
+    if (selectedProductId && selectedProductId !== 'all') {
+      return selectedProductId;
+    }
+    const idea = ideas.find(i => i.id === respondingToIdeaId);
+    return idea?.product_id || 0;
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -283,6 +335,8 @@ const IdeasPage = () => {
                   key={idea.id}
                   idea={idea}
                   onVoteUpdate={handleVoteUpdate}
+                  showPOControls={isPOOrAdmin}
+                  onRespond={isPOOrAdmin ? handleRespond : undefined}
                 />
               ))}
             </div>
@@ -372,6 +426,17 @@ const IdeasPage = () => {
           </>
         )}
       </main>
+
+      {/* Response Modal */}
+      {respondingToIdeaId && (
+        <IdeaResponseModal
+          ideaId={respondingToIdeaId}
+          ideaTitle={respondingToIdeaTitle}
+          productId={getProductIdForModal()}
+          onClose={handleCloseResponseModal}
+          onSuccess={handleResponseSuccess}
+        />
+      )}
     </div>
   );
 };

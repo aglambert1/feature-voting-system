@@ -5,7 +5,9 @@ Import all models here to make them available throughout the app.
 """
 
 from app.models.user import User, UserRole, ProductAccessMode
-from app.models.idea import Idea, SourceType, IdeaStatus
+from app.models.idea import Idea, SourceType, IdeaStatus, TriageStatus, TriageAction
+from app.models.idea_comment import IdeaComment
+from app.models.idea_status_history import IdeaStatusHistory
 from app.models.vote import Vote
 from app.models.submission import Submission
 from app.models.password_reset import PasswordResetToken
@@ -34,7 +36,9 @@ from app.models.pm_review import (
 )
 
 __all__ = [
-    "User", "UserRole", "ProductAccessMode", "Idea", "SourceType", "IdeaStatus", "Vote", "Submission", "PasswordResetToken",
+    "User", "UserRole", "ProductAccessMode",
+    "Idea", "SourceType", "IdeaStatus", "TriageStatus", "TriageAction", "IdeaComment", "IdeaStatusHistory",
+    "Vote", "Submission", "PasswordResetToken",
     "CIProduct", "CompetitorAnalysisSession", "ProductCompetitor", "SessionCompetitor",
     "ProductCompetitorFeature", "CompetitorFeature", "CompetitorGeneratedIdea", "AgentExecutionLog",
     "ProductPermission", "ProductPermissionLevel", "ProductAnalysisHistory",

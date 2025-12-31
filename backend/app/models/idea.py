@@ -61,12 +61,14 @@ class TriageStatus(str, enum.Enum):
     """
     Triage status for idea review workflow.
 
-    - PENDING: Awaiting triage processing
+    - PENDING: Awaiting triage processing / PO response
     - AUTO_APPROVED: Automatically approved (high confidence)
     - NEEDS_REVIEW: Requires PM review
-    - APPROVED: PM approved for voting
-    - REJECTED: PM rejected
+    - APPROVED: PM approved for voting (alias: ACCEPTED)
+    - REJECTED: PM rejected (alias: NOT_APPROPRIATE)
     - DUPLICATE: Marked as duplicate of another idea
+    - FEATURE_EXISTS: Feature already exists in product
+    - NOT_APPROPRIATE: Inappropriate or off-topic (same as REJECTED but clearer)
     """
     PENDING = "pending"
     AUTO_APPROVED = "auto_approved"
@@ -74,6 +76,11 @@ class TriageStatus(str, enum.Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     DUPLICATE = "duplicate"
+    FEATURE_EXISTS = "feature_exists"
+    NOT_APPROPRIATE = "not_appropriate"
+
+    # Alias for clarity in the new workflow
+    ACCEPTED = "approved"  # Maps to APPROVED
 
 
 class TriageAction(str, enum.Enum):
@@ -145,6 +152,10 @@ class Idea(Base):
     review_notes = Column(Text, nullable=True)  # PM notes on decision
     published_for_voting = Column(Boolean, default=False, nullable=False)
 
+    # Visibility and auto-response tracking
+    is_active = Column(Boolean, default=True, nullable=False)  # False = hidden from voters
+    auto_responded = Column(Boolean, default=False, nullable=False)  # True if agent auto-responded
+
     # Queue job reference (for tracking)
     triage_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
 
@@ -160,6 +171,8 @@ class Idea(Base):
     product = relationship("CIProduct", backref="ideas")
     duplicate_of = relationship("Idea", remote_side=[id], foreign_keys=[duplicate_of_idea_id])
     triage_job = relationship("QueueJob", foreign_keys=[triage_job_id])
+    comments = relationship("IdeaComment", back_populates="idea", cascade="all, delete-orphan", order_by="IdeaComment.created_at")
+    status_history = relationship("IdeaStatusHistory", back_populates="idea", cascade="all, delete-orphan", order_by="IdeaStatusHistory.created_at")
 
     def __repr__(self):
         return f"<Idea(id={self.id}, title='{self.title}', source='{self.source_type}', triage='{self.triage_status}')>"
@@ -197,5 +210,7 @@ class Idea(Base):
             "reviewed_by_user_id": self.reviewed_by_user_id,
             "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
             "published_for_voting": self.published_for_voting,
+            "is_active": self.is_active,
+            "auto_responded": self.auto_responded,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
