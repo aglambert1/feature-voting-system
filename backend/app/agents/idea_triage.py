@@ -269,7 +269,7 @@ Source: {source_type}
 2. Assign a category (use existing if appropriate, or suggest new)
 3. Analyze the similar ideas - is this a duplicate, related, or unique?
 4. Assess competitive context - USE THE STRUCTURED URGENCY ASSESSMENT ABOVE
-5. Write a friendly auto-response for the customer
+5. Write a CONCISE auto-response for the customer (MUST be under 100 words)
 6. Make a recommendation (approve/merge/review/reject) with confidence and reasoning
 
 **Important Considerations:**
@@ -277,7 +277,7 @@ Source: {source_type}
 - If similar ideas exist with >0.95 similarity, likely a DUPLICATE → MERGE
 - USE the structured urgency level (LOW/MEDIUM/HIGH/CRITICAL) provided above
 - Include the urgency_reasoning from the structured assessment in your competitive_context
-- Be specific in auto-response, reference their submission
+- Auto-response MUST be concise (under 100 words): thank them briefly, acknowledge their idea, mention next steps
 - Default to REVIEW if uncertain about approval/rejection
 - Consider if the idea is actionable and clearly defined
 
@@ -299,7 +299,7 @@ You MUST return a JSON object with EXACTLY this structure:
     "urgency_reasoning": "Explanation of why this urgency level",
     "market_timing_notes": "Optional notes on market timing"
   }},
-  "auto_response_text": "Thank you for submitting your idea about X. We appreciate your feedback and will review it...",
+  "auto_response_text": "Thanks for your idea about X! We've received it and our team will review it shortly. We'll keep you posted on next steps.",
   "recommendation": {{
     "action": "review",
     "confidence": 0.75,

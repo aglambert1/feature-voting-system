@@ -11,9 +11,11 @@ from app.models.competitor_intelligence import (
     ProductFeature,
     CIProduct
 )
-from app.models.idea import Idea, SourceType, IdeaStatus
+from app.models.idea import Idea, SourceType, IdeaStatus, TriageStatus
+from app.models.queue import JobType
 from app.agents.idea_structuring_agent import IdeaStructuringAgent
 from app.services.llm_service import LLMService
+from app.services.queue_service import QueueService
 
 
 class IdeaGenerationService:
@@ -139,26 +141,58 @@ class IdeaGenerationService:
         except Exception as e:
             raise ValueError(f"Idea generation failed: {str(e)}")
 
-        # Store generated ideas
+        # Store generated ideas and create Idea records with triage
         generated_ideas = []
+        triage_jobs_queued = 0
+
+        # Import triage task here to avoid circular imports
+        from app.queue.tasks import triage_idea_task
+        queue_service = QueueService(self.db)
+
         for idea_data in agent_result.get('ideas', []):
-            # Check if idea already exists for this feature
+            # Get feature info for source metadata
+            feature = self.db.query(CompetitorFeature).filter(
+                CompetitorFeature.id == idea_data['feature_id']
+            ).first()
+            competitor = feature.session_competitor if feature else None
+            competitor_name = competitor.competitor_name if competitor else None
+            feature_name = feature.feature_name if feature else None
+
+            # Check if CompetitorGeneratedIdea already exists for this feature
             existing = self.db.query(CompetitorGeneratedIdea).filter(
                 CompetitorGeneratedIdea.feature_id == idea_data['feature_id'],
                 CompetitorGeneratedIdea.session_id == session_id
             ).first()
 
             if existing:
-                # Update existing idea
+                # Update existing CompetitorGeneratedIdea
                 existing.idea_what = idea_data['what']
                 existing.idea_why = idea_data['why']
                 existing.idea_use_case = idea_data['use_case']
                 existing.user_edited = False
                 existing.user_approved = False
-                existing.submitted_to_ideas = False
+                existing.submitted_to_ideas = True  # Now submitted immediately
                 generated_idea = existing
+
+                # If there's an existing linked Idea, update it
+                if existing.final_idea_id:
+                    linked_idea = self.db.query(Idea).filter(
+                        Idea.id == existing.final_idea_id
+                    ).first()
+                    if linked_idea:
+                        linked_idea.what_description = idea_data['what']
+                        linked_idea.why_description = idea_data['why']
+                        linked_idea.use_case_description = idea_data['use_case']
+                        linked_idea.triage_status = TriageStatus.PENDING
+                        linked_idea.published_for_voting = False
+                        idea_record = linked_idea
+                    else:
+                        # Linked idea was deleted, create new one
+                        idea_record = None
+                else:
+                    idea_record = None
             else:
-                # Create new idea
+                # Create new CompetitorGeneratedIdea
                 generated_idea = CompetitorGeneratedIdea(
                     feature_id=idea_data['feature_id'],
                     session_id=session_id,
@@ -168,11 +202,62 @@ class IdeaGenerationService:
                     idea_use_case=idea_data['use_case'],
                     user_edited=False,
                     user_approved=False,
-                    submitted_to_ideas=False
+                    submitted_to_ideas=True  # Now submitted immediately
                 )
                 self.db.add(generated_idea)
+                idea_record = None
 
             self.db.flush()
+
+            # Create Idea record if not exists
+            if idea_record is None:
+                # Generate title from what description (first sentence)
+                what_first_sentence = idea_data['what'].split('.')[0].strip()
+                title = what_first_sentence[:100] if len(what_first_sentence) <= 100 else what_first_sentence[:97] + "..."
+
+                idea_record = Idea(
+                    title=title,
+                    what_description=idea_data['what'],
+                    why_description=idea_data['why'],
+                    use_case_description=idea_data['use_case'],
+                    category=feature.feature_category if feature else None,
+                    product_id=session.product_id,
+                    source_type=SourceType.COMPETITOR_AUTOMATED,
+                    submitter_id=None,  # Competitor ideas have no submitter
+                    status=IdeaStatus.ACTIVE,
+                    triage_status=TriageStatus.PENDING,
+                    published_for_voting=False,
+                    source_metadata={
+                        'competitor_generated_idea_id': generated_idea.id,
+                        'feature_id': idea_data['feature_id'],
+                        'session_id': session_id,
+                        'competitor_name': competitor_name,
+                        'feature_name': feature_name,
+                    }
+                )
+                self.db.add(idea_record)
+                self.db.flush()
+
+                # Link CompetitorGeneratedIdea to Idea
+                generated_idea.final_idea_id = idea_record.id
+
+            # Queue triage job for this idea
+            try:
+                job = queue_service.create_job(
+                    job_type=JobType.IDEA_TRIAGE,
+                    input_data={
+                        'idea_id': idea_record.id,
+                        'source_type': SourceType.COMPETITOR_AUTOMATED.value,
+                    },
+                    product_id=session.product_id,
+                    user_id=None,  # System-initiated for competitor ideas
+                )
+                celery_result = triage_idea_task.delay(job.id)
+                queue_service.mark_queued(job.id, celery_result.id)
+                triage_jobs_queued += 1
+            except Exception as e:
+                print(f"Warning: Failed to queue triage job for idea {idea_record.id}: {e}")
+
             generated_ideas.append({
                 'id': generated_idea.id,
                 'feature_id': generated_idea.feature_id,
@@ -180,7 +265,11 @@ class IdeaGenerationService:
                 'what': generated_idea.idea_what,
                 'why': generated_idea.idea_why,
                 'use_case': generated_idea.idea_use_case,
-                'adaptation_notes': idea_data.get('adaptation_notes', '')
+                'adaptation_notes': idea_data.get('adaptation_notes', ''),
+                # NEW: Include linked Idea data
+                'idea_id': idea_record.id,
+                'triage_status': idea_record.triage_status.value if idea_record.triage_status else 'pending',
+                'published_for_voting': idea_record.published_for_voting,
             })
 
         self.db.commit()
@@ -195,7 +284,8 @@ class IdeaGenerationService:
             'total_features': len(selected_features),
             'ideas_generated': len(generated_ideas),
             'ideas': generated_ideas,
-            'generation_summary': agent_result.get('generation_summary', '')
+            'generation_summary': agent_result.get('generation_summary', ''),
+            'triage_jobs_queued': triage_jobs_queued,
         }
 
     def get_generated_ideas(self, session_id: int) -> Dict[str, Any]:
@@ -206,7 +296,7 @@ class IdeaGenerationService:
             session_id: Session ID
 
         Returns:
-            Dict with generated ideas and metadata
+            Dict with generated ideas and metadata including triage status
         """
         ideas = self.db.query(CompetitorGeneratedIdea).filter(
             CompetitorGeneratedIdea.session_id == session_id
@@ -220,6 +310,13 @@ class IdeaGenerationService:
 
             competitor = feature.session_competitor if feature else None
 
+            # Get linked Idea for triage status
+            linked_idea = None
+            if idea.final_idea_id:
+                linked_idea = self.db.query(Idea).filter(
+                    Idea.id == idea.final_idea_id
+                ).first()
+
             result.append({
                 'id': idea.id,
                 'feature_id': idea.feature_id,
@@ -231,14 +328,29 @@ class IdeaGenerationService:
                 'user_edited': idea.user_edited,
                 'user_approved': idea.user_approved,
                 'submitted': idea.submitted_to_ideas,
-                'created_at': idea.created_at.isoformat() if idea.created_at else None
+                'created_at': idea.created_at.isoformat() if idea.created_at else None,
+                # NEW: Include linked Idea data for triage status
+                'idea_id': idea.final_idea_id,
+                'triage_status': linked_idea.triage_status.value if linked_idea and linked_idea.triage_status else None,
+                'triage_confidence': linked_idea.triage_confidence if linked_idea else None,
+                'triage_recommendation': linked_idea.triage_recommendation.value if linked_idea and linked_idea.triage_recommendation else None,
+                'published_for_voting': linked_idea.published_for_voting if linked_idea else False,
             })
+
+        # Count by triage status
+        auto_approved_count = sum(1 for i in result if i.get('triage_status') == 'auto_approved')
+        needs_review_count = sum(1 for i in result if i.get('triage_status') == 'needs_review')
+        pending_count = sum(1 for i in result if i.get('triage_status') == 'pending')
+        approved_count = sum(1 for i in result if i.get('triage_status') == 'approved')
 
         return {
             'session_id': session_id,
             'ideas': result,
             'total_count': len(result),
-            'approved_count': sum(1 for i in result if i['user_approved']),
+            'auto_approved_count': auto_approved_count,
+            'needs_review_count': needs_review_count,
+            'pending_count': pending_count,
+            'approved_count': approved_count,
             'submitted_count': sum(1 for i in result if i['submitted'])
         }
 
@@ -326,16 +438,17 @@ class IdeaGenerationService:
 
     def finalize_ideas(self, session_id: int) -> Dict[str, Any]:
         """
-        Submit approved ideas to the main voting system.
+        Mark session as completed.
 
-        Creates Idea records for all approved CompetitorGeneratedIdea records
-        that haven't been submitted yet.
+        Note: Ideas are now created during generation (generate_ideas_for_session)
+        and triaged immediately. This method just marks the session as completed
+        for tracking purposes.
 
         Args:
             session_id: Session ID
 
         Returns:
-            Dict with submission results
+            Dict with session completion status
         """
         # Get session
         session = self.db.query(CompetitorAnalysisSession).filter(
@@ -345,59 +458,32 @@ class IdeaGenerationService:
         if not session:
             raise ValueError(f"Session {session_id} not found")
 
-        # Get approved, unsubmitted ideas
-        ideas_to_submit = self.db.query(CompetitorGeneratedIdea).filter(
-            CompetitorGeneratedIdea.session_id == session_id,
-            CompetitorGeneratedIdea.user_approved == True,
-            CompetitorGeneratedIdea.submitted_to_ideas == False
+        # Get all generated ideas for this session
+        generated_ideas = self.db.query(CompetitorGeneratedIdea).filter(
+            CompetitorGeneratedIdea.session_id == session_id
         ).all()
 
-        if not ideas_to_submit:
-            return {
-                'status': 'no_ideas',
-                'message': 'No approved ideas to submit',
-                'submitted_count': 0
-            }
+        # Count statuses from linked Ideas
+        status_counts = {
+            'auto_approved': 0,
+            'approved': 0,
+            'needs_review': 0,
+            'pending': 0,
+            'rejected': 0,
+            'duplicate': 0,
+        }
 
-        # Create Idea records in main voting system
-        submitted_ideas = []
-        for generated_idea in ideas_to_submit:
-            # Get feature for category and title generation
-            feature = self.db.query(CompetitorFeature).filter(
-                CompetitorFeature.id == generated_idea.feature_id
-            ).first()
-
-            # Generate title from what description (first sentence)
-            what_first_sentence = generated_idea.idea_what.split('.')[0].strip()
-            title = what_first_sentence[:100] if len(what_first_sentence) <= 100 else what_first_sentence[:97] + "..."
-
-            # Create Idea record
-            idea = Idea(
-                title=title,
-                what_description=generated_idea.idea_what,
-                why_description=generated_idea.idea_why,
-                use_case_description=generated_idea.idea_use_case,
-                category=feature.feature_category if feature else None,
-                product_id=session.product_id,  # Associate with session's product
-                source_type=SourceType.COMPETITOR,
-                submitter_id=None,  # Competitor-sourced ideas have no submitter
-                status=IdeaStatus.ACTIVE
-            )
-
-            self.db.add(idea)
-            self.db.flush()
-
-            # Link back to generated idea
-            generated_idea.submitted_to_ideas = True
-            generated_idea.final_idea_id = idea.id
-
-            submitted_ideas.append({
-                'idea_id': idea.id,
-                'generated_idea_id': generated_idea.id,
-                'title': idea.title
-            })
-
-        self.db.commit()
+        for gen_idea in generated_ideas:
+            if gen_idea.final_idea_id:
+                linked_idea = self.db.query(Idea).filter(
+                    Idea.id == gen_idea.final_idea_id
+                ).first()
+                if linked_idea and linked_idea.triage_status:
+                    status = linked_idea.triage_status.value
+                    if status in status_counts:
+                        status_counts[status] += 1
+                    else:
+                        status_counts['pending'] += 1
 
         # Update session stage to completed
         session.current_stage = "completed"
@@ -405,7 +491,8 @@ class IdeaGenerationService:
 
         return {
             'status': 'success',
-            'submitted_count': len(submitted_ideas),
-            'ideas': submitted_ideas,
-            'message': f'Successfully submitted {len(submitted_ideas)} ideas to voting system'
+            'session_id': session_id,
+            'total_ideas': len(generated_ideas),
+            'status_counts': status_counts,
+            'message': f'Session completed with {len(generated_ideas)} ideas'
         }

@@ -304,6 +304,7 @@ export default function SessionWorkflowPage() {
           {currentStage === 4 && (
             <Stage4_IdeaGeneration
               sessionId={session.id}
+              productId={product.id}
               onComplete={handleStage4Complete}
               onBack={handleBackToStage3}
             />

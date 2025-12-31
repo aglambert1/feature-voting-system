@@ -822,7 +822,7 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
     """
     from app.services.similarity_detector import SimilarityDetectorService
     from app.agents.idea_triage import IdeaTriageAgent
-    from app.models.idea import Idea, TriageStatus, TriageAction
+    from app.models.idea import Idea, TriageStatus, TriageAction, SourceType
     from app.models.idea_status_history import IdeaStatusHistory
     from app.models.competitor_intelligence import CIProduct
 
@@ -845,6 +845,9 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         idea = db.query(Idea).filter(Idea.id == idea_id).first()
         if not idea:
             raise ValueError(f"Idea {idea_id} not found")
+
+        # Check if this is a competitor-sourced idea
+        is_competitor_idea = idea.source_type == SourceType.COMPETITOR_AUTOMATED
 
         # Update progress
         queue_service.update_progress(job_id, 10.0, "Finding similar ideas...")
@@ -969,14 +972,16 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
                 'competitive_urgency': comp_context.get('competitive_urgency', 'low'),
             }
 
-        # Store auto-response text (always store for PO to use, regardless of auto-respond setting)
-        if triage_result.get('auto_response_text'):
+        # Store auto-response text only for customer ideas (competitor ideas have no submitter to notify)
+        if not is_competitor_idea and triage_result.get('auto_response_text'):
             idea.auto_response_text = triage_result['auto_response_text']
 
         # If auto-approved, publish for voting and mark as auto-responded
         if triage_status == TriageStatus.AUTO_APPROVED:
             idea.published_for_voting = True
-            idea.auto_responded = True
+            # Only mark auto_responded for customer ideas (they have submitters)
+            if not is_competitor_idea:
+                idea.auto_responded = True
 
         # Record status history for agent triage
         # Only record as automated action if auto-respond is ON and status changed
