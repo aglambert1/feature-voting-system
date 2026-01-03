@@ -97,6 +97,24 @@ class SimilarityResult:
     confidence: float  # 0.0-1.0
 
 
+@dataclass
+class ProductFeatureMatch:
+    """Represents a matching product feature."""
+    feature_id: int
+    feature_name: str
+    feature_description: str
+    similarity_score: float  # 0.0-1.0 (higher = more similar)
+    source_url: Optional[str] = None
+
+
+@dataclass
+class ProductFeatureMatchResult:
+    """Result of product feature matching for an idea."""
+    has_match: bool
+    matches: List[ProductFeatureMatch]
+    best_match: Optional[ProductFeatureMatch]
+
+
 class SimilarityDetectorService:
     """
     Service for detecting duplicate and similar ideas using vector similarity.
@@ -110,6 +128,7 @@ class SimilarityDetectorService:
     # Thresholds for similarity detection
     DUPLICATE_THRESHOLD = 0.95  # Almost certainly the same idea
     SIMILAR_THRESHOLD = 0.85    # Related but not duplicate
+    FEATURE_EXISTS_THRESHOLD = 0.85  # Detection threshold for existing product features
 
     def __init__(self, db: Session):
         self.db = db
@@ -596,3 +615,163 @@ class SimilarityDetectorService:
         union = words1 | words2
 
         return len(intersection) / len(union)
+
+    # ============================================================================
+    # Product Feature Matching (Detect if idea overlaps with existing feature)
+    # ============================================================================
+
+    def find_product_feature_matches(
+        self,
+        idea_text: str,
+        product_id: int,
+        limit: int = 3,
+        similarity_threshold: float = None
+    ) -> ProductFeatureMatchResult:
+        """
+        Find product's own features that match an idea.
+
+        This detects when a submitted idea describes functionality that
+        already exists in the product.
+
+        Args:
+            idea_text: Text of the idea to match
+            product_id: Product ID to search within
+            limit: Maximum feature matches to return
+            similarity_threshold: Minimum similarity (default: FEATURE_EXISTS_THRESHOLD)
+
+        Returns:
+            ProductFeatureMatchResult with matching features
+        """
+        if similarity_threshold is None:
+            similarity_threshold = self.FEATURE_EXISTS_THRESHOLD
+
+        # Generate embedding for the idea
+        embedding = self.generate_embedding(idea_text)
+
+        # Search using vector similarity against ProductFeature table
+        vector_results = VectorService.find_similar_product_features(
+            db=self.db,
+            query_embedding=embedding,
+            product_id=product_id,
+            limit=limit,
+            threshold=similarity_threshold
+        )
+
+        # Process results from detailed features
+        matches = []
+        for result in vector_results:
+            feature_id, feature_name, feature_description, source_url, distance = result
+
+            # Convert distance to similarity score
+            similarity = self._distance_to_similarity(distance)
+
+            matches.append(ProductFeatureMatch(
+                feature_id=feature_id,
+                feature_name=feature_name,
+                feature_description=feature_description or "",
+                similarity_score=round(similarity, 3),
+                source_url=source_url
+            ))
+
+        # Also check against core_features (stored as strings in structured_product_data)
+        core_feature_matches = self._check_core_features(
+            idea_text=idea_text,
+            product_id=product_id,
+            similarity_threshold=similarity_threshold
+        )
+
+        # Combine and deduplicate (prefer detailed features over core)
+        existing_names = {m.feature_name.lower() for m in matches}
+        for cm in core_feature_matches:
+            if cm.feature_name.lower() not in existing_names:
+                matches.append(cm)
+
+        # Sort by similarity and limit
+        matches.sort(key=lambda x: x.similarity_score, reverse=True)
+        matches = matches[:limit]
+
+        has_match = len(matches) > 0
+        best_match = matches[0] if matches else None
+
+        return ProductFeatureMatchResult(
+            has_match=has_match,
+            matches=matches,
+            best_match=best_match
+        )
+
+    def _check_core_features(
+        self,
+        idea_text: str,
+        product_id: int,
+        similarity_threshold: float
+    ) -> List[ProductFeatureMatch]:
+        """
+        Check idea against core_features stored in structured_product_data.
+
+        Core features are high-level strings without embeddings, so we
+        generate embeddings on-the-fly for comparison.
+
+        Args:
+            idea_text: Text of the idea to match
+            product_id: Product ID
+            similarity_threshold: Minimum similarity score
+
+        Returns:
+            List of matching ProductFeatureMatch objects
+        """
+        from app.models.competitor_intelligence import CIProduct
+        import numpy as np
+
+        product = self.db.query(CIProduct).filter(CIProduct.id == product_id).first()
+        if not product or not product.structured_product_data:
+            return []
+
+        core_features = product.structured_product_data.get('core_features', [])
+        if not core_features:
+            return []
+
+        # Generate embedding for idea text
+        idea_embedding = self.generate_embedding(idea_text)
+
+        matches = []
+        for feature_name in core_features:
+            # Generate embedding for core feature
+            feature_embedding = self.generate_embedding(feature_name)
+
+            # Calculate cosine similarity directly
+            similarity = float(np.dot(idea_embedding, feature_embedding) / (
+                np.linalg.norm(idea_embedding) * np.linalg.norm(feature_embedding)
+            ))
+
+            if similarity >= similarity_threshold:
+                # Determine source URL from product source
+                source_url = None
+                if product.product_source_type == 'url' and product.product_source_data:
+                    source_url = product.product_source_data.get('url')
+
+                matches.append(ProductFeatureMatch(
+                    feature_id=0,  # Core features don't have IDs
+                    feature_name=feature_name,
+                    feature_description=f"Core product feature: {feature_name}",
+                    similarity_score=round(similarity, 3),
+                    source_url=source_url
+                ))
+
+        return matches
+
+    def store_product_feature_embedding(self, feature_id: int, feature_text: str) -> None:
+        """
+        Generate and store embedding for a product feature.
+
+        Call this when storing new ProductFeature records during analysis.
+
+        Args:
+            feature_id: ID of the ProductFeature
+            feature_text: Combined text (name + description) for embedding
+        """
+        embedding = self.generate_embedding(feature_text)
+        VectorService.store_product_feature_embedding(
+            db=self.db,
+            feature_id=feature_id,
+            embedding=embedding
+        )

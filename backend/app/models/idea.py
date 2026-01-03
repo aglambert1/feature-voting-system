@@ -5,7 +5,7 @@ This defines the structure of the 'ideas' table in the database.
 Ideas can come from multiple sources: manual submissions, competitor features,
 CRM imports, support tickets, etc.
 
-Phase 3 Enhancement: Unified idea model with triage support.
+Phase 3 Enhancement: Unified idea model with consolidated status.
 """
 
 from datetime import datetime
@@ -44,53 +44,39 @@ class SourceType(str, enum.Enum):
 
 class IdeaStatus(str, enum.Enum):
     """
-    Status of an idea.
+    Unified idea status.
 
-    - ACTIVE: Currently active and votable
-    - ARCHIVED: Hidden from main view
-    - MERGED: Merged with another idea
-    - IMPLEMENTED: Feature has been implemented
-    """
-    ACTIVE = "active"
-    ARCHIVED = "archived"
-    MERGED = "merged"
-    IMPLEMENTED = "implemented"
+    Each status has a default is_active value (configurable per-product).
+    Default visibility: only ACCEPTED is visible (is_active=True).
 
-
-class TriageStatus(str, enum.Enum):
-    """
-    Triage status for idea review workflow.
-
-    - PENDING: Awaiting triage processing / PO response
-    - AUTO_APPROVED: Automatically approved (high confidence)
-    - NEEDS_REVIEW: Requires PM review
-    - APPROVED: PM approved for voting (alias: ACCEPTED)
-    - REJECTED: PM rejected (alias: NOT_APPROPRIATE)
-    - DUPLICATE: Marked as duplicate of another idea
-    - FEATURE_EXISTS: Feature already exists in product
-    - NOT_APPROPRIATE: Inappropriate or off-topic (same as REJECTED but clearer)
+    - PENDING: Awaiting AI triage (is_active=False)
+    - ACCEPTED: Approved for voting (is_active=True)
+    - NEEDS_REVIEW: AI flagged, awaiting PO review (is_active=False)
+    - DUPLICATE: Matches existing idea (is_active=False)
+    - MERGED: Combined with another idea (is_active=False, future)
+    - FEATURE_EXISTS: Already exists in product (is_active=False)
+    - NOT_APPROPRIATE: Rejected/off-topic (is_active=False)
     """
     PENDING = "pending"
-    AUTO_APPROVED = "auto_approved"
+    ACCEPTED = "accepted"
     NEEDS_REVIEW = "needs_review"
-    APPROVED = "approved"
-    REJECTED = "rejected"
     DUPLICATE = "duplicate"
+    MERGED = "merged"
     FEATURE_EXISTS = "feature_exists"
     NOT_APPROPRIATE = "not_appropriate"
 
-    # Alias for clarity in the new workflow
-    ACCEPTED = "approved"  # Maps to APPROVED
 
-
-class TriageAction(str, enum.Enum):
-    """
-    Recommended triage actions from IdeaTriageAgent.
-    """
-    APPROVE = "approve"
-    MERGE = "merge"
-    REVIEW = "review"
-    REJECT = "reject"
+# Default visibility mapping for statuses
+# Products can override this via status_visibility_config
+DEFAULT_STATUS_VISIBILITY = {
+    IdeaStatus.PENDING: False,
+    IdeaStatus.ACCEPTED: True,
+    IdeaStatus.NEEDS_REVIEW: False,
+    IdeaStatus.DUPLICATE: False,
+    IdeaStatus.MERGED: False,
+    IdeaStatus.FEATURE_EXISTS: False,
+    IdeaStatus.NOT_APPROPRIATE: False,
+}
 
 
 class Idea(Base):
@@ -126,14 +112,17 @@ class Idea(Base):
     category = Column(String(100), nullable=True)
     auto_categorized = Column(Boolean, default=False, nullable=False)  # True if category was set by AI
 
-    # Status
-    status = Column(Enum(IdeaStatus), default=IdeaStatus.ACTIVE, nullable=False)
+    # Unified status (replaces old status + triage_status)
+    status = Column(Enum(IdeaStatus), default=IdeaStatus.PENDING, nullable=False, index=True)
 
-    # Triage workflow (Phase 3)
-    triage_status = Column(Enum(TriageStatus), default=TriageStatus.PENDING, nullable=False, index=True)
+    # Visibility - derived from status but stored for efficient querying
+    # Set based on product's status_visibility_config when status changes
+    is_active = Column(Boolean, default=False, nullable=False)
+
+    # Triage metadata (AI analysis results - still useful for display)
     triage_confidence = Column(Float, nullable=True)  # 0.0-1.0, AI confidence in recommendation
     triage_reasoning = Column(Text, nullable=True)  # AI explanation for recommendation
-    triage_recommendation = Column(Enum(TriageAction), nullable=True)  # Recommended action
+    triage_recommendation = Column(Text, nullable=True)  # Recommended action as string
 
     # Duplicate detection
     duplicate_of_idea_id = Column(Integer, ForeignKey("ideas.id"), nullable=True)
@@ -146,15 +135,8 @@ class Idea(Base):
     # Auto-response (generated for customer acknowledgment)
     auto_response_text = Column(Text, nullable=True)
 
-    # PM review
-    reviewed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    reviewed_at = Column(DateTime, nullable=True)
+    # PM review notes
     review_notes = Column(Text, nullable=True)  # PM notes on decision
-    published_for_voting = Column(Boolean, default=False, nullable=False)
-
-    # Visibility and auto-response tracking
-    is_active = Column(Boolean, default=True, nullable=False)  # False = hidden from voters
-    auto_responded = Column(Boolean, default=False, nullable=False)  # True if agent auto-responded
 
     # Queue job reference (for tracking)
     triage_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
@@ -165,7 +147,6 @@ class Idea(Base):
 
     # Relationships
     submitter = relationship("User", foreign_keys=[submitter_id], back_populates="ideas")
-    reviewer = relationship("User", foreign_keys=[reviewed_by_user_id], overlaps="reviewed_ideas")
     votes = relationship("Vote", back_populates="idea", cascade="all, delete-orphan")
     submission = relationship("Submission", back_populates="idea", uselist=False, cascade="all, delete-orphan")
     product = relationship("CIProduct", backref="ideas")
@@ -175,42 +156,49 @@ class Idea(Base):
     status_history = relationship("IdeaStatusHistory", back_populates="idea", cascade="all, delete-orphan", order_by="IdeaStatusHistory.created_at")
 
     def __repr__(self):
-        return f"<Idea(id={self.id}, title='{self.title}', source='{self.source_type}', triage='{self.triage_status}')>"
+        return f"<Idea(id={self.id}, title='{self.title}', source='{self.source_type}', status='{self.status}')>"
+
+    @property
+    def can_vote(self) -> bool:
+        """Check if idea is open for voting."""
+        return self.status == IdeaStatus.ACCEPTED
 
     @property
     def is_triaged(self) -> bool:
-        """Check if idea has been triaged."""
-        return self.triage_status not in (TriageStatus.PENDING,)
+        """Check if idea has been triaged (not pending)."""
+        return self.status != IdeaStatus.PENDING
 
     @property
     def needs_pm_review(self) -> bool:
         """Check if idea needs PM review."""
-        return self.triage_status == TriageStatus.NEEDS_REVIEW
+        return self.status == IdeaStatus.NEEDS_REVIEW
 
     @property
     def is_from_competitor(self) -> bool:
         """Check if idea originated from competitor intelligence."""
         return self.source_type == SourceType.COMPETITOR_AUTOMATED
 
-    def to_triage_dict(self) -> dict:
-        """Return triage-relevant fields as dictionary."""
+    @staticmethod
+    def get_default_is_active_for_status(status: IdeaStatus) -> bool:
+        """Return default is_active value for a given status."""
+        return DEFAULT_STATUS_VISIBILITY.get(status, False)
+
+    def to_dict(self) -> dict:
+        """Return idea fields as dictionary for API responses."""
         return {
             "id": self.id,
             "title": self.title,
             "source_type": self.source_type.value,
             "category": self.category,
-            "triage_status": self.triage_status.value,
+            "status": self.status.value,
+            "is_active": self.is_active,
             "triage_confidence": self.triage_confidence,
             "triage_reasoning": self.triage_reasoning,
-            "triage_recommendation": self.triage_recommendation.value if self.triage_recommendation else None,
+            "triage_recommendation": self.triage_recommendation,
             "duplicate_of_idea_id": self.duplicate_of_idea_id,
             "similarity_score": self.similarity_score,
             "competitive_context": self.competitive_context,
             "auto_response_text": self.auto_response_text,
-            "reviewed_by_user_id": self.reviewed_by_user_id,
-            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
-            "published_for_voting": self.published_for_voting,
-            "is_active": self.is_active,
-            "auto_responded": self.auto_responded,
+            "review_notes": self.review_notes,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

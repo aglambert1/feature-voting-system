@@ -15,16 +15,24 @@ export enum UserRole {
 }
 
 export enum SourceType {
-  MANUAL = 'manual',
-  AI_GENERATED = 'ai_generated',
+  CUSTOMER_SUBMISSION = 'customer_submission',
+  COMPETITOR_AUTOMATED = 'competitor_automated',
+  CRM_IMPORT = 'crm_import',
+  SUPPORT_TICKET = 'support_ticket',
 }
 
+/**
+ * Unified idea status.
+ * Each status has a deterministic is_active value (configurable per-product).
+ */
 export enum IdeaStatus {
-  SUBMITTED = 'submitted',
-  UNDER_REVIEW = 'under_review',
-  APPROVED = 'approved',
-  REJECTED = 'rejected',
-  IMPLEMENTED = 'implemented',
+  PENDING = 'pending',           // is_active=false - awaiting triage
+  ACCEPTED = 'accepted',         // is_active=true  - approved for voting
+  NEEDS_REVIEW = 'needs_review', // is_active=false - awaiting PO
+  DUPLICATE = 'duplicate',       // is_active=false - matches existing idea
+  MERGED = 'merged',             // is_active=false - combined with another (future)
+  FEATURE_EXISTS = 'feature_exists',  // is_active=false - already in product
+  NOT_APPROPRIATE = 'not_appropriate', // is_active=false - rejected
 }
 
 // ============================================================================
@@ -80,10 +88,9 @@ export interface IdeaListItem {
   created_at: string;
   product_id: number;
   product_name: string | null;
-  // Triage status fields
-  triage_status: TriageStatus | null;
+  // Status fields
+  status: IdeaStatus | null;
   is_active: boolean | null;
-  auto_responded: boolean | null;
   duplicate_of_idea_id: number | null;
   duplicate_of_title: string | null;
   // Vote counts
@@ -481,19 +488,13 @@ export interface ProductListItem {
 }
 
 // ============================================================================
-// TRIAGE STATUS TYPES (Plan Phase 2)
+// IDEA STATUS ALIASES (for backward compatibility)
 // ============================================================================
 
-export enum TriageStatus {
-  PENDING = 'pending',
-  AUTO_APPROVED = 'auto_approved',
-  NEEDS_REVIEW = 'needs_review',
-  APPROVED = 'approved',
-  REJECTED = 'rejected',
-  DUPLICATE = 'duplicate',
-  FEATURE_EXISTS = 'feature_exists',
-  NOT_APPROPRIATE = 'not_appropriate',
-}
+// TriageStatus is now deprecated - use IdeaStatus instead
+// Keeping as alias for any existing code
+export const TriageStatus = IdeaStatus;
+export type TriageStatusType = IdeaStatus;
 
 // User-facing status for PO response workflow
 export type IdeaResponseStatus = 'approved' | 'duplicate' | 'feature_exists' | 'not_appropriate';
@@ -524,8 +525,8 @@ export interface IdeaDetail {
   use_case_description: string;
   source_type: string;
   category: string | null;
-  status: string;
-  triage_status: TriageStatus;
+  status: IdeaStatus;
+  is_active: boolean;
   triage_confidence: number | null;
   triage_recommendation: string | null;
   triage_reasoning: string | null;
@@ -533,16 +534,10 @@ export interface IdeaDetail {
   duplicate_of_title: string | null;
   similarity_score: number | null;
   auto_response_text: string | null;
-  is_active: boolean;
-  auto_responded: boolean;
-  published_for_voting: boolean;
   product_id: number;
   product_name: string | null;
   submitter_id: number | null;
   submitter_username: string | null;
-  reviewed_by_user_id: number | null;
-  reviewer_username: string | null;
-  reviewed_at: string | null;
   review_notes: string | null;
   created_at: string;
   updated_at: string;
@@ -563,13 +558,11 @@ export interface IdeaRespondRequest {
 export interface IdeaRespondResponse {
   id: number;
   title: string;
-  status: IdeaResponseStatus;
-  triage_status: TriageStatus;
+  status: IdeaStatus;
   is_active: boolean;
-  published_for_voting: boolean;
   duplicate_of_idea_id: number | null;
   responded_by: string;
-  responded_at: string;
+  votes_transferred?: number;  // Only for duplicate responses
 }
 
 // ============================================================================
@@ -641,7 +634,7 @@ export interface CanRespondResponse {
 export interface ProductPendingCounts {
   product_id: number;
   ideas_pending: number;
-  ideas_auto_responded: number;
+  ideas_needs_review: number;
   competitive_alerts: number;
 }
 

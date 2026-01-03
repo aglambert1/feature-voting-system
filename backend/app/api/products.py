@@ -1850,8 +1850,8 @@ def backfill_competitor_feature_embeddings(
 class ProductPendingCountsResponse(BaseModel):
     """Response schema for product pending counts."""
     product_id: int
-    ideas_pending: int  # Ideas with triage_status=PENDING
-    ideas_auto_responded: int  # Ideas where auto_responded=true and not yet reviewed by PO
+    ideas_pending: int  # Ideas with status=PENDING
+    ideas_needs_review: int  # Ideas with status=NEEDS_REVIEW (flagged by AI)
     competitive_alerts: int  # Pending competitive alerts from PMReviewQueue
 
 
@@ -1883,14 +1883,14 @@ def get_product_pending_counts(
     Get pending counts for a product.
 
     Returns counts of items awaiting PO action:
-    - ideas_pending: Ideas with triage_status=PENDING
-    - ideas_auto_responded: Ideas where auto_responded=True and PO hasn't reviewed
+    - ideas_pending: Ideas with status=PENDING
+    - ideas_needs_review: Ideas with status=NEEDS_REVIEW
     - competitive_alerts: Pending competitive alerts
 
     Requires VIEW permission on the product.
     """
     from app.services.permission_service import PermissionService
-    from app.models.idea import Idea, TriageStatus
+    from app.models.idea import Idea, IdeaStatus
     from app.models.pm_review import PMReviewQueue, ReviewQueueStatus, ReviewQueueType
 
     # Check permission
@@ -1913,17 +1913,16 @@ def get_product_pending_counts(
             detail=f"Product {product_id} not found"
         )
 
-    # Count ideas with PENDING triage status
+    # Count ideas with PENDING status
     ideas_pending = db.query(Idea).filter(
         Idea.product_id == product_id,
-        Idea.triage_status == TriageStatus.PENDING
+        Idea.status == IdeaStatus.PENDING
     ).count()
 
-    # Count ideas with auto_responded=True that haven't been reviewed by PO
-    ideas_auto_responded = db.query(Idea).filter(
+    # Count ideas with NEEDS_REVIEW status (were flagged by AI for PO review)
+    ideas_needs_review = db.query(Idea).filter(
         Idea.product_id == product_id,
-        Idea.auto_responded == True,
-        Idea.reviewed_by_user_id == None  # Not yet reviewed by PO
+        Idea.status == IdeaStatus.NEEDS_REVIEW
     ).count()
 
     # Count pending competitive alerts from PM Review Queue
@@ -1936,7 +1935,7 @@ def get_product_pending_counts(
     return ProductPendingCountsResponse(
         product_id=product_id,
         ideas_pending=ideas_pending,
-        ideas_auto_responded=ideas_auto_responded,
+        ideas_needs_review=ideas_needs_review,
         competitive_alerts=competitive_alerts,
     )
 

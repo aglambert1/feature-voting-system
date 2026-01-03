@@ -49,25 +49,24 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
     }
   }, [isExpanded, idea.id, ideaDetail, loadingDetail]);
 
-  // Determine if voting should be disabled (only approved ideas can be voted on)
-  const isVotingDisabled = showPOControls && idea.triage_status && idea.triage_status !== 'approved';
+  // Determine if voting should be disabled (only accepted ideas can be voted on)
+  const isVotingDisabled = showPOControls && idea.status && idea.status !== 'accepted';
 
   // Get status badge config
   const getStatusBadge = () => {
-    if (!idea.triage_status) return null;
+    if (!idea.status) return null;
 
     const badges: Record<string, { label: string; className: string }> = {
-      pending: { label: 'Awaiting Response', className: 'bg-yellow-100 text-yellow-800' },
-      approved: { label: 'Accepted', className: 'bg-green-100 text-green-800' },
+      pending: { label: 'Awaiting Triage', className: 'bg-yellow-100 text-yellow-800' },
+      accepted: { label: 'Accepted', className: 'bg-green-100 text-green-800' },
       duplicate: { label: 'Duplicate', className: 'bg-gray-100 text-gray-600 line-through' },
+      merged: { label: 'Merged', className: 'bg-gray-100 text-gray-600' },
       feature_exists: { label: 'Feature Exists', className: 'bg-orange-100 text-orange-800' },
       not_appropriate: { label: 'Not Appropriate', className: 'bg-red-100 text-red-800' },
       needs_review: { label: 'Needs Review', className: 'bg-blue-100 text-blue-800' },
-      auto_approved: { label: 'Auto-approved', className: 'bg-green-100 text-green-800' },
-      rejected: { label: 'Rejected', className: 'bg-red-100 text-red-800' },
     };
 
-    return badges[idea.triage_status] || null;
+    return badges[idea.status] || null;
   };
 
   const statusBadge = getStatusBadge();
@@ -171,7 +170,7 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
                   onClick={() => onRespond(idea.id)}
                   className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
                 >
-                  {idea.triage_status === 'pending' ? 'Respond' : 'Edit Response'}
+                  {idea.status === 'pending' || idea.status === 'needs_review' ? 'Respond' : 'Edit Response'}
                 </button>
               )}
             </div>
@@ -182,16 +181,6 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
               {statusBadge && (
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusBadge.className}`}>
                   {statusBadge.label}
-                </span>
-              )}
-
-              {/* Auto-responded indicator (PO view only) */}
-              {showPOControls && idea.auto_responded && (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                  <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                  </svg>
-                  AI Auto-responded
                 </span>
               )}
 
@@ -281,10 +270,10 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
                               {/* Status badge */}
                               {entry.new_status && (
                                 <span className={`inline-flex items-center px-1.5 py-0.5 text-xs font-medium rounded ${
-                                  entry.new_status === 'approved' || entry.new_status === 'auto_approved' ? 'bg-green-100 text-green-800' :
+                                  entry.new_status === 'accepted' ? 'bg-green-100 text-green-800' :
                                   entry.new_status === 'pending' ? 'bg-gray-100 text-gray-800' :
                                   entry.new_status === 'needs_review' ? 'bg-yellow-100 text-yellow-800' :
-                                  entry.new_status === 'duplicate' ? 'bg-yellow-100 text-yellow-800' :
+                                  entry.new_status === 'duplicate' || entry.new_status === 'merged' ? 'bg-gray-100 text-gray-600' :
                                   entry.new_status === 'feature_exists' ? 'bg-orange-100 text-orange-800' :
                                   entry.new_status === 'not_appropriate' ? 'bg-red-100 text-red-800' :
                                   'bg-gray-100 text-gray-800'

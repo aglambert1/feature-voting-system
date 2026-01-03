@@ -164,6 +164,9 @@ export default function SessionWorkflowPage() {
   };
 
   const handleBackToStage3 = (): void => {
+    // Clear stage 3 state to reset feature selections when returning from Stage 4
+    // This prevents the "Generating Ideas" spinner from appearing and clears old selections
+    setStage3State(null);
     setCurrentStage(3);
   };
 

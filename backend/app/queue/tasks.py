@@ -705,7 +705,7 @@ def normalize_idea_task(self, job_id: int) -> Dict[str, Any]:
         Dictionary with idea_id and normalization details
     """
     from app.services.idea_normalizer_service import IdeaNormalizerService
-    from app.models.idea import SourceType, TriageStatus
+    from app.models.idea import SourceType, IdeaStatus
 
     db = None
     try:
@@ -742,7 +742,7 @@ def normalize_idea_task(self, job_id: int) -> Dict[str, Any]:
         # Create the idea
         idea = normalizer.create_idea_from_normalized(
             normalized,
-            triage_status=TriageStatus.PENDING
+            status=IdeaStatus.PENDING
         )
         db.add(idea)
         db.commit()
@@ -822,7 +822,7 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
     """
     from app.services.similarity_detector import SimilarityDetectorService
     from app.agents.idea_triage import IdeaTriageAgent
-    from app.models.idea import Idea, TriageStatus, TriageAction, SourceType
+    from app.models.idea import Idea, IdeaStatus, SourceType
     from app.models.idea_status_history import IdeaStatusHistory
     from app.models.competitor_intelligence import CIProduct
 
@@ -871,6 +871,16 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             limit=5
         )
 
+        # Update progress
+        queue_service.update_progress(job_id, 40.0, "Checking existing product features...")
+
+        # Find matching product features (detect if idea describes existing functionality)
+        product_feature_result = similarity_service.find_product_feature_matches(
+            idea_text=idea_text,
+            product_id=idea.product_id,
+            limit=3
+        )
+
         # Get product context
         product = db.query(CIProduct).filter(CIProduct.id == idea.product_id).first()
         product_context = {}
@@ -910,6 +920,25 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             ],
             # Pass full competitive context with structured urgency
             'competitive_context': competitive_context,
+            # Pass existing product feature match info for feature exists detection
+            'existing_feature_match': {
+                'has_match': product_feature_result.has_match,
+                'best_match': {
+                    'feature_name': product_feature_result.best_match.feature_name,
+                    'feature_description': product_feature_result.best_match.feature_description,
+                    'similarity_score': product_feature_result.best_match.similarity_score,
+                    'source_url': product_feature_result.best_match.source_url,
+                } if product_feature_result.best_match else None,
+                'all_matches': [
+                    {
+                        'feature_name': m.feature_name,
+                        'feature_description': m.feature_description,
+                        'similarity_score': m.similarity_score,
+                        'source_url': m.source_url,
+                    }
+                    for m in product_feature_result.matches
+                ]
+            }
         }
 
         # Run triage agent
@@ -930,27 +959,26 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             auto_respond_enabled = product.idea_triage_auto_enabled
             auto_respond_threshold = getattr(product, 'idea_triage_auto_threshold', 0.9)
 
-        # Determine triage status (only auto-approves if auto-respond is enabled)
-        triage_status_str = agent.determine_triage_status(
+        # Determine status (only auto-approves if auto-respond is enabled)
+        # Returns IdeaStatus enum directly
+        new_status = agent.determine_triage_status(
             triage_result,
             auto_respond_enabled=auto_respond_enabled,
             auto_respond_threshold=auto_respond_threshold
         )
-        triage_status = TriageStatus(triage_status_str)
 
-        # Map recommendation action to TriageAction enum
+        # Get recommendation details
         recommendation = triage_result.get('recommendation', {})
         action_str = recommendation.get('action', 'review')
-        try:
-            triage_action = TriageAction(action_str)
-        except ValueError:
-            triage_action = TriageAction.REVIEW
 
         # Update idea with triage results
-        idea.triage_status = triage_status
+        old_status = idea.status
+        idea.status = new_status
+        # Set is_active based on product's visibility config
+        idea.is_active = product.get_is_active_for_status(new_status) if product else new_status == IdeaStatus.ACCEPTED
         idea.triage_confidence = recommendation.get('confidence', 0.5)
         idea.triage_reasoning = recommendation.get('reasoning', '')
-        idea.triage_recommendation = triage_action
+        idea.triage_recommendation = action_str  # Store as string
         idea.triage_job_id = job.id
 
         # Update category if provided
@@ -960,28 +988,48 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
 
         # Handle duplicate detection - store duplicate info if agent recommends merge
         # This is stored regardless of auto-respond setting so PO can see the suggestion
-        if triage_action == TriageAction.MERGE and similarity_result.best_match:
+        if action_str == 'merge' and similarity_result.best_match:
             idea.duplicate_of_idea_id = similarity_result.best_match.idea_id
             idea.similarity_score = similarity_result.best_match.similarity_score
 
         # Store competitive context
         comp_context = triage_result.get('competitive_context', {})
-        if comp_context:
+        competitors_with_feature = comp_context.get('competitors_with_feature', [])
+
+        # For competitor-sourced ideas, ensure source competitor is included in the list
+        if is_competitor_idea and idea.source_metadata:
+            source_competitor_name = idea.source_metadata.get('competitor_name')
+            if source_competitor_name and source_competitor_name not in competitors_with_feature:
+                competitors_with_feature = [source_competitor_name] + competitors_with_feature
+
+        if comp_context or competitors_with_feature:
             idea.competitive_context = {
-                'competitors_with_feature': comp_context.get('competitors_with_feature', []),
-                'competitive_urgency': comp_context.get('competitive_urgency', 'low'),
+                'competitors_with_feature': competitors_with_feature,
+                'competitive_urgency': comp_context.get('competitive_urgency', 'medium' if is_competitor_idea else 'low'),
             }
 
-        # Store auto-response text only for customer ideas (competitor ideas have no submitter to notify)
-        if not is_competitor_idea and triage_result.get('auto_response_text'):
-            idea.auto_response_text = triage_result['auto_response_text']
+        # Store existing feature info if detected (feature exists case)
+        existing_feature_info = triage_result.get('existing_feature_info')
+        if not existing_feature_info and product_feature_result.has_match and product_feature_result.best_match:
+            # Fallback to detected match if agent didn't provide info
+            existing_feature_info = {
+                'feature_name': product_feature_result.best_match.feature_name,
+                'feature_description': product_feature_result.best_match.feature_description,
+                'similarity_score': product_feature_result.best_match.similarity_score,
+                'source_url': product_feature_result.best_match.source_url,
+            }
+        if existing_feature_info:
+            idea.competitive_context = idea.competitive_context or {}
+            idea.competitive_context['existing_feature'] = existing_feature_info
 
-        # If auto-approved, publish for voting and mark as auto-responded
-        if triage_status == TriageStatus.AUTO_APPROVED:
-            idea.published_for_voting = True
-            # Only mark auto_responded for customer ideas (they have submitters)
-            if not is_competitor_idea:
-                idea.auto_responded = True
+        # Store auto-response text
+        if not is_competitor_idea and triage_result.get('auto_response_text'):
+            # Customer ideas get AI-generated response
+            idea.auto_response_text = triage_result['auto_response_text']
+        elif is_competitor_idea:
+            # Competitor ideas get a default response referencing the source
+            competitor_name = idea.source_metadata.get('competitor_name', 'competitor analysis') if idea.source_metadata else 'competitor analysis'
+            idea.auto_response_text = f"From analysis of {competitor_name}"
 
         # Record status history for agent triage
         # Only record as automated action if auto-respond is ON and status changed
@@ -990,8 +1038,8 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         if auto_respond_enabled:
             status_history = IdeaStatusHistory(
                 idea_id=idea.id,
-                previous_status=TriageStatus.PENDING,
-                new_status=triage_status,
+                previous_status=old_status,
+                new_status=new_status,
                 changed_by_user_id=None,  # Automated by agent
                 is_automated=True,
                 change_source='agent_triage',
@@ -1015,17 +1063,24 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         # Prepare output
         output_data = {
             'idea_id': idea.id,
-            'triage_status': triage_status.value,
+            'status': new_status.value,
+            'is_active': idea.is_active,
             'triage_confidence': idea.triage_confidence,
-            'triage_recommendation': triage_action.value,
+            'triage_recommendation': action_str,
             'category': idea.category,
             'has_duplicates': similarity_result.has_duplicates,
             'has_similar': similarity_result.has_similar,
             'similar_count': len(similarity_result.similar_ideas),
             'duplicate_of_idea_id': idea.duplicate_of_idea_id,
             'competitors_with_feature': comp_context.get('competitors_with_feature', []),
+            'existing_feature_match': product_feature_result.has_match,
+            'existing_feature_info': {
+                'feature_name': product_feature_result.best_match.feature_name,
+                'feature_description': product_feature_result.best_match.feature_description,
+                'similarity_score': product_feature_result.best_match.similarity_score,
+                'source_url': product_feature_result.best_match.source_url,
+            } if product_feature_result.best_match else None,
             'auto_response_generated': bool(idea.auto_response_text),
-            'published_for_voting': idea.published_for_voting,
         }
 
         # Mark success
@@ -1085,7 +1140,7 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
     from app.services.idea_normalizer_service import IdeaNormalizerService
     from app.services.similarity_detector import SimilarityDetectorService
     from app.agents.idea_triage import IdeaTriageAgent
-    from app.models.idea import Idea, TriageStatus, TriageAction, SourceType
+    from app.models.idea import Idea, IdeaStatus, SourceType
     from app.models.competitor_intelligence import CIProduct
 
     db = None
@@ -1115,7 +1170,7 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
 
         # Step 2: Create idea
         queue_service.update_progress(job_id, 25.0, "Creating idea record...")
-        idea = normalizer.create_idea_from_normalized(normalized, TriageStatus.PENDING)
+        idea = normalizer.create_idea_from_normalized(normalized, IdeaStatus.PENDING)
         db.add(idea)
         db.commit()
         db.refresh(idea)
@@ -1194,25 +1249,23 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             auto_respond_enabled = product.idea_triage_auto_enabled
             auto_respond_threshold = getattr(product, 'idea_triage_auto_threshold', 0.9)
 
-        # Determine triage status (only auto-approves if auto-respond is enabled)
-        triage_status_str = agent.determine_triage_status(
+        # Determine status (only auto-approves if auto-respond is enabled)
+        # Returns IdeaStatus enum directly
+        new_status = agent.determine_triage_status(
             triage_result,
             auto_respond_enabled=auto_respond_enabled,
             auto_respond_threshold=auto_respond_threshold
         )
-        triage_status = TriageStatus(triage_status_str)
 
         recommendation = triage_result.get('recommendation', {})
         action_str = recommendation.get('action', 'review')
-        try:
-            triage_action = TriageAction(action_str)
-        except ValueError:
-            triage_action = TriageAction.REVIEW
 
-        idea.triage_status = triage_status
+        idea.status = new_status
+        # Set is_active based on product's visibility config
+        idea.is_active = product.get_is_active_for_status(new_status) if product else new_status == IdeaStatus.ACCEPTED
         idea.triage_confidence = recommendation.get('confidence', 0.5)
         idea.triage_reasoning = recommendation.get('reasoning', '')
-        idea.triage_recommendation = triage_action
+        idea.triage_recommendation = action_str  # Store as string
         idea.triage_job_id = job.id
 
         if triage_result.get('category'):
@@ -1221,7 +1274,7 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
 
         # Handle duplicate detection - store duplicate info if agent recommends merge
         # This is stored regardless of auto-respond setting so PO can see the suggestion
-        if triage_action == TriageAction.MERGE and similarity_result.best_match:
+        if action_str == 'merge' and similarity_result.best_match:
             idea.duplicate_of_idea_id = similarity_result.best_match.idea_id
             idea.similarity_score = similarity_result.best_match.similarity_score
 
@@ -1235,11 +1288,6 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         # Store auto-response text (always store for PO to use, regardless of auto-respond setting)
         if triage_result.get('auto_response_text'):
             idea.auto_response_text = triage_result['auto_response_text']
-
-        # If auto-approved, publish for voting and mark as auto-responded
-        if triage_status == TriageStatus.AUTO_APPROVED:
-            idea.published_for_voting = True
-            idea.auto_responded = True
 
         db.commit()
 
@@ -1257,15 +1305,15 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             'title': idea.title,
             'source_type': idea.source_type.value,
             'category': idea.category,
-            'triage_status': triage_status.value,
+            'status': new_status.value,
+            'is_active': idea.is_active,
             'triage_confidence': idea.triage_confidence,
-            'triage_recommendation': triage_action.value,
+            'triage_recommendation': action_str,
             'has_duplicates': similarity_result.has_duplicates,
             'has_similar': similarity_result.has_similar,
             'duplicate_of_idea_id': idea.duplicate_of_idea_id,
             'competitors_with_feature': comp_context.get('competitors_with_feature', []),
             'auto_response_text': idea.auto_response_text,
-            'published_for_voting': idea.published_for_voting,
         }
 
         queue_service.mark_success(job_id, output_data)

@@ -90,16 +90,14 @@ class VectorService:
         """
         if VectorService.is_postgres(db):
             # PostgreSQL: Use pgvector <=> operator
-            # Exclude pending and duplicate ideas - only show active, evaluated ideas
+            # Only show active ideas (is_active=true means accepted for voting)
             results = db.execute(text("""
                 SELECT id, title, what_description,
                        embedding <=> :query_emb::vector as distance
                 FROM ideas
-                WHERE UPPER(status) = 'ACTIVE'
-                  AND product_id = :product_id
+                WHERE product_id = :product_id
                   AND embedding IS NOT NULL
                   AND is_active = true
-                  AND triage_status NOT IN ('pending', 'duplicate')
                 ORDER BY embedding <=> :query_emb::vector
                 LIMIT :limit
             """), {
@@ -110,17 +108,15 @@ class VectorService:
         else:
             # SQLite: Use vec_distance_cosine function
             # Serialize query embedding for sqlite-vec
-            # Exclude pending and duplicate ideas - only show active, evaluated ideas
+            # Only show active ideas (is_active=1 means accepted for voting)
             serialized_query = sqlite_vec.serialize_float32(query_embedding)
             results = db.execute(text("""
                 SELECT v.idea_id, i.title, i.what_description,
                        vec_distance_cosine(v.embedding, :query_emb) as distance
                 FROM vec_ideas v
                 JOIN ideas i ON v.idea_id = i.id
-                WHERE UPPER(i.status) = 'ACTIVE'
-                  AND i.product_id = :product_id
+                WHERE i.product_id = :product_id
                   AND i.is_active = 1
-                  AND i.triage_status NOT IN ('pending', 'duplicate')
                 ORDER BY distance ASC
                 LIMIT :limit
             """), {
@@ -412,6 +408,117 @@ class VectorService:
                 WHERE pc.product_id = :product_id
                   AND pc.status = 'active'
                   AND pcf.status = 'active'
+                  AND vec_distance_cosine(v.embedding, :query_emb) <= :max_distance
+                ORDER BY distance ASC
+                LIMIT :limit
+            """), {
+                "query_emb": serialized_query,
+                "product_id": product_id,
+                "max_distance": max_distance,
+                "limit": limit
+            })
+
+        return results.fetchall()
+
+    # ============================================================================
+    # Product Feature Embedding Methods (Own Product's Features)
+    # ============================================================================
+
+    @staticmethod
+    def store_product_feature_embedding(
+        db: Session,
+        feature_id: int,
+        embedding: List[float]
+    ) -> None:
+        """
+        Store embedding for a product's own feature (ProductFeature).
+
+        Args:
+            db: SQLAlchemy database session
+            feature_id: ID of the ProductFeature
+            embedding: Embedding vector (384 dimensions for all-MiniLM-L6-v2)
+        """
+        if VectorService.is_postgres(db):
+            # PostgreSQL: Update feature embedding column
+            db.execute(
+                text("UPDATE product_features SET embedding = :emb WHERE id = :id"),
+                {"id": feature_id, "emb": embedding}
+            )
+        else:
+            # SQLite: Insert into vec_product_features virtual table
+            serialized_emb = sqlite_vec.serialize_float32(embedding)
+
+            # Delete existing embedding if any (idempotent)
+            db.execute(
+                text("DELETE FROM vec_product_features WHERE feature_id = :id"),
+                {"id": feature_id}
+            )
+
+            # Insert new embedding
+            db.execute(
+                text("INSERT INTO vec_product_features(feature_id, embedding) VALUES (:id, :emb)"),
+                {"id": feature_id, "emb": serialized_emb}
+            )
+
+    @staticmethod
+    def find_similar_product_features(
+        db: Session,
+        query_embedding: List[float],
+        product_id: int,
+        limit: int = 5,
+        threshold: float = 0.85
+    ) -> List[Tuple[int, str, str, str, float]]:
+        """
+        Find product's own features that match a query using vector similarity.
+
+        Used to detect when an idea describes functionality that already exists
+        in the product.
+
+        Args:
+            db: SQLAlchemy database session
+            query_embedding: Query embedding vector
+            product_id: Product ID to search within
+            limit: Maximum number of results to return
+            threshold: Minimum similarity score (0-1, default 0.85 for feature detection)
+
+        Returns:
+            List of tuples: (feature_id, feature_name, feature_description,
+                           source_url, distance)
+            Distance is cosine distance (0=identical, 2=opposite)
+        """
+        # Convert threshold to distance (distance = 2 * (1 - similarity))
+        max_distance = 2 * (1 - threshold)
+
+        if VectorService.is_postgres(db):
+            # PostgreSQL: Use pgvector <=> operator
+            results = db.execute(text("""
+                SELECT pf.id, pf.feature_name, pf.feature_description,
+                       pf.source_url,
+                       pf.embedding <=> :query_emb::vector as distance
+                FROM product_features pf
+                WHERE pf.product_id = :product_id
+                  AND pf.status = 'active'
+                  AND pf.embedding IS NOT NULL
+                  AND (pf.embedding <=> :query_emb::vector) <= :max_distance
+                ORDER BY pf.embedding <=> :query_emb::vector
+                LIMIT :limit
+            """), {
+                "query_emb": query_embedding,
+                "product_id": product_id,
+                "max_distance": max_distance,
+                "limit": limit
+            })
+        else:
+            # SQLite: Use vec_distance_cosine function
+            serialized_query = sqlite_vec.serialize_float32(query_embedding)
+            results = db.execute(text("""
+                SELECT pf.id, pf.feature_name, pf.feature_description,
+                       pf.source_url,
+                       vec_distance_cosine(v.embedding, :query_emb) as distance
+                FROM vec_product_features v
+                JOIN product_features pf ON v.feature_id = pf.id
+                WHERE pf.product_id = :product_id
+                  AND pf.status = 'active'
                   AND vec_distance_cosine(v.embedding, :query_emb) <= :max_distance
                 ORDER BY distance ASC
                 LIMIT :limit

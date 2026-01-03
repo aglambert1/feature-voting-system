@@ -82,6 +82,11 @@ class CIProduct(Base):
     idea_triage_auto_enabled = Column(Boolean, default=False, nullable=False)
     idea_triage_auto_threshold = Column(DECIMAL(3, 2), default=0.90, nullable=False)  # Confidence threshold (0.00-1.00)
 
+    # Status visibility configuration - maps idea status to is_active
+    # Default: only ACCEPTED is visible. null = use defaults
+    # Example: {"pending": false, "accepted": true, "needs_review": false, ...}
+    status_visibility_config = Column(JSON, nullable=True)
+
     status = Column(String(50), default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -96,6 +101,32 @@ class CIProduct(Base):
 
     def __repr__(self):
         return f"<CIProduct(id={self.id}, name='{self.product_name}', created_by={self.created_by_user_id})>"
+
+    def get_is_active_for_status(self, status: "IdeaStatus") -> bool:
+        """
+        Return is_active value for a status based on product config.
+
+        Uses product-specific visibility config if set, otherwise falls back
+        to default visibility mapping.
+
+        Args:
+            status: The IdeaStatus enum value
+
+        Returns:
+            True if ideas with this status should be visible (is_active=True)
+        """
+        from app.models.idea import DEFAULT_STATUS_VISIBILITY
+
+        # Get status value as string
+        status_value = status.value if hasattr(status, 'value') else str(status)
+
+        # Check product-specific config first
+        if self.status_visibility_config:
+            if status_value in self.status_visibility_config:
+                return self.status_visibility_config[status_value]
+
+        # Fall back to default visibility
+        return DEFAULT_STATUS_VISIBILITY.get(status, False)
 
 
 class CompetitorAnalysisSession(Base):
@@ -418,6 +449,7 @@ class ProductFeature(Base):
     feature_category = Column(String(100))
     extraction_confidence = Column(DECIMAL(3, 2))
     source_reference = Column(Text)
+    source_url = Column(String(500), nullable=True)  # URL source when product analyzed from URL
 
     # Metadata
     status = Column(String(50), nullable=False, default="active", index=True)

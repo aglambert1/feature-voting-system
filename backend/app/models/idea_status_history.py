@@ -14,7 +14,7 @@ from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
 from app.database import Base
-from app.models.idea import TriageStatus
+from app.models.idea import IdeaStatus
 
 
 class IdeaStatusHistory(Base):
@@ -33,8 +33,8 @@ class IdeaStatusHistory(Base):
     idea_id = Column(Integer, ForeignKey("ideas.id", ondelete="CASCADE"), nullable=False, index=True)
 
     # Status change details
-    previous_status = Column(SQLAlchemyEnum(TriageStatus), nullable=True)  # null for initial creation
-    new_status = Column(SQLAlchemyEnum(TriageStatus), nullable=False)
+    previous_status = Column(SQLAlchemyEnum(IdeaStatus), nullable=True)  # null for initial creation
+    new_status = Column(SQLAlchemyEnum(IdeaStatus), nullable=False)
 
     # Who made the change
     changed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)

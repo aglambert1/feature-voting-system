@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 import time
 
 from app.database import get_db
-from app.models.idea import Idea, IdeaStatus, SourceType, TriageStatus
+from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.idea_status_history import IdeaStatusHistory
 from app.models.submission import Submission
 from app.models.user import User
@@ -180,9 +180,8 @@ async def submit_idea(
         product_id=submission_data.product_id,
         source_type=SourceType.CUSTOMER_SUBMISSION,
         submitter_id=current_user.id,
-        status=IdeaStatus.ACTIVE,
-        triage_status=TriageStatus.PENDING,
-        is_active=True,
+        status=IdeaStatus.PENDING,
+        is_active=False,  # Will be set to True when ACCEPTED
     )
 
     db.add(new_idea)
@@ -192,7 +191,7 @@ async def submit_idea(
     initial_status = IdeaStatusHistory(
         idea_id=new_idea.id,
         previous_status=None,  # First status
-        new_status=TriageStatus.PENDING,
+        new_status=IdeaStatus.PENDING,
         changed_by_user_id=current_user.id,
         is_automated=False,
         change_source='submission',

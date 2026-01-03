@@ -12,8 +12,10 @@ from app.models.competitor_intelligence import (
     CompetitorAnalysisSession,
     SessionCompetitor,
     CompetitorFeature,
-    ProductCompetitorFeature
+    ProductCompetitorFeature,
+    CompetitorGeneratedIdea
 )
+from app.models.idea import Idea, IdeaStatus
 from app.agents.feature_extractor import FeatureExtractorAgent, FeatureDetailExpanderAgent
 from app.services.llm_service import LLMService
 import asyncio
@@ -512,6 +514,9 @@ class FeatureExtractionService:
         """
         Get all features for a session, grouped by competitor.
         Features are deduplicated per competitor (combining similar features from multiple sources).
+
+        Also includes linked idea info for features that have been converted to ideas.
+        If a feature has a linked idea that is NOT pending, it cannot be re-triaged.
         """
         query = self.db.query(CompetitorFeature).join(
             SessionCompetitor
@@ -523,6 +528,45 @@ class FeatureExtractionService:
             query = query.filter(SessionCompetitor.selected_by_user == True)
 
         features = query.all()
+
+        # Get all feature IDs to look up linked ideas
+        feature_ids = [f.id for f in features]
+
+        # Find which features have been converted to ideas (with non-pending status)
+        # A feature is "locked" if it has a linked idea that has been triaged (not pending)
+        linked_ideas_query = self.db.query(
+            CompetitorGeneratedIdea.feature_id,
+            CompetitorGeneratedIdea.final_idea_id,
+            Idea.id.label('idea_id'),
+            Idea.title.label('idea_title'),
+            Idea.status,
+            Idea.is_active,
+        ).join(
+            Idea, CompetitorGeneratedIdea.final_idea_id == Idea.id
+        ).filter(
+            CompetitorGeneratedIdea.feature_id.in_(feature_ids),
+            CompetitorGeneratedIdea.submitted_to_ideas == True,
+            CompetitorGeneratedIdea.final_idea_id.isnot(None)
+        ).all()
+
+        # Build a map of feature_id -> linked idea info
+        linked_ideas_map = {}
+        for row in linked_ideas_query:
+            # Determine effective status for display
+            idea_status = row.status
+
+            # Idea is "locked" (can't be re-extracted) if it's been processed
+            # Processing means: not pending AND not needs_review
+            is_pending = idea_status == IdeaStatus.PENDING
+            is_needs_review = idea_status == IdeaStatus.NEEDS_REVIEW
+            is_locked = not is_pending and not is_needs_review
+
+            linked_ideas_map[row.feature_id] = {
+                'idea_id': row.idea_id,
+                'idea_title': row.idea_title,
+                'status': idea_status.value if idea_status else None,
+                'is_locked': is_locked
+            }
 
         # Group by competitor
         by_competitor = {}
@@ -545,6 +589,9 @@ class FeatureExtractionService:
                     'features': []
                 }
 
+            # Get linked idea info if exists
+            linked_idea = linked_ideas_map.get(feature.id)
+
             by_competitor[comp_id]['features'].append({
                 'id': str(feature.id),
                 'name': feature.feature_name,
@@ -555,7 +602,9 @@ class FeatureExtractionService:
                 'change_type': feature.change_type,
                 'change_description': feature.change_description,
                 'selected': feature.selected_by_user,
-                'has_details': feature.detail_requested and feature.expanded_description is not None
+                'has_details': feature.detail_requested and feature.expanded_description is not None,
+                # Linked idea info
+                'linked_idea': linked_idea
             })
 
             # Track change stats

@@ -161,6 +161,16 @@ def init_db():
             """))
             print("✓ sqlite-vec vec_competitor_features virtual table created")
 
+            # SQLite: Create vec_product_features virtual table for product's own feature embeddings
+            db.execute(text("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS vec_product_features
+                USING vec0(
+                    feature_id INTEGER PRIMARY KEY,
+                    embedding FLOAT[384]
+                )
+            """))
+            print("✓ sqlite-vec vec_product_features virtual table created")
+
         db.commit()
     except Exception as e:
         print(f"Vector extension setup: {e}")

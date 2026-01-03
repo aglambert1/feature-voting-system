@@ -205,6 +205,14 @@ class ProductService:
             detailed_features_data = analyzed_structure.get('detailed_features', [])
             if detailed_features_data:
                 print(f"[ProductService] Storing {len(detailed_features_data)} detailed features...")
+
+                # Determine source_url from product source
+                feature_source_url = self._get_source_url(source_type, source_data)
+
+                # Import similarity service for embedding generation
+                from app.services.similarity_detector import SimilarityDetectorService
+                similarity_service = SimilarityDetectorService(self.db)
+
                 for feature_data in detailed_features_data:
                     product_feature = ProductFeature(
                         product_id=product_id,
@@ -215,10 +223,23 @@ class ProductService:
                         feature_category=feature_data.get('category'),
                         extraction_confidence=feature_data.get('confidence'),
                         source_reference=feature_data.get('source_reference'),
+                        source_url=feature_source_url,  # Store source URL for feature exists detection
                         status='active'
                     )
                     self.db.add(product_feature)
-                print(f"[ProductService] Stored {len(detailed_features_data)} detailed features for version {new_version}")
+                    self.db.flush()  # Get ID for embedding storage
+
+                    # Store embedding for the feature (enables vector similarity search)
+                    feature_text = f"{feature_data.get('name')}\n{feature_data.get('description', '')}"
+                    try:
+                        similarity_service.store_product_feature_embedding(
+                            feature_id=product_feature.id,
+                            feature_text=feature_text
+                        )
+                    except Exception as e:
+                        print(f"[ProductService] Warning: Failed to store embedding for feature {product_feature.id}: {e}")
+
+                print(f"[ProductService] Stored {len(detailed_features_data)} detailed features with embeddings for version {new_version}")
 
             # Update product with latest analysis and description
             print(f"[ProductService] Updating product {product_id} description: {product_description[:100]}...")
@@ -627,3 +648,36 @@ class ProductService:
 
         # Generate SHA-256 hash
         return hashlib.sha256(content.encode('utf-8')).hexdigest()
+
+    def _get_source_url(
+        self,
+        source_type: str,
+        source_data: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
+        """
+        Extract source URL from product source information.
+
+        Used to populate source_url field in ProductFeature for
+        feature exists detection linking.
+
+        Args:
+            source_type: Product source type (text, document, url)
+            source_data: Product source data
+
+        Returns:
+            URL string if available, None otherwise
+        """
+        if not source_data:
+            return None
+
+        if source_type == 'url':
+            # Single URL source
+            if 'url' in source_data:
+                return source_data.get('url')
+            # Multi-source mode - return first URL
+            if 'sources' in source_data:
+                for src in source_data.get('sources', []):
+                    if src.get('type') == 'url' and src.get('url'):
+                        return src.get('url')
+        # For text and document sources, return None (no URL available)
+        return None

@@ -82,10 +82,9 @@ class IdeaListItem(BaseModel):
     product_id: int
     product_name: Optional[str] = None
 
-    # Triage status for display
-    triage_status: Optional[str] = None
+    # Status for display
+    status: Optional[IdeaStatus] = None
     is_active: Optional[bool] = None
-    auto_responded: Optional[bool] = None
     duplicate_of_idea_id: Optional[int] = None
     duplicate_of_title: Optional[str] = None
 

@@ -11,9 +11,12 @@ This agent processes new idea submissions to:
 Phase 3: Idea Normalization + Triage
 """
 
-from typing import Dict, Any, Type, List, Optional
+from typing import Dict, Any, Type, List, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from app.agents.base_agent import BaseAgent
+
+if TYPE_CHECKING:
+    from app.models.idea import IdeaStatus
 
 
 class SimilarIdeaInfo(BaseModel):
@@ -22,6 +25,14 @@ class SimilarIdeaInfo(BaseModel):
     title: str = Field(..., description="Title of the similar idea")
     similarity_score: float = Field(..., ge=0, le=1, description="Similarity score (0-1)")
     is_duplicate: bool = Field(..., description="Whether this is considered a duplicate")
+
+
+class ExistingFeatureInfo(BaseModel):
+    """Information about an existing product feature that matches the idea."""
+    feature_name: str = Field(..., description="Name of the existing feature")
+    feature_description: str = Field(..., description="Description of the feature")
+    similarity_score: float = Field(..., ge=0, le=1, description="Similarity score (0-1)")
+    source_url: Optional[str] = Field(None, description="URL to feature documentation if available")
 
 
 class CompetitiveContext(BaseModel):
@@ -94,6 +105,10 @@ class IdeaTriageOutput(BaseModel):
         ...,
         description="Competitive context for the idea"
     )
+    existing_feature_info: Optional[ExistingFeatureInfo] = Field(
+        None,
+        description="Information about existing product feature if idea matches one"
+    )
     auto_response_text: str = Field(
         ...,
         description="Auto-response message for customer acknowledgment"
@@ -152,11 +167,17 @@ Your role is to analyze new feature ideas and provide intelligent triage decisio
    - Set appropriate expectations about next steps
    - Maintain a professional but warm tone
 
-5. **Recommendation**
+5. **Existing Feature Detection**
+   - Check if the idea matches an existing product feature
+   - If a matching feature is detected, recommend REJECT with existing_feature_info
+   - Provide the feature name, description, and source URL if available
+
+6. **Recommendation**
    - APPROVE: High-quality, unique idea ready for voting (confidence > 0.9)
    - MERGE: Clear duplicate of existing idea (provide merge target)
-   - REVIEW: Needs PM review (ambiguous, sensitive, or moderate confidence)
+   - REJECT (Feature Exists): Idea matches an existing product feature (provide existing_feature_info)
    - REJECT: Low quality, off-topic, or clearly inappropriate (confidence < 0.5)
+   - REVIEW: Needs PM review (ambiguous, sensitive, or moderate confidence)
 
 **Decision Guidelines:**
 
@@ -237,6 +258,22 @@ Always respond with valid JSON matching the specified schema."""
         # Format existing categories
         categories_str = ", ".join(existing_categories) if existing_categories else "No predefined categories"
 
+        # Extract existing product feature match (new feature exists detection)
+        existing_feature_match = input_data.get('existing_feature_match', {})
+        if existing_feature_match and existing_feature_match.get('has_match'):
+            best_match = existing_feature_match.get('best_match', {})
+            feature_exists_str = f"""
+**⚠️ EXISTING PRODUCT FEATURE DETECTED (similarity >= 0.85):**
+  - Feature Name: {best_match.get('feature_name', 'Unknown')}
+  - Description: {best_match.get('feature_description', '')}
+  - Similarity Score: {best_match.get('similarity_score', 0):.2f}
+  - Source: {best_match.get('source_url') or 'N/A'}
+
+  **IMPORTANT**: This idea appears to describe functionality that ALREADY EXISTS in the product.
+  You should recommend REJECT action and include the existing_feature_info in your response."""
+        else:
+            feature_exists_str = ""
+
         prompt = f"""IDEA TRIAGE TASK
 
 **Product:** {product_name} ({product_category})
@@ -259,6 +296,7 @@ Source: {source_type}
 **Competitor Features:**
 {competitors_str}
 {urgency_str}
+{feature_exists_str}
 
 **Existing Categories in System:**
 {categories_str}
@@ -269,11 +307,13 @@ Source: {source_type}
 2. Assign a category (use existing if appropriate, or suggest new)
 3. Analyze the similar ideas - is this a duplicate, related, or unique?
 4. Assess competitive context - USE THE STRUCTURED URGENCY ASSESSMENT ABOVE
-5. Write a CONCISE auto-response for the customer (MUST be under 100 words)
-6. Make a recommendation (approve/merge/review/reject) with confidence and reasoning
+5. Check for EXISTING PRODUCT FEATURE - if detected above, include existing_feature_info
+6. Write a CONCISE auto-response for the customer (MUST be under 100 words)
+7. Make a recommendation (approve/merge/review/reject) with confidence and reasoning
 
 **Important Considerations:**
 
+- If EXISTING PRODUCT FEATURE DETECTED above → recommend REJECT and include existing_feature_info
 - If similar ideas exist with >0.95 similarity, likely a DUPLICATE → MERGE
 - USE the structured urgency level (LOW/MEDIUM/HIGH/CRITICAL) provided above
 - Include the urgency_reasoning from the structured assessment in your competitive_context
@@ -299,6 +339,7 @@ You MUST return a JSON object with EXACTLY this structure:
     "urgency_reasoning": "Explanation of why this urgency level",
     "market_timing_notes": "Optional notes on market timing"
   }},
+  "existing_feature_info": null,
   "auto_response_text": "Thanks for your idea about X! We've received it and our team will review it shortly. We'll keep you posted on next steps.",
   "recommendation": {{
     "action": "review",
@@ -309,11 +350,22 @@ You MUST return a JSON object with EXACTLY this structure:
 }}
 ```
 
+If an EXISTING PRODUCT FEATURE was detected, include existing_feature_info like this:
+```json
+"existing_feature_info": {{
+  "feature_name": "Name of existing feature",
+  "feature_description": "Description of the existing feature",
+  "similarity_score": 0.92,
+  "source_url": "https://example.com/feature-docs"
+}}
+```
+
 IMPORTANT:
 - "competitors_with_feature" must be a LIST of strings, even if empty: []
 - "recommendation" must be an OBJECT with action, confidence, reasoning fields
 - "competitive_urgency" must be one of: "low", "medium", "high", "critical"
 - "action" must be one of: "approve", "merge", "review", "reject"
+- "existing_feature_info" should be null if no match, or an OBJECT if feature exists
 - All confidence values are decimals between 0 and 1"""
 
         return prompt
@@ -432,44 +484,62 @@ IMPORTANT:
         result: Dict[str, Any],
         auto_respond_enabled: bool = False,
         auto_respond_threshold: float = 0.9
-    ) -> str:
+    ) -> "IdeaStatus":
         """
-        Determine the triage status based on agent output.
+        Determine the idea status based on agent output.
 
         Args:
             result: The agent's triage result
             auto_respond_enabled: Whether auto-respond is enabled for the product
             auto_respond_threshold: Confidence threshold for auto-approval
 
-        Returns one of: 'auto_approved', 'needs_review', 'duplicate', 'rejected'
+        Returns:
+            IdeaStatus enum value:
+            - NEEDS_REVIEW: Awaiting PO review
+            - ACCEPTED: Approved for voting
+            - DUPLICATE: Matches existing idea
+            - FEATURE_EXISTS: Already exists in product
+            - NOT_APPROPRIATE: Rejected/off-topic
 
         When auto_respond_enabled is False:
-            - Always returns 'needs_review' so PO can review the recommendation
+            - Always returns NEEDS_REVIEW so PO can review the recommendation
             - The agent's recommendation is stored but not acted upon
 
         When auto_respond_enabled is True:
             - Returns the appropriate status based on agent recommendation
-            - 'auto_approved' if action=approve and confidence >= threshold
-            - 'duplicate' if action=merge
-            - 'rejected' if action=reject and confidence >= 0.7
-            - 'needs_review' otherwise
+            - FEATURE_EXISTS if action=reject and existing_feature_info present and confidence >= threshold
+            - ACCEPTED if action=approve and confidence >= threshold
+            - DUPLICATE if action=merge
+            - NOT_APPROPRIATE if action=reject and confidence >= 0.7
+            - NEEDS_REVIEW otherwise
         """
+        from app.models.idea import IdeaStatus
+
         # When auto-respond is OFF, always return needs_review
         # The PO will see the agent's recommendation and decide
         if not auto_respond_enabled:
-            return 'needs_review'
+            return IdeaStatus.NEEDS_REVIEW
 
         # Auto-respond is ON - apply the agent's recommendation
         recommendation = result.get('recommendation', {})
         action = recommendation.get('action', 'review')
         confidence = recommendation.get('confidence', 0.5)
+        existing_feature = result.get('existing_feature_info')
+
+        # Check for feature exists (reject action with existing feature info)
+        # Uses product's auto_respond_threshold for confidence check
+        if action == 'reject' and existing_feature:
+            if confidence >= auto_respond_threshold:
+                return IdeaStatus.FEATURE_EXISTS  # Auto-mark as feature exists
+            else:
+                return IdeaStatus.NEEDS_REVIEW  # Potential match, needs PM review
 
         if action == 'merge':
-            return 'duplicate'
+            return IdeaStatus.DUPLICATE
         elif action == 'reject' and confidence >= self.REJECT_THRESHOLD:
             # Only auto-reject if we're confident
-            return 'rejected' if confidence >= 0.7 else 'needs_review'
+            return IdeaStatus.NOT_APPROPRIATE if confidence >= 0.7 else IdeaStatus.NEEDS_REVIEW
         elif action == 'approve' and confidence >= auto_respond_threshold:
-            return 'auto_approved'
+            return IdeaStatus.ACCEPTED
         else:
-            return 'needs_review'
+            return IdeaStatus.NEEDS_REVIEW

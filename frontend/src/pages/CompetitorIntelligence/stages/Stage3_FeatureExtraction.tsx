@@ -12,6 +12,13 @@ import api from '../../../services/api';
 import FeatureCard from '../components/FeatureCard';
 import ChangeSummaryCard from '../components/ChangeSummaryCard';
 
+interface LinkedIdea {
+  idea_id: number;
+  idea_title: string;
+  triage_status: string | null;
+  is_locked: boolean;
+}
+
 interface Feature {
   id: string;
   name: string;
@@ -22,6 +29,7 @@ interface Feature {
   change_type?: 'new' | 'modified' | 'unchanged' | 'removed';
   change_description?: string;
   selected: boolean;
+  linked_idea?: LinkedIdea | null;
 }
 
 interface FeaturesByCompetitor {
@@ -204,11 +212,11 @@ const Stage3_FeatureExtraction = ({
   };
 
   const handleConfirmSelection = async (): Promise<void> => {
-    // Collect all selected feature IDs
+    // Collect all selected feature IDs (excluding locked features - already added as ideas)
     const selectedIds: number[] = [];
     featuresByCompetitor.forEach((comp) => {
       comp.features.forEach((f) => {
-        if (f.selected) {
+        if (f.selected && !f.linked_idea?.is_locked) {
           selectedIds.push(parseInt(f.id));
         }
       });
@@ -443,8 +451,15 @@ const Stage3_FeatureExtraction = ({
     );
   }
 
+  // Count selected features (excluding locked ones - already added to ideas)
   const totalSelected = featuresByCompetitor.reduce(
-    (sum, comp) => sum + comp.features.filter((f) => f.selected).length,
+    (sum, comp) => sum + comp.features.filter((f) => f.selected && !f.linked_idea?.is_locked).length,
+    0
+  );
+
+  // Count locked features (already added as ideas)
+  const totalLocked = featuresByCompetitor.reduce(
+    (sum, comp) => sum + comp.features.filter((f) => f.linked_idea?.is_locked).length,
     0
   );
 
@@ -470,7 +485,12 @@ const Stage3_FeatureExtraction = ({
             Review and select features for idea generation
           </p>
         </div>
-        <div className="text-sm text-gray-600">{totalSelected} features selected</div>
+        <div className="text-sm text-right">
+          <div className="text-gray-600">{totalSelected} features selected</div>
+          {totalLocked > 0 && (
+            <div className="text-purple-600">{totalLocked} already added as ideas</div>
+          )}
+        </div>
       </div>
 
       {hasPreviousAnalysis && changeStats && (
@@ -504,7 +524,8 @@ const Stage3_FeatureExtraction = ({
       <div className="space-y-4 mb-6">
         {displayCompetitors.map((competitor) => {
           const isExpanded = expandedCompetitors.has(competitor.competitor_id);
-          const selectedCount = competitor.features.filter(f => f.selected).length;
+          // Count selected features excluding those already linked to ideas
+          const selectedCount = competitor.features.filter(f => f.selected && !f.linked_idea).length;
 
           return (
             <div key={competitor.competitor_id} className="bg-white rounded-lg shadow">

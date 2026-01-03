@@ -3,9 +3,18 @@
  *
  * Displays a single feature with selection capability and change tracking.
  * Supports showing change types (NEW/MODIFIED/UNCHANGED/REMOVED).
+ * Shows linked idea info when feature has already been converted to an idea.
  */
 
 import { MouseEvent } from 'react';
+import { Link } from 'react-router-dom';
+
+interface LinkedIdea {
+  idea_id: number;
+  idea_title: string;
+  triage_status: string | null;
+  is_locked: boolean;  // True if idea has been triaged (not pending)
+}
 
 interface Feature {
   id: string;
@@ -18,6 +27,7 @@ interface Feature {
   change_description?: string;
   selected: boolean;
   has_details?: boolean;
+  linked_idea?: LinkedIdea | null;
 }
 
 interface FeatureCardProps {
@@ -49,37 +59,98 @@ const FeatureCard = ({ feature, onToggle, showChangeType }: FeatureCardProps) =>
     );
   };
 
-  const isDisabled = feature.change_type === 'removed';
+  const getTriageStatusBadge = (status: string | null) => {
+    if (!status) return null;
+    const badges: Record<string, { bg: string; text: string; label: string }> = {
+      auto_approved: { bg: 'bg-green-100', text: 'text-green-700', label: 'Auto-Approved' },
+      approved: { bg: 'bg-green-100', text: 'text-green-700', label: 'Approved' },
+      needs_review: { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Needs Review' },
+      duplicate: { bg: 'bg-orange-100', text: 'text-orange-700', label: 'Duplicate' },
+      feature_exists: { bg: 'bg-orange-100', text: 'text-orange-700', label: 'Feature Exists' },
+      rejected: { bg: 'bg-red-100', text: 'text-red-700', label: 'Rejected' },
+      not_appropriate: { bg: 'bg-red-100', text: 'text-red-700', label: 'Not Appropriate' },
+    };
+    const badge = badges[status] || { bg: 'bg-gray-100', text: 'text-gray-600', label: status };
+    return (
+      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${badge.bg} ${badge.text}`}>
+        {badge.label}
+      </span>
+    );
+  };
+
+  // Feature is disabled if removed OR if it has a linked idea that's been triaged (is_locked)
+  const isRemoved = feature.change_type === 'removed';
+  const isLocked = feature.linked_idea?.is_locked === true;
+  const isDisabled = isRemoved || isLocked;
 
   return (
     <div
-      className={`border rounded-lg p-4 cursor-pointer transition-all ${
-        isDisabled
+      className={`border rounded-lg p-4 transition-all ${
+        isLocked
+          ? 'bg-purple-50 border-purple-200 cursor-default'
+          : isRemoved
           ? 'opacity-50 cursor-not-allowed bg-gray-50'
           : feature.selected
-          ? 'border-blue-500 bg-blue-50'
-          : 'border-gray-200 hover:border-blue-300'
+          ? 'border-blue-500 bg-blue-50 cursor-pointer'
+          : 'border-gray-200 hover:border-blue-300 cursor-pointer'
       }`}
       onClick={isDisabled ? undefined : onToggle}
     >
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-start flex-1">
-          <input
-            type="checkbox"
-            checked={feature.selected}
-            onChange={onToggle}
-            disabled={isDisabled}
-            onClick={(e: MouseEvent<HTMLInputElement>) => e.stopPropagation()}
-            className="mt-1 mr-3"
-          />
+          {!isLocked && (
+            <input
+              type="checkbox"
+              checked={feature.selected}
+              onChange={onToggle}
+              disabled={isDisabled}
+              onClick={(e: MouseEvent<HTMLInputElement>) => e.stopPropagation()}
+              className="mt-1 mr-3"
+            />
+          )}
           <div className="flex-1">
             <h4 className="font-semibold text-gray-900 mb-1">
               {feature.name}
             </h4>
-            {getChangeTypeBadge()}
+            <div className="flex flex-wrap gap-1 items-center">
+              {getChangeTypeBadge()}
+              {isLocked && (
+                <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700">
+                  Already Added
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Show linked idea info if this feature was already converted */}
+      {feature.linked_idea && (
+        <div className="mb-3 p-2 bg-purple-50 border border-purple-200 rounded">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-purple-600 font-medium mb-0.5">
+                {isLocked ? 'Idea already created:' : 'Pending idea:'}
+              </p>
+              <Link
+                to={`/ideas/${feature.linked_idea.idea_id}`}
+                className="text-sm text-purple-700 hover:text-purple-900 hover:underline font-medium truncate block"
+                onClick={(e: MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+              >
+                {feature.linked_idea.idea_title || `Idea #${feature.linked_idea.idea_id}`}
+              </Link>
+            </div>
+            <div className="flex-shrink-0">
+              {getTriageStatusBadge(feature.linked_idea.triage_status)}
+            </div>
+          </div>
+          {!isLocked && (
+            <p className="text-xs text-purple-500 mt-1">
+              Pending triage - can be re-extracted if needed
+            </p>
+          )}
+        </div>
+      )}
 
       <p className="text-sm text-gray-700 mb-2">{feature.description}</p>
 

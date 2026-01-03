@@ -11,7 +11,7 @@ from app.models.competitor_intelligence import (
     ProductFeature,
     CIProduct
 )
-from app.models.idea import Idea, SourceType, IdeaStatus, TriageStatus
+from app.models.idea import Idea, SourceType, IdeaStatus
 from app.models.queue import JobType
 from app.agents.idea_structuring_agent import IdeaStructuringAgent
 from app.services.llm_service import LLMService
@@ -183,8 +183,8 @@ class IdeaGenerationService:
                         linked_idea.what_description = idea_data['what']
                         linked_idea.why_description = idea_data['why']
                         linked_idea.use_case_description = idea_data['use_case']
-                        linked_idea.triage_status = TriageStatus.PENDING
-                        linked_idea.published_for_voting = False
+                        linked_idea.status = IdeaStatus.PENDING
+                        linked_idea.is_active = False
                         idea_record = linked_idea
                     else:
                         # Linked idea was deleted, create new one
@@ -224,9 +224,8 @@ class IdeaGenerationService:
                     product_id=session.product_id,
                     source_type=SourceType.COMPETITOR_AUTOMATED,
                     submitter_id=None,  # Competitor ideas have no submitter
-                    status=IdeaStatus.ACTIVE,
-                    triage_status=TriageStatus.PENDING,
-                    published_for_voting=False,
+                    status=IdeaStatus.PENDING,
+                    is_active=False,
                     source_metadata={
                         'competitor_generated_idea_id': generated_idea.id,
                         'feature_id': idea_data['feature_id'],
@@ -268,8 +267,8 @@ class IdeaGenerationService:
                 'adaptation_notes': idea_data.get('adaptation_notes', ''),
                 # NEW: Include linked Idea data
                 'idea_id': idea_record.id,
-                'triage_status': idea_record.triage_status.value if idea_record.triage_status else 'pending',
-                'published_for_voting': idea_record.published_for_voting,
+                'status': idea_record.status.value if idea_record.status else 'pending',
+                'is_active': idea_record.is_active,
             })
 
         self.db.commit()
@@ -329,28 +328,28 @@ class IdeaGenerationService:
                 'user_approved': idea.user_approved,
                 'submitted': idea.submitted_to_ideas,
                 'created_at': idea.created_at.isoformat() if idea.created_at else None,
-                # NEW: Include linked Idea data for triage status
+                # Include linked Idea data for status
                 'idea_id': idea.final_idea_id,
-                'triage_status': linked_idea.triage_status.value if linked_idea and linked_idea.triage_status else None,
+                'status': linked_idea.status.value if linked_idea and linked_idea.status else None,
                 'triage_confidence': linked_idea.triage_confidence if linked_idea else None,
-                'triage_recommendation': linked_idea.triage_recommendation.value if linked_idea and linked_idea.triage_recommendation else None,
-                'published_for_voting': linked_idea.published_for_voting if linked_idea else False,
+                'triage_recommendation': linked_idea.triage_recommendation if linked_idea else None,
+                'is_active': linked_idea.is_active if linked_idea else False,
             })
 
-        # Count by triage status
-        auto_approved_count = sum(1 for i in result if i.get('triage_status') == 'auto_approved')
-        needs_review_count = sum(1 for i in result if i.get('triage_status') == 'needs_review')
-        pending_count = sum(1 for i in result if i.get('triage_status') == 'pending')
-        approved_count = sum(1 for i in result if i.get('triage_status') == 'approved')
+        # Count by status
+        accepted_count = sum(1 for i in result if i.get('status') == 'accepted')
+        needs_review_count = sum(1 for i in result if i.get('status') == 'needs_review')
+        pending_count = sum(1 for i in result if i.get('status') == 'pending')
+        duplicate_count = sum(1 for i in result if i.get('status') == 'duplicate')
 
         return {
             'session_id': session_id,
             'ideas': result,
             'total_count': len(result),
-            'auto_approved_count': auto_approved_count,
+            'accepted_count': accepted_count,
             'needs_review_count': needs_review_count,
             'pending_count': pending_count,
-            'approved_count': approved_count,
+            'duplicate_count': duplicate_count,
             'submitted_count': sum(1 for i in result if i['submitted'])
         }
 
@@ -463,14 +462,15 @@ class IdeaGenerationService:
             CompetitorGeneratedIdea.session_id == session_id
         ).all()
 
-        # Count statuses from linked Ideas
+        # Count statuses from linked Ideas (using new IdeaStatus values)
         status_counts = {
-            'auto_approved': 0,
-            'approved': 0,
+            'accepted': 0,
             'needs_review': 0,
             'pending': 0,
-            'rejected': 0,
             'duplicate': 0,
+            'merged': 0,
+            'feature_exists': 0,
+            'not_appropriate': 0,
         }
 
         for gen_idea in generated_ideas:
@@ -478,8 +478,8 @@ class IdeaGenerationService:
                 linked_idea = self.db.query(Idea).filter(
                     Idea.id == gen_idea.final_idea_id
                 ).first()
-                if linked_idea and linked_idea.triage_status:
-                    status = linked_idea.triage_status.value
+                if linked_idea and linked_idea.status:
+                    status = linked_idea.status.value
                     if status in status_counts:
                         status_counts[status] += 1
                     else:

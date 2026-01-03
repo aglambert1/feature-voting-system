@@ -21,21 +21,21 @@ interface GeneratedIdea {
   competitor_name: string;
   feature_name: string;
   user_edited: boolean;
-  // Linked Idea triage fields
+  // Linked Idea status fields (consolidated from old triage_status)
   idea_id: number | null;
-  triage_status: string | null;
+  status: string | null;
   triage_confidence: number | null;
   triage_recommendation: string | null;
-  published_for_voting: boolean;
+  is_active: boolean;
 }
 
 interface GeneratedIdeasResponse {
   ideas: GeneratedIdea[];
   total_count: number;
-  auto_approved_count: number;
+  accepted_count: number;
   needs_review_count: number;
   pending_count: number;
-  approved_count: number;
+  duplicate_count: number;
 }
 
 interface Stage4Props {
@@ -80,9 +80,9 @@ const Stage4_IdeaGeneration = ({
     loadGeneratedIdeas().finally(() => setLoading(false));
   }, [loadGeneratedIdeas]);
 
-  // Poll for triage status updates while any ideas are pending
+  // Poll for status updates while any ideas are pending
   useEffect(() => {
-    const hasPending = ideas.some(i => i.triage_status === 'pending');
+    const hasPending = ideas.some(i => i.status === 'pending');
     if (hasPending && !generating) {
       const interval = setInterval(loadGeneratedIdeas, 3000);
       return () => clearInterval(interval);
@@ -125,8 +125,8 @@ const Stage4_IdeaGeneration = ({
     await loadGeneratedIdeas();
   };
 
-  const getTriageStatusBadge = (idea: GeneratedIdea) => {
-    const status = idea.triage_status;
+  const getStatusBadge = (idea: GeneratedIdea) => {
+    const status = idea.status;
 
     if (!status || status === 'pending') {
       return (
@@ -138,16 +138,10 @@ const Stage4_IdeaGeneration = ({
     }
 
     switch (status) {
-      case 'auto_approved':
+      case 'accepted':
         return (
           <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-700">
-            ✓ Auto-Approved
-          </span>
-        );
-      case 'approved':
-        return (
-          <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-700">
-            ✓ Approved
+            ✓ Accepted
           </span>
         );
       case 'needs_review':
@@ -162,6 +156,12 @@ const Stage4_IdeaGeneration = ({
             Duplicate
           </span>
         );
+      case 'merged':
+        return (
+          <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-700">
+            Merged
+          </span>
+        );
       case 'feature_exists':
         return (
           <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-orange-100 text-orange-700">
@@ -169,10 +169,9 @@ const Stage4_IdeaGeneration = ({
           </span>
         );
       case 'not_appropriate':
-      case 'rejected':
         return (
           <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-700">
-            Rejected
+            Not Appropriate
           </span>
         );
       default:
@@ -185,7 +184,7 @@ const Stage4_IdeaGeneration = ({
   };
 
   const getActionButton = (idea: GeneratedIdea) => {
-    const status = idea.triage_status;
+    const status = idea.status;
 
     if (!status || status === 'pending') {
       return (
@@ -198,7 +197,7 @@ const Stage4_IdeaGeneration = ({
       );
     }
 
-    if (status === 'auto_approved' || status === 'approved') {
+    if (status === 'accepted') {
       return (
         <button
           onClick={() => idea.idea_id && navigate(`/ideas/${idea.idea_id}`)}
@@ -220,7 +219,7 @@ const Stage4_IdeaGeneration = ({
       );
     }
 
-    // For duplicate, feature_exists, rejected - allow re-review
+    // For duplicate, merged, feature_exists, not_appropriate - allow re-review
     return (
       <button
         onClick={() => openReviewModal(idea)}
@@ -232,10 +231,9 @@ const Stage4_IdeaGeneration = ({
   };
 
   // Count by status
-  const pendingCount = ideas.filter(i => !i.triage_status || i.triage_status === 'pending').length;
-  const autoApprovedCount = ideas.filter(i => i.triage_status === 'auto_approved').length;
-  const approvedCount = ideas.filter(i => i.triage_status === 'approved').length;
-  const needsReviewCount = ideas.filter(i => i.triage_status === 'needs_review').length;
+  const pendingCount = ideas.filter(i => !i.status || i.status === 'pending').length;
+  const acceptedCount = ideas.filter(i => i.status === 'accepted').length;
+  const needsReviewCount = ideas.filter(i => i.status === 'needs_review').length;
   const processedCount = ideas.length - pendingCount;
 
   if (loading) {
@@ -303,11 +301,8 @@ const Stage4_IdeaGeneration = ({
                       <span className="animate-pulse">●</span> {pendingCount} analyzing
                     </span>
                   )}
-                  {autoApprovedCount > 0 && (
-                    <span>✓ {autoApprovedCount} auto-approved</span>
-                  )}
-                  {approvedCount > 0 && (
-                    <span>✓ {approvedCount} approved</span>
+                  {acceptedCount > 0 && (
+                    <span>✓ {acceptedCount} accepted</span>
                   )}
                   {needsReviewCount > 0 && (
                     <span className="text-yellow-700">⚠ {needsReviewCount} need review</span>
@@ -347,9 +342,9 @@ const Stage4_IdeaGeneration = ({
               <div
                 key={idea.id}
                 className={`bg-white rounded-lg shadow border-2 ${
-                  idea.triage_status === 'auto_approved' || idea.triage_status === 'approved'
+                  idea.status === 'accepted'
                     ? 'border-green-300'
-                    : idea.triage_status === 'needs_review'
+                    : idea.status === 'needs_review'
                     ? 'border-yellow-300'
                     : 'border-gray-200'
                 }`}
@@ -367,7 +362,7 @@ const Stage4_IdeaGeneration = ({
                             Edited
                           </span>
                         )}
-                        {getTriageStatusBadge(idea)}
+                        {getStatusBadge(idea)}
                       </div>
                       <p className="text-sm text-gray-600">
                         Source: {idea.feature_name}

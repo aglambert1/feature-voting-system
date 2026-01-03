@@ -27,7 +27,7 @@ from app.models.pm_review import (
     ReviewQueuePriority,
     AlertType
 )
-from app.models.idea import Idea, TriageStatus
+from app.models.idea import Idea, IdeaStatus
 from app.models.competitor_intelligence import CIProduct, ProductCompetitor
 
 
@@ -91,7 +91,7 @@ class PMReviewService:
         item_metadata = {
             "source_type": idea.source_type.value,
             "confidence": idea.triage_confidence,
-            "recommendation": idea.triage_recommendation.value if idea.triage_recommendation else None,
+            "recommendation": idea.triage_recommendation if idea.triage_recommendation else None,
             "competitive_urgency": idea.competitive_context.get("competitive_urgency") if idea.competitive_context else None,
         }
 
@@ -400,7 +400,7 @@ class PMReviewService:
         """
         Approve a queue item.
 
-        For ideas: Updates the idea's triage_status and optionally publishes.
+        For ideas: Updates the idea's status to ACCEPTED.
         For alerts: Marks as acknowledged/reviewed.
 
         Args:
@@ -427,12 +427,26 @@ class PMReviewService:
         if item.queue_type == ReviewQueueType.IDEA:
             idea = self.db.query(Idea).get(item.item_id)
             if idea:
-                idea.triage_status = TriageStatus.APPROVED
-                idea.reviewed_by_user_id = reviewer_user_id
-                idea.reviewed_at = datetime.utcnow()
+                from app.models.idea_status_history import IdeaStatusHistory
+
+                old_status = idea.status
+                idea.status = IdeaStatus.ACCEPTED
+                # Get product to determine is_active
+                product = self.db.query(CIProduct).get(idea.product_id)
+                idea.is_active = product.get_is_active_for_status(IdeaStatus.ACCEPTED) if product else True
                 idea.review_notes = notes
-                if publish_idea:
-                    idea.published_for_voting = True
+
+                # Record status change in history
+                status_history = IdeaStatusHistory(
+                    idea_id=idea.id,
+                    previous_status=old_status,
+                    new_status=IdeaStatus.ACCEPTED,
+                    changed_by_user_id=reviewer_user_id,
+                    is_automated=False,
+                    change_source='po_response',
+                    comment=notes,
+                )
+                self.db.add(status_history)
 
         self.db.commit()
         self.db.refresh(item)
@@ -449,7 +463,7 @@ class PMReviewService:
         """
         Reject a queue item.
 
-        For ideas: Updates the idea's triage_status to rejected.
+        For ideas: Updates the idea's status to NOT_APPROPRIATE.
         For alerts: Marks as dismissed.
 
         Args:
@@ -476,11 +490,26 @@ class PMReviewService:
         if item.queue_type == ReviewQueueType.IDEA:
             idea = self.db.query(Idea).get(item.item_id)
             if idea:
-                idea.triage_status = TriageStatus.REJECTED
-                idea.reviewed_by_user_id = reviewer_user_id
-                idea.reviewed_at = datetime.utcnow()
+                from app.models.idea_status_history import IdeaStatusHistory
+
+                old_status = idea.status
+                idea.status = IdeaStatus.NOT_APPROPRIATE
+                # Get product to determine is_active
+                product = self.db.query(CIProduct).get(idea.product_id)
+                idea.is_active = product.get_is_active_for_status(IdeaStatus.NOT_APPROPRIATE) if product else False
                 idea.review_notes = notes or reason
-                idea.published_for_voting = False
+
+                # Record status change in history
+                status_history = IdeaStatusHistory(
+                    idea_id=idea.id,
+                    previous_status=old_status,
+                    new_status=IdeaStatus.NOT_APPROPRIATE,
+                    changed_by_user_id=reviewer_user_id,
+                    is_automated=False,
+                    change_source='po_response',
+                    comment=notes or reason,
+                )
+                self.db.add(status_history)
 
         elif item.queue_type == ReviewQueueType.COMPETITIVE_ALERT:
             # Just mark as dismissed

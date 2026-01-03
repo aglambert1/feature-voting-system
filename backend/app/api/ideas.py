@@ -21,7 +21,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.database import get_db
-from app.models.idea import Idea, IdeaStatus, SourceType, TriageStatus, TriageAction
+from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.idea_comment import IdeaComment
 from app.models.idea_status_history import IdeaStatusHistory
 from app.models.vote import Vote
@@ -110,16 +110,18 @@ def create_idea(
     Returns:
         The created idea with ID and vote counts
     """
-    # Create new idea
+    # Create new idea - start as PENDING for triage
     new_idea = Idea(
         title=idea_data.title,
         what_description=idea_data.what_description,
         why_description=idea_data.why_description,
         use_case_description=idea_data.use_case_description,
         category=idea_data.category,
-        source_type=SourceType.MANUAL,
+        source_type=SourceType.CUSTOMER_SUBMISSION,
+        product_id=idea_data.product_id,
         submitter_id=current_user.id,
-        status=IdeaStatus.ACTIVE
+        status=IdeaStatus.PENDING,
+        is_active=False,  # Will be set to True when ACCEPTED
     )
 
     db.add(new_idea)
@@ -157,9 +159,13 @@ def list_ideas(
     db: Session = Depends(get_db)
 ):
     """
-    List all active ideas with vote counts, optionally filtered by product.
+    List ideas with vote counts, optionally filtered by product.
 
-    This endpoint is accessible to all authenticated users.
+    Visibility rules:
+    - ADMIN: See all ideas (active and inactive) for all products
+    - PRODUCT_OWNER: See all ideas (active and inactive) for products they own
+    - VOTER: See all their own submitted ideas (any status) + only active ideas from others
+
     Ideas are sorted by score (highest first).
 
     Args:
@@ -175,8 +181,44 @@ def list_ideas(
     Raises:
         404 Not Found: If product doesn't exist
     """
-    # Build base query for active ideas
-    query = db.query(Idea).filter(Idea.status == IdeaStatus.ACTIVE)
+    from sqlalchemy import or_
+
+    # Determine user's visibility level
+    is_admin = current_user and current_user.role == UserRole.ADMIN
+    is_po = current_user and current_user.role == UserRole.PRODUCT_OWNER
+
+    # Get products owned by the current user (for PO visibility)
+    owned_product_ids = []
+    if is_po and current_user:
+        owned_products = db.query(CIProduct.id).filter(
+            CIProduct.created_by_user_id == current_user.id
+        ).all()
+        owned_product_ids = [p.id for p in owned_products]
+
+    # Build base query with visibility rules
+    if is_admin:
+        # Admins see all ideas
+        query = db.query(Idea)
+    elif is_po and current_user:
+        # POs see all ideas for their products, plus their own submissions and active ideas elsewhere
+        query = db.query(Idea).filter(
+            or_(
+                Idea.product_id.in_(owned_product_ids),  # All ideas for owned products
+                Idea.submitter_id == current_user.id,     # Their own submissions anywhere
+                Idea.is_active == True                    # Active ideas from other products
+            )
+        )
+    elif current_user:
+        # Voters see their own ideas (any status) + active ideas from others
+        query = db.query(Idea).filter(
+            or_(
+                Idea.submitter_id == current_user.id,  # Their own submissions
+                Idea.is_active == True                 # Active ideas from others
+            )
+        )
+    else:
+        # Unauthenticated users only see active ideas
+        query = db.query(Idea).filter(Idea.is_active == True)
 
     # Filter by product if specified
     if product_id is not None:
@@ -187,9 +229,6 @@ def list_ideas(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Product with id {product_id} not found"
             )
-
-        # Note: All authenticated users can view ideas for any product
-        # Product permissions are only enforced for product management operations, not idea viewing
 
         query = query.filter(Idea.product_id == product_id)
 
@@ -230,9 +269,8 @@ def list_ideas(
             created_at=idea.created_at,
             product_id=idea.product_id,
             product_name=product_name,
-            triage_status=idea.triage_status.value if idea.triage_status else None,
+            status=idea.status,
             is_active=idea.is_active,
-            auto_responded=idea.auto_responded,
             duplicate_of_idea_id=idea.duplicate_of_idea_id,
             duplicate_of_title=duplicate_title,
             vote_counts=vote_counts,
@@ -298,15 +336,13 @@ class TriageIdeaResponse(BaseModel):
     source_type: str
     category: Optional[str]
     status: str
-    triage_status: str
+    is_active: bool
     triage_confidence: Optional[float]
     triage_recommendation: Optional[str]
     duplicate_of_idea_id: Optional[int]
     similarity_score: Optional[float]
     auto_response_text: Optional[str]
-    published_for_voting: bool
     created_at: datetime
-    reviewed_at: Optional[datetime]
 
 
 class TriageQueueResponse(BaseModel):
@@ -352,7 +388,7 @@ def check_product_permission(
 @router.get("/pending-review", response_model=TriageQueueResponse)
 def get_pending_review_list(
     product_id: int = Query(..., description="Product ID to filter by"),
-    triage_status_filter: Optional[str] = Query(None, alias="triage_status"),
+    status_filter: Optional[str] = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_active_user),
@@ -370,30 +406,30 @@ def get_pending_review_list(
     # Build query
     query = db.query(Idea).filter(Idea.product_id == product_id)
 
-    if triage_status_filter:
+    if status_filter:
         try:
-            status_enum = TriageStatus(triage_status_filter)
-            query = query.filter(Idea.triage_status == status_enum)
+            status_enum = IdeaStatus(status_filter)
+            query = query.filter(Idea.status == status_enum)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid triage_status: {triage_status_filter}"
+                detail=f"Invalid status: {status_filter}"
             )
     else:
-        query = query.filter(Idea.triage_status.in_([
-            TriageStatus.PENDING,
-            TriageStatus.NEEDS_REVIEW,
+        query = query.filter(Idea.status.in_([
+            IdeaStatus.PENDING,
+            IdeaStatus.NEEDS_REVIEW,
         ]))
 
     # Get counts
     total = query.count()
     pending_count = db.query(Idea).filter(
         Idea.product_id == product_id,
-        Idea.triage_status == TriageStatus.PENDING
+        Idea.status == IdeaStatus.PENDING
     ).count()
     needs_review_count = db.query(Idea).filter(
         Idea.product_id == product_id,
-        Idea.triage_status == TriageStatus.NEEDS_REVIEW
+        Idea.status == IdeaStatus.NEEDS_REVIEW
     ).count()
 
     # Get ideas with pagination
@@ -410,15 +446,13 @@ def get_pending_review_list(
                 source_type=idea.source_type.value,
                 category=idea.category,
                 status=idea.status.value,
-                triage_status=idea.triage_status.value,
+                is_active=idea.is_active,
                 triage_confidence=idea.triage_confidence,
-                triage_recommendation=idea.triage_recommendation.value if idea.triage_recommendation else None,
+                triage_recommendation=idea.triage_recommendation,
                 duplicate_of_idea_id=idea.duplicate_of_idea_id,
                 similarity_score=idea.similarity_score,
                 auto_response_text=idea.auto_response_text,
-                published_for_voting=idea.published_for_voting,
                 created_at=idea.created_at,
-                reviewed_at=idea.reviewed_at,
             )
             for idea in ideas
         ],
@@ -663,7 +697,7 @@ class IdeaDetailResponse(BaseModel):
     source_type: str
     category: Optional[str]
     status: str
-    triage_status: str
+    is_active: bool
     triage_confidence: Optional[float]
     triage_recommendation: Optional[str]
     triage_reasoning: Optional[str]
@@ -671,16 +705,10 @@ class IdeaDetailResponse(BaseModel):
     duplicate_of_title: Optional[str] = None
     similarity_score: Optional[float]
     auto_response_text: Optional[str]
-    is_active: bool
-    auto_responded: bool
-    published_for_voting: bool
     product_id: int
     product_name: Optional[str] = None
     submitter_id: Optional[int]
     submitter_username: Optional[str] = None
-    reviewed_by_user_id: Optional[int]
-    reviewer_username: Optional[str] = None
-    reviewed_at: Optional[datetime]
     review_notes: Optional[str]
     created_at: datetime
     updated_at: datetime
@@ -900,10 +928,11 @@ def get_idea_triage_details(
     return {
         'idea_id': idea.id,
         'title': idea.title,
-        'triage_status': idea.triage_status.value,
+        'status': idea.status.value,
+        'is_active': idea.is_active,
         'triage_confidence': idea.triage_confidence,
         'triage_reasoning': idea.triage_reasoning,
-        'triage_recommendation': idea.triage_recommendation.value if idea.triage_recommendation else None,
+        'triage_recommendation': idea.triage_recommendation,
         'category': idea.category,
         'auto_categorized': idea.auto_categorized,
         'duplicate_of_idea_id': idea.duplicate_of_idea_id,
@@ -950,6 +979,10 @@ def review_idea(
             detail=f"Invalid action. Must be one of: {valid_actions}"
         )
 
+    # Get product for visibility config
+    product = db.query(CIProduct).filter(CIProduct.id == idea.product_id).first()
+    old_status = idea.status
+
     # Handle merge action
     if request.action == 'merge':
         if not request.merge_target_id:
@@ -969,23 +1002,33 @@ def review_idea(
                 detail=f"Merge target idea {request.merge_target_id} not found in same product"
             )
 
-        idea.triage_status = TriageStatus.DUPLICATE
+        idea.status = IdeaStatus.DUPLICATE
         idea.duplicate_of_idea_id = request.merge_target_id
-        idea.status = IdeaStatus.MERGED
+        idea.is_active = product.get_is_active_for_status(IdeaStatus.DUPLICATE) if product else False
 
     elif request.action == 'approve':
-        idea.triage_status = TriageStatus.APPROVED
-        if request.publish_for_voting:
-            idea.published_for_voting = True
+        idea.status = IdeaStatus.ACCEPTED
+        idea.is_active = product.get_is_active_for_status(IdeaStatus.ACCEPTED) if product else True
 
     elif request.action == 'reject':
-        idea.triage_status = TriageStatus.REJECTED
+        idea.status = IdeaStatus.NOT_APPROPRIATE
+        idea.is_active = product.get_is_active_for_status(IdeaStatus.NOT_APPROPRIATE) if product else False
 
-    # Update review metadata
-    idea.reviewed_by_user_id = current_user.id
-    idea.reviewed_at = datetime.utcnow()
+    # Update review notes
     if request.notes:
         idea.review_notes = request.notes
+
+    # Record status change in history
+    status_history = IdeaStatusHistory(
+        idea_id=idea.id,
+        previous_status=old_status,
+        new_status=idea.status,
+        changed_by_user_id=current_user.id,
+        is_automated=False,
+        change_source='po_response',
+        comment=request.notes,
+    )
+    db.add(status_history)
 
     db.commit()
 
@@ -993,10 +1036,9 @@ def review_idea(
         'id': idea.id,
         'title': idea.title,
         'action': request.action,
-        'triage_status': idea.triage_status.value,
-        'published_for_voting': idea.published_for_voting,
+        'status': idea.status.value,
+        'is_active': idea.is_active,
         'reviewed_by': current_user.username,
-        'reviewed_at': idea.reviewed_at.isoformat(),
     }
 
 
@@ -1007,9 +1049,9 @@ def publish_idea(
     db: Session = Depends(get_db)
 ):
     """
-    Publish an approved idea for voting.
+    Publish an idea for voting by setting status to ACCEPTED.
 
-    Idea must be in APPROVED or AUTO_APPROVED status.
+    Idea must be in PENDING or NEEDS_REVIEW status.
     Requires EDIT permission on the product.
     """
     idea = db.query(Idea).filter(Idea.id == idea_id).first()
@@ -1022,20 +1064,40 @@ def publish_idea(
     # Check permission
     check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.EDIT)
 
-    # Check status
-    if idea.triage_status not in (TriageStatus.APPROVED, TriageStatus.AUTO_APPROVED):
+    # Check status - can publish from PENDING or NEEDS_REVIEW
+    if idea.status not in (IdeaStatus.PENDING, IdeaStatus.NEEDS_REVIEW):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Idea must be approved before publishing. Current status: {idea.triage_status.value}"
+            detail=f"Idea cannot be published. Current status: {idea.status.value}"
         )
 
-    idea.published_for_voting = True
+    # Get product for visibility config
+    product = db.query(CIProduct).filter(CIProduct.id == idea.product_id).first()
+    old_status = idea.status
+
+    # Set to ACCEPTED
+    idea.status = IdeaStatus.ACCEPTED
+    idea.is_active = product.get_is_active_for_status(IdeaStatus.ACCEPTED) if product else True
+
+    # Record status change in history
+    status_history = IdeaStatusHistory(
+        idea_id=idea.id,
+        previous_status=old_status,
+        new_status=IdeaStatus.ACCEPTED,
+        changed_by_user_id=current_user.id,
+        is_automated=False,
+        change_source='po_response',
+        comment="Published for voting",
+    )
+    db.add(status_history)
+
     db.commit()
 
     return {
         'id': idea.id,
         'title': idea.title,
-        'published_for_voting': True,
+        'status': idea.status.value,
+        'is_active': idea.is_active,
         'message': "Idea is now available for voting"
     }
 
@@ -1094,18 +1156,18 @@ def get_idea_detail(
         product_name = product.product_name
 
     # Get submitter username
+    # For competitor-sourced ideas (no submitter), show source info
     submitter_username = None
     if idea.submitter_id:
         submitter = db.query(User).filter(User.id == idea.submitter_id).first()
         if submitter:
             submitter_username = submitter.username
-
-    # Get reviewer username
-    reviewer_username = None
-    if idea.reviewed_by_user_id:
-        reviewer = db.query(User).filter(User.id == idea.reviewed_by_user_id).first()
-        if reviewer:
-            reviewer_username = reviewer.username
+    elif idea.source_type == SourceType.COMPETITOR_AUTOMATED:
+        # For competitor ideas, show source from metadata
+        if idea.source_metadata and idea.source_metadata.get('competitor_name'):
+            submitter_username = f"From {idea.source_metadata['competitor_name']} analysis"
+        else:
+            submitter_username = "Competitor analysis"
 
     # Get duplicate title
     duplicate_of_title = None
@@ -1163,24 +1225,18 @@ def get_idea_detail(
         source_type=idea.source_type.value,
         category=idea.category,
         status=idea.status.value,
-        triage_status=idea.triage_status.value,
+        is_active=idea.is_active,
         triage_confidence=idea.triage_confidence,
-        triage_recommendation=idea.triage_recommendation.value if idea.triage_recommendation else None,
+        triage_recommendation=idea.triage_recommendation,
         triage_reasoning=idea.triage_reasoning,
         duplicate_of_idea_id=idea.duplicate_of_idea_id,
         duplicate_of_title=duplicate_of_title,
         similarity_score=idea.similarity_score,
         auto_response_text=idea.auto_response_text,
-        is_active=idea.is_active,
-        auto_responded=idea.auto_responded,
-        published_for_voting=idea.published_for_voting,
         product_id=idea.product_id,
         product_name=product_name,
         submitter_id=idea.submitter_id,
         submitter_username=submitter_username,
-        reviewed_by_user_id=idea.reviewed_by_user_id,
-        reviewer_username=reviewer_username,
-        reviewed_at=idea.reviewed_at,
         review_notes=idea.review_notes,
         created_at=idea.created_at,
         updated_at=idea.updated_at,
@@ -1296,26 +1352,22 @@ def respond_to_idea(
             )
             db.add(vote_transfer_comment)
 
-    # Update triage status and is_active based on response
+    # Update status and is_active based on response
+    # Get product for visibility config
+    product = db.query(CIProduct).filter(CIProduct.id == idea.product_id).first()
+
     status_map = {
-        'approved': (TriageStatus.APPROVED, True),
-        'duplicate': (TriageStatus.DUPLICATE, False),
-        'feature_exists': (TriageStatus.FEATURE_EXISTS, False),
-        'not_appropriate': (TriageStatus.NOT_APPROPRIATE, False),
+        'approved': IdeaStatus.ACCEPTED,
+        'duplicate': IdeaStatus.DUPLICATE,
+        'feature_exists': IdeaStatus.FEATURE_EXISTS,
+        'not_appropriate': IdeaStatus.NOT_APPROPRIATE,
     }
 
-    previous_status = idea.triage_status
-    triage_status, is_active = status_map[request.status]
-    idea.triage_status = triage_status
-    idea.is_active = is_active
+    previous_status = idea.status
+    new_status = status_map[request.status]
+    idea.status = new_status
+    idea.is_active = product.get_is_active_for_status(new_status) if product else (new_status == IdeaStatus.ACCEPTED)
 
-    # For approved ideas, also publish for voting
-    if request.status == 'approved':
-        idea.published_for_voting = True
-
-    # Update review metadata
-    idea.reviewed_by_user_id = current_user.id
-    idea.reviewed_at = datetime.utcnow()
     idea.review_notes = request.comment
 
     # Create comment record
@@ -1331,7 +1383,7 @@ def respond_to_idea(
     status_history = IdeaStatusHistory(
         idea_id=idea.id,
         previous_status=previous_status,
-        new_status=triage_status,
+        new_status=new_status,
         changed_by_user_id=current_user.id,
         is_automated=False,
         change_source='po_response',
@@ -1344,13 +1396,10 @@ def respond_to_idea(
     response = {
         'id': idea.id,
         'title': idea.title,
-        'status': request.status,
-        'triage_status': idea.triage_status.value,
+        'status': idea.status.value,
         'is_active': idea.is_active,
-        'published_for_voting': idea.published_for_voting,
         'duplicate_of_idea_id': idea.duplicate_of_idea_id,
         'responded_by': current_user.username,
-        'responded_at': idea.reviewed_at.isoformat(),
     }
 
     # Include vote transfer info for duplicate responses
@@ -1388,9 +1437,9 @@ def add_comment(
     # Check permission
     is_submitter = idea.submitter_id == current_user.id
     is_po_or_admin = can_respond_to_idea(db, current_user, idea)
-    is_idea_active = idea.is_active and idea.published_for_voting
+    is_idea_active = idea.is_active and idea.status == IdeaStatus.ACCEPTED
 
-    # All authenticated users can comment on active/published ideas
+    # All authenticated users can comment on active/accepted ideas
     # Submitter, PO, Admin can comment on any idea
     if not is_idea_active and not is_submitter and not is_po_or_admin:
         raise HTTPException(
@@ -1484,14 +1533,14 @@ def get_triage_recommendation(
             detail="Only the product owner or admin can view triage recommendations"
         )
 
-    # Map triage_recommendation to the new status values
+    # Map triage_recommendation string to the new status values
     recommended_status = None
     if idea.triage_recommendation:
         recommendation_map = {
-            TriageAction.APPROVE: 'approved',
-            TriageAction.REJECT: 'not_appropriate',
-            TriageAction.MERGE: 'duplicate',
-            TriageAction.REVIEW: None,  # No specific recommendation
+            'approve': 'approved',
+            'reject': 'not_appropriate',
+            'merge': 'duplicate',
+            'review': None,  # No specific recommendation
         }
         recommended_status = recommendation_map.get(idea.triage_recommendation)
 
@@ -1523,19 +1572,18 @@ def get_triage_recommendation(
     competitors_with_feature = competitive_context.get('competitors_with_feature', [])
     competitive_urgency = competitive_context.get('competitive_urgency', None)
 
-    # Map triage_status to user-facing status for current response
+    # Map status to user-facing status for current response
     current_status = None
-    if idea.triage_status and idea.triage_status != TriageStatus.PENDING:
+    if idea.status and idea.status != IdeaStatus.PENDING:
         status_to_response = {
-            TriageStatus.APPROVED: 'approved',
-            TriageStatus.AUTO_APPROVED: 'approved',
-            TriageStatus.DUPLICATE: 'duplicate',
-            TriageStatus.FEATURE_EXISTS: 'feature_exists',
-            TriageStatus.NOT_APPROPRIATE: 'not_appropriate',
-            TriageStatus.REJECTED: 'not_appropriate',
-            TriageStatus.NEEDS_REVIEW: None,
+            IdeaStatus.ACCEPTED: 'approved',
+            IdeaStatus.DUPLICATE: 'duplicate',
+            IdeaStatus.FEATURE_EXISTS: 'feature_exists',
+            IdeaStatus.NOT_APPROPRIATE: 'not_appropriate',
+            IdeaStatus.MERGED: 'duplicate',
+            IdeaStatus.NEEDS_REVIEW: None,
         }
-        current_status = status_to_response.get(idea.triage_status)
+        current_status = status_to_response.get(idea.status)
 
     # Get status history
     status_history_records = db.query(IdeaStatusHistory).filter(
@@ -1581,11 +1629,15 @@ def get_triage_recommendation(
             'competitors_with_feature': competitors_with_feature,
             'competitive_urgency': competitive_urgency,
         },
-        # Current response (if already responded)
+        # Current response (if already responded) - derived from status history
         'current_response': {
             'status': current_status,
             'comment': idea.review_notes,
-            'reviewed_at': idea.reviewed_at.isoformat() if idea.reviewed_at else None,
+            # Get reviewed_at from first non-automated status change
+            'reviewed_at': next(
+                (h['created_at'] for h in status_history if not h['is_automated'] and h['change_source'] in ('po_response', 'po_edit')),
+                None
+            ),
         } if current_status else None,
         # Status history for audit trail
         'status_history': status_history,

@@ -3,17 +3,21 @@
  *
  * Displays detailed view of a single idea including:
  * - Full idea description
+ * - Voting capability (for approved ideas)
+ * - Review capability (for PO/admin on needs_review ideas)
  * - Comments section with ability to add comments
  * - Status history
  * - Duplicate relationship info
  * - Vote counts
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import Navigation from '../components/Navigation';
-import { getIdeaDetail, addIdeaComment } from '../services/api';
-import { IdeaDetail, IdeaComment } from '../types';
+import VoteButtons from '../components/VoteButtons';
+import IdeaResponseModal from '../components/IdeaResponseModal';
+import { getIdeaDetail, addIdeaComment, checkCanRespond } from '../services/api';
+import { IdeaDetail } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function IdeaDetailPage() {
@@ -30,25 +34,41 @@ export default function IdeaDetailPage() {
   const [submittingComment, setSubmittingComment] = useState(false);
   const [commentError, setCommentError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchIdea = async () => {
-      if (!ideaId) return;
+  // Voting state
+  const [userVote, setUserVote] = useState<number | null>(null);
 
-      setLoading(true);
-      setError(null);
+  // Review modal state
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [canRespond, setCanRespond] = useState(false);
 
+  const fetchIdea = useCallback(async () => {
+    if (!ideaId) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const data = await getIdeaDetail(parseInt(ideaId));
+      setIdea(data);
+      setUserVote(data.user_vote || null);
+
+      // Check if user can respond (PO/admin)
       try {
-        const data = await getIdeaDetail(parseInt(ideaId));
-        setIdea(data);
-      } catch (err: any) {
-        setError(err.response?.data?.detail || 'Failed to load idea details');
-      } finally {
-        setLoading(false);
+        const respondCheck = await checkCanRespond(parseInt(ideaId));
+        setCanRespond(respondCheck.can_respond);
+      } catch {
+        setCanRespond(false);
       }
-    };
-
-    fetchIdea();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to load idea details');
+    } finally {
+      setLoading(false);
+    }
   }, [ideaId]);
+
+  useEffect(() => {
+    fetchIdea();
+  }, [fetchIdea]);
 
   const handleAddComment = async () => {
     if (!newComment.trim() || !ideaId) return;
@@ -71,20 +91,19 @@ export default function IdeaDetailPage() {
     }
   };
 
-  const getStatusBadgeClass = (status: string) => {
+  const getStatusBadgeClass = (status: string | undefined) => {
     switch (status) {
-      case 'approved':
-      case 'auto_approved':
+      case 'accepted':
         return 'bg-green-100 text-green-800';
       case 'pending':
       case 'needs_review':
         return 'bg-yellow-100 text-yellow-800';
       case 'duplicate':
+      case 'merged':
         return 'bg-orange-100 text-orange-800';
       case 'feature_exists':
         return 'bg-blue-100 text-blue-800';
       case 'not_appropriate':
-      case 'rejected':
         return 'bg-red-100 text-red-800';
       default:
         return 'bg-gray-100 text-gray-800';
@@ -133,7 +152,22 @@ export default function IdeaDetailPage() {
     );
   }
 
-  const canComment = idea.is_active && idea.published_for_voting;
+  const canComment = idea.is_active;
+  const canVote = idea.status === 'accepted';
+  const needsReview = idea.status === 'needs_review' || idea.status === 'pending';
+
+  // Handle vote change
+  const handleVoteChange = (newVote: number | null) => {
+    setUserVote(newVote);
+    // Refresh idea to get updated vote counts
+    fetchIdea();
+  };
+
+  // Handle review modal close with success
+  const handleReviewSuccess = () => {
+    setShowReviewModal(false);
+    fetchIdea();
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -152,25 +186,54 @@ export default function IdeaDetailPage() {
 
         {/* Main idea card */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-          {/* Header */}
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900 mb-2">{idea.title}</h1>
-              <div className="flex items-center gap-3 text-sm text-gray-500">
-                <span>Submitted by {idea.submitter_username || 'Unknown'}</span>
-                <span>•</span>
-                <span>{formatDate(idea.created_at)}</span>
-                {idea.product_name && (
-                  <>
+          {/* Header with voting */}
+          <div className="flex items-start gap-4 mb-4">
+            {/* Vote section (for approved ideas) */}
+            {canVote && (
+              <div className="flex flex-col items-center">
+                <div className="text-2xl font-bold text-gray-900">{idea.upvotes || 0}</div>
+                <div className="text-xs text-gray-500 mb-2">votes</div>
+                <VoteButtons
+                  ideaId={idea.id}
+                  currentVote={userVote}
+                  onVoteChange={handleVoteChange}
+                />
+              </div>
+            )}
+
+            {/* Title and metadata */}
+            <div className="flex-1">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900 mb-2">{idea.title}</h1>
+                  <div className="flex items-center gap-3 text-sm text-gray-500">
+                    <span>Submitted by {idea.submitter_username || 'Unknown'}</span>
                     <span>•</span>
-                    <span className="text-blue-600">{idea.product_name}</span>
-                  </>
-                )}
+                    <span>{formatDate(idea.created_at)}</span>
+                    {idea.product_name && (
+                      <>
+                        <span>•</span>
+                        <span className="text-blue-600">{idea.product_name}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusBadgeClass(idea.status)}`}>
+                    {(idea.status || 'unknown').replace('_', ' ')}
+                  </span>
+                  {/* Review button for PO/admin */}
+                  {canRespond && needsReview && (
+                    <button
+                      onClick={() => setShowReviewModal(true)}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+                    >
+                      Review
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
-            <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusBadgeClass(idea.triage_status)}`}>
-              {idea.triage_status.replace('_', ' ')}
-            </span>
           </div>
 
           {/* Duplicate notice */}
@@ -368,6 +431,17 @@ export default function IdeaDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Review Modal */}
+      {showReviewModal && idea && (
+        <IdeaResponseModal
+          ideaId={idea.id}
+          ideaTitle={idea.title}
+          productId={idea.product_id}
+          onClose={() => setShowReviewModal(false)}
+          onSuccess={handleReviewSuccess}
+        />
+      )}
     </div>
   );
 }

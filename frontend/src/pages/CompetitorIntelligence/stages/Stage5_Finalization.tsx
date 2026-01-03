@@ -20,18 +20,18 @@ interface GeneratedIdea {
   competitor_name: string;
   feature_name: string;
   idea_id: number | null;
-  triage_status: string | null;
-  published_for_voting: boolean;
+  status: string | null;
+  is_active: boolean;
 }
 
 interface SessionSummary {
   session_id: number;
   ideas: GeneratedIdea[];
   total_count: number;
-  auto_approved_count: number;
+  accepted_count: number;
   needs_review_count: number;
   pending_count: number;
-  approved_count: number;
+  duplicate_count: number;
 }
 
 interface Stage5Props {
@@ -85,21 +85,20 @@ const Stage5_Finalization = ({
 
   const getStatusBadge = (status: string | null) => {
     switch (status) {
-      case 'auto_approved':
-        return <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-700 rounded">Auto-Approved</span>;
-      case 'approved':
-        return <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-700 rounded">Approved</span>;
+      case 'accepted':
+        return <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-700 rounded">Accepted</span>;
       case 'needs_review':
         return <span className="px-2 py-1 text-xs font-medium bg-yellow-100 text-yellow-700 rounded">Needs Review</span>;
       case 'pending':
         return <span className="px-2 py-1 text-xs font-medium bg-gray-100 text-gray-600 rounded">Pending</span>;
       case 'duplicate':
         return <span className="px-2 py-1 text-xs font-medium bg-orange-100 text-orange-700 rounded">Duplicate</span>;
+      case 'merged':
+        return <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-700 rounded">Merged</span>;
       case 'feature_exists':
         return <span className="px-2 py-1 text-xs font-medium bg-orange-100 text-orange-700 rounded">Feature Exists</span>;
-      case 'rejected':
       case 'not_appropriate':
-        return <span className="px-2 py-1 text-xs font-medium bg-red-100 text-red-700 rounded">Rejected</span>;
+        return <span className="px-2 py-1 text-xs font-medium bg-red-100 text-red-700 rounded">Not Appropriate</span>;
       default:
         return <span className="px-2 py-1 text-xs font-medium bg-gray-100 text-gray-600 rounded">{status || 'Unknown'}</span>;
     }
@@ -131,9 +130,9 @@ const Stage5_Finalization = ({
             {summary?.total_count || 0} ideas were generated and triaged.
           </p>
           <div className="flex justify-center gap-4 text-sm text-gray-600 mb-8">
-            {(summary?.auto_approved_count || 0) + (summary?.approved_count || 0) > 0 && (
+            {(summary?.accepted_count || 0) > 0 && (
               <span className="text-green-600">
-                {(summary?.auto_approved_count || 0) + (summary?.approved_count || 0)} published for voting
+                {summary?.accepted_count || 0} accepted for voting
               </span>
             )}
             {(summary?.needs_review_count || 0) > 0 && (
@@ -177,7 +176,7 @@ const Stage5_Finalization = ({
     );
   }
 
-  const publishedCount = (summary.auto_approved_count || 0) + (summary.approved_count || 0);
+  const acceptedCount = summary.accepted_count || 0;
   const hasPending = (summary.pending_count || 0) > 0;
 
   return (
@@ -202,8 +201,8 @@ const Stage5_Finalization = ({
           <div className="text-sm text-gray-600">Total Ideas</div>
         </div>
         <div className="bg-green-50 rounded-lg shadow p-6 text-center border border-green-200">
-          <div className="text-3xl font-bold text-green-700">{publishedCount}</div>
-          <div className="text-sm text-green-600">Published for Voting</div>
+          <div className="text-3xl font-bold text-green-700">{acceptedCount}</div>
+          <div className="text-sm text-green-600">Accepted for Voting</div>
         </div>
         <div className="bg-yellow-50 rounded-lg shadow p-6 text-center border border-yellow-200">
           <div className="text-3xl font-bold text-yellow-700">{summary.needs_review_count || 0}</div>
@@ -252,12 +251,12 @@ const Stage5_Finalization = ({
                     <span className="text-xs font-medium bg-gray-100 text-gray-700 px-2 py-1 rounded">
                       {idea.competitor_name}
                     </span>
-                    {getStatusBadge(idea.triage_status)}
+                    {getStatusBadge(idea.status)}
                   </div>
                   <p className="text-gray-900 mb-1">{idea.what}</p>
                   <p className="text-sm text-gray-600">Source: {idea.feature_name}</p>
                 </div>
-                {idea.idea_id && idea.published_for_voting && (
+                {idea.idea_id && idea.is_active && (
                   <button
                     onClick={() => navigate(`/ideas/${idea.idea_id}`)}
                     className="text-blue-600 hover:text-blue-700 text-sm font-medium"

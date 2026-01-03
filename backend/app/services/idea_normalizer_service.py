@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.adapters.base import BaseSourceAdapter, NormalizedIdea
 from app.adapters.customer_submission import CustomerSubmissionAdapter
 from app.adapters.competitor_feature import CompetitorFeatureAdapter
-from app.models.idea import Idea, SourceType, TriageStatus
+from app.models.idea import Idea, SourceType, IdeaStatus
 from app.services.llm_service import LLMService
 
 
@@ -173,18 +173,23 @@ class IdeaNormalizerService:
     def create_idea_from_normalized(
         self,
         normalized: NormalizedIdea,
-        triage_status: TriageStatus = TriageStatus.PENDING
+        status: IdeaStatus = IdeaStatus.PENDING
     ) -> Idea:
         """
         Create an Idea model instance from NormalizedIdea.
 
         Args:
             normalized: The normalized idea
-            triage_status: Initial triage status (default: PENDING)
+            status: Initial idea status (default: PENDING)
 
         Returns:
             Idea model instance (not yet committed)
         """
+        # Get product to determine is_active based on status
+        from app.models.competitor_intelligence import CIProduct
+        product = self.db.query(CIProduct).filter(CIProduct.id == normalized.product_id).first()
+        is_active = product.get_is_active_for_status(status) if product else status == IdeaStatus.ACCEPTED
+
         idea = Idea(
             title=normalized.title,
             what_description=normalized.what_description,
@@ -196,7 +201,8 @@ class IdeaNormalizerService:
             submitter_id=normalized.submitter_id,
             category=normalized.category,
             auto_categorized=normalized.auto_categorized,
-            triage_status=triage_status,
+            status=status,
+            is_active=is_active,
         )
         return idea
 
