@@ -43,6 +43,20 @@ import type {
   TriageSettings,
   TriageSettingsUpdate,
   CanRespondResponse,
+  // Competitive Agent types
+  CompetitiveAgentConfig,
+  CompetitiveAgentConfigUpdate,
+  AgentCompetitor,
+  CompetitorFeature,
+  FeatureCluster,
+  FeatureClusterDetail,
+  PricingAnalysis,
+  PositioningAnalysis,
+  MomentumAnalysis,
+  ChangeEvent,
+  FinancialsAnalysis,
+  AgentJobResponse,
+  CreateIdeasRequest,
 } from '../types';
 
 // Create axios instance with base configuration
@@ -71,9 +85,16 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor - Handle errors globally
+// Response interceptor - Handle errors globally and token refresh
 api.interceptors.response.use(
   (response: AxiosResponse) => {
+    // Check for refreshed token in response header (sliding session window)
+    const newToken = response.headers['x-new-access-token'];
+    if (newToken) {
+      // Store the refreshed token - this extends the session
+      localStorage.setItem('access_token', newToken);
+    }
+
     // Return successful response data
     return response;
   },
@@ -749,6 +770,278 @@ export const updateTriageSettings = async (
   const response = await api.put<TriageSettings>(
     `/product-intelligence/products/${productId}/triage-settings`,
     settings
+  );
+  return response.data;
+};
+
+// ============================================================================
+// COMPETITIVE AGENTS API METHODS (Agent-Centric Architecture)
+// ============================================================================
+
+/**
+ * Get agent configuration for a product
+ */
+export const getAgentConfig = async (productId: number): Promise<CompetitiveAgentConfig> => {
+  const response = await api.get<CompetitiveAgentConfig>(
+    `/product-intelligence/agents/${productId}/config`
+  );
+  return response.data;
+};
+
+/**
+ * Update agent configuration for a product
+ */
+export const updateAgentConfig = async (
+  productId: number,
+  config: CompetitiveAgentConfigUpdate
+): Promise<CompetitiveAgentConfig> => {
+  const response = await api.put<CompetitiveAgentConfig>(
+    `/product-intelligence/agents/${productId}/config`,
+    config
+  );
+  return response.data;
+};
+
+// --- Product-Level Triggers ---
+
+/**
+ * Trigger competitor discovery for a product
+ */
+export const triggerCompetitorDiscovery = async (productId: number): Promise<AgentJobResponse> => {
+  const response = await api.post<AgentJobResponse>(
+    `/product-intelligence/agents/${productId}/discover-competitors`
+  );
+  return response.data;
+};
+
+/**
+ * Trigger product reanalysis
+ */
+export const triggerProductReanalysis = async (productId: number): Promise<AgentJobResponse> => {
+  const response = await api.post<AgentJobResponse>(
+    `/product-intelligence/agents/${productId}/reanalyze-product`
+  );
+  return response.data;
+};
+
+/**
+ * Trigger feature clustering
+ */
+export const triggerFeatureClustering = async (productId: number): Promise<AgentJobResponse> => {
+  const response = await api.post<AgentJobResponse>(
+    `/product-intelligence/agents/${productId}/run-clustering`
+  );
+  return response.data;
+};
+
+// --- Competitor Management ---
+
+/**
+ * List competitors with deep analysis status
+ */
+export const getAgentCompetitors = async (
+  productId: number,
+  deepAnalysisEnabled?: boolean
+): Promise<AgentCompetitor[]> => {
+  const response = await api.get<AgentCompetitor[]>(
+    `/product-intelligence/agents/${productId}/competitors`,
+    { params: deepAnalysisEnabled !== undefined ? { deep_analysis_enabled: deepAnalysisEnabled } : {} }
+  );
+  return response.data;
+};
+
+/**
+ * Enable deep analysis for a competitor
+ */
+export const enableDeepAnalysis = async (
+  productId: number,
+  competitorId: number
+): Promise<{ message: string }> => {
+  const response = await api.post<{ message: string }>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/enable-deep-analysis`
+  );
+  return response.data;
+};
+
+/**
+ * Disable deep analysis for a competitor
+ */
+export const disableDeepAnalysis = async (
+  productId: number,
+  competitorId: number
+): Promise<{ message: string }> => {
+  const response = await api.post<{ message: string }>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/disable-deep-analysis`
+  );
+  return response.data;
+};
+
+// --- Per-Competitor Deep Analysis ---
+
+/**
+ * Trigger deep analysis for a single competitor
+ */
+export const triggerDeepAnalysis = async (
+  productId: number,
+  competitorId: number
+): Promise<AgentJobResponse> => {
+  const response = await api.post<AgentJobResponse>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/deep-analysis`
+  );
+  return response.data;
+};
+
+// --- Per-Competitor Feature Review ---
+
+/**
+ * List features for a competitor
+ */
+export const getCompetitorFeatures = async (
+  productId: number,
+  competitorId: number
+): Promise<CompetitorFeature[]> => {
+  const response = await api.get<CompetitorFeature[]>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/features`
+  );
+  return response.data;
+};
+
+/**
+ * Create an idea from a single feature
+ */
+export const createIdeaFromFeature = async (
+  productId: number,
+  competitorId: number,
+  featureId: number
+): Promise<AgentJobResponse> => {
+  const response = await api.post<AgentJobResponse>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/features/${featureId}/create-idea`
+  );
+  return response.data;
+};
+
+/**
+ * Create ideas from multiple features
+ */
+export const createIdeasFromFeatures = async (
+  productId: number,
+  competitorId: number,
+  request: CreateIdeasRequest
+): Promise<AgentJobResponse[]> => {
+  const response = await api.post<AgentJobResponse[]>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/features/create-ideas`,
+    request
+  );
+  return response.data;
+};
+
+// --- Feature Clusters & Intensity ---
+
+/**
+ * List feature clusters with intensity scores
+ */
+export const getFeatureClusters = async (
+  productId: number,
+  minCompetitors?: number
+): Promise<FeatureCluster[]> => {
+  const response = await api.get<FeatureCluster[]>(
+    `/product-intelligence/agents/${productId}/feature-clusters`,
+    { params: minCompetitors !== undefined ? { min_competitors: minCompetitors } : {} }
+  );
+  return response.data;
+};
+
+/**
+ * Get feature cluster details with members
+ */
+export const getFeatureClusterDetail = async (
+  productId: number,
+  clusterId: number
+): Promise<FeatureClusterDetail> => {
+  const response = await api.get<FeatureClusterDetail>(
+    `/product-intelligence/agents/${productId}/feature-clusters/${clusterId}`
+  );
+  return response.data;
+};
+
+/**
+ * Create an idea from a feature cluster
+ */
+export const createIdeaFromCluster = async (
+  productId: number,
+  clusterId: number
+): Promise<AgentJobResponse> => {
+  const response = await api.post<AgentJobResponse>(
+    `/product-intelligence/agents/${productId}/feature-clusters/${clusterId}/create-idea`
+  );
+  return response.data;
+};
+
+// --- Strategic Analysis Results ---
+
+/**
+ * Get pricing analysis for a competitor
+ */
+export const getPricingAnalysis = async (
+  productId: number,
+  competitorId: number
+): Promise<PricingAnalysis | null> => {
+  const response = await api.get<PricingAnalysis | null>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/pricing`
+  );
+  return response.data;
+};
+
+/**
+ * Get positioning analysis for a competitor
+ */
+export const getPositioningAnalysis = async (
+  productId: number,
+  competitorId: number
+): Promise<PositioningAnalysis | null> => {
+  const response = await api.get<PositioningAnalysis | null>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/positioning`
+  );
+  return response.data;
+};
+
+/**
+ * Get change events for a competitor
+ */
+export const getChangeEvents = async (
+  productId: number,
+  competitorId: number,
+  limit: number = 20
+): Promise<ChangeEvent[]> => {
+  const response = await api.get<ChangeEvent[]>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/changes`,
+    { params: { limit } }
+  );
+  return response.data;
+};
+
+/**
+ * Get momentum analysis for a competitor
+ */
+export const getMomentumAnalysis = async (
+  productId: number,
+  competitorId: number
+): Promise<MomentumAnalysis | null> => {
+  const response = await api.get<MomentumAnalysis | null>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/momentum`
+  );
+  return response.data;
+};
+
+/**
+ * Get financials analysis for a competitor
+ */
+export const getFinancialsAnalysis = async (
+  productId: number,
+  competitorId: number
+): Promise<FinancialsAnalysis | null> => {
+  const response = await api.get<FinancialsAnalysis | null>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/financials`
   );
   return response.data;
 };

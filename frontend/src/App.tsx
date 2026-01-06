@@ -28,6 +28,7 @@ import AnalyzeProductPage from './pages/CompetitorIntelligence/AnalyzeProductPag
 import ProductDetailPage from './pages/CompetitorIntelligence/ProductDetailPage';
 import SessionWorkflowPage from './pages/CompetitorIntelligence/SessionWorkflowPage';
 import ProductDashboardPage from './pages/ProductDashboardPage';
+import IntelligenceHubPage from './pages/CompetitorIntelligence/IntelligenceHubPage';
 
 function App() {
   return (
@@ -153,6 +154,16 @@ function App() {
               <ProtectedRoute>
                 <ProductOwnerRoute>
                   <ProductDashboardPage />
+                </ProductOwnerRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/product-intelligence/products/:productId/intelligence"
+            element={
+              <ProtectedRoute>
+                <ProductOwnerRoute>
+                  <IntelligenceHubPage />
                 </ProductOwnerRoute>
               </ProtectedRoute>
             }

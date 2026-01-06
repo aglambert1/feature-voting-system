@@ -652,3 +652,256 @@ export interface TriageSettingsUpdate {
   auto_enabled: boolean;
   auto_threshold: number;
 }
+
+// ============================================================================
+// COMPETITIVE AGENT TYPES (Agent-Centric Architecture)
+// ============================================================================
+
+/**
+ * Agent mode for scheduled vs manual execution.
+ */
+export enum AgentMode {
+  MANUAL = 'manual',
+  SCHEDULED = 'scheduled',
+}
+
+/**
+ * Schedule frequency options.
+ */
+export type ScheduleFrequency = 'daily' | 'weekly' | 'monthly';
+
+/**
+ * Competitive agent configuration for a product.
+ */
+export interface CompetitiveAgentConfig {
+  id: number;
+  product_id: number;
+
+  // Product Analysis
+  product_analysis_mode: AgentMode | string;
+  product_analysis_schedule: ScheduleFrequency | null;
+  product_analysis_last_run: string | null;
+
+  // Competitor Discovery
+  competitor_discovery_mode: AgentMode | string;
+  competitor_discovery_schedule: ScheduleFrequency | null;
+  competitor_discovery_last_run: string | null;
+  alert_on_new_competitors: boolean;
+  alert_on_disappeared_competitors: boolean;
+
+  // Deep Analysis
+  deep_analysis_mode: AgentMode | string;
+  deep_analysis_schedule: ScheduleFrequency | null;
+  deep_analysis_last_run: string | null;
+
+  // Strategic Analysis Toggles
+  enable_pricing_analysis: boolean;
+  enable_positioning_analysis: boolean;
+  enable_changes_tracking: boolean;
+  enable_momentum_analysis: boolean;
+  enable_financials_analysis: boolean;
+
+  // Intensity Settings
+  intensity_similarity_threshold: number;
+  intensity_idea_threshold: number;
+
+  enabled: boolean;
+}
+
+/**
+ * Request to update agent configuration.
+ */
+export interface CompetitiveAgentConfigUpdate {
+  product_analysis_mode?: AgentMode | string;
+  product_analysis_schedule?: ScheduleFrequency;
+
+  competitor_discovery_mode?: AgentMode | string;
+  competitor_discovery_schedule?: ScheduleFrequency;
+  alert_on_new_competitors?: boolean;
+  alert_on_disappeared_competitors?: boolean;
+
+  deep_analysis_mode?: AgentMode | string;
+  deep_analysis_schedule?: ScheduleFrequency;
+
+  enable_pricing_analysis?: boolean;
+  enable_positioning_analysis?: boolean;
+  enable_changes_tracking?: boolean;
+  enable_momentum_analysis?: boolean;
+  enable_financials_analysis?: boolean;
+
+  intensity_similarity_threshold?: number;
+  intensity_idea_threshold?: number;
+
+  enabled?: boolean;
+}
+
+/**
+ * Competitor with deep analysis status.
+ */
+export interface AgentCompetitor {
+  id: number;
+  product_id: number;
+  competitor_name: string;
+  competitor_url: string | null;
+  status: string;
+  deep_analysis_enabled: boolean;
+  deep_analysis_status: string | null;
+  deep_analysis_last_run: string | null;
+  feature_count: number;
+}
+
+/**
+ * Competitor feature with cluster info.
+ */
+export interface CompetitorFeature {
+  id: number;
+  product_competitor_id: number;
+  feature_name: string;
+  feature_description: string | null;
+  feature_category: string | null;
+  status: string;
+  cluster_id: number | null;
+  cluster_name: string | null;
+}
+
+/**
+ * Feature cluster for competitive intensity.
+ */
+export interface FeatureCluster {
+  id: number;
+  product_id: number;
+  cluster_name: string | null;
+  cluster_description: string | null;
+  competitor_count: number;
+  feature_count: number;
+  idea_generated: boolean;
+  generated_idea_id: number | null;
+}
+
+/**
+ * Feature cluster member.
+ */
+export interface FeatureClusterMember {
+  feature_id: number;
+  feature_name: string;
+  feature_description: string | null;
+  competitor_id: number;
+  competitor_name: string;
+  similarity_score: number;
+}
+
+/**
+ * Detailed feature cluster with members.
+ */
+export interface FeatureClusterDetail extends FeatureCluster {
+  members: FeatureClusterMember[];
+}
+
+/**
+ * Pricing analysis for a competitor.
+ */
+export interface PricingAnalysis {
+  id: number;
+  product_competitor_id: number;
+  pricing_model: string | null;
+  has_free_tier: boolean;
+  has_trial: boolean;
+  trial_days: number | null;
+  pricing_tiers: PricingTier[] | null;
+  has_enterprise: boolean;
+  source_url: string | null;
+  confidence: number;
+  analyzed_at: string;
+}
+
+export interface PricingTier {
+  name: string;
+  price: number | string;
+  billing: string;
+  features: string[];
+  limits?: Record<string, unknown>;
+}
+
+/**
+ * Positioning analysis for a competitor.
+ */
+export interface PositioningAnalysis {
+  id: number;
+  product_competitor_id: number;
+  tagline: string | null;
+  value_propositions: string[] | null;
+  target_audience: string | null;
+  key_differentiators: string[] | null;
+  positioning_statement: string | null;
+  market_segment: string | null;
+  confidence: number;
+  analyzed_at: string;
+}
+
+/**
+ * Momentum analysis for a competitor.
+ */
+export interface MomentumAnalysis {
+  id: number;
+  product_competitor_id: number;
+  momentum_score: number;
+  momentum_trend: 'rising' | 'stable' | 'declining' | string;
+  customer_growth_trend: string | null;
+  release_velocity: string | null;
+  notable_customers: string[] | null;
+  analysis_summary: string | null;
+  confidence: number;
+  analyzed_at: string;
+}
+
+/**
+ * Change event for a competitor.
+ */
+export interface ChangeEvent {
+  id: number;
+  product_competitor_id: number;
+  event_type: string;
+  event_title: string;
+  event_description: string | null;
+  event_date: string | null;
+  source_url: string | null;
+  source_type: string;
+  impact_level: 'major' | 'minor' | 'patch' | string;
+  detected_at: string;
+}
+
+/**
+ * Financials analysis for a competitor.
+ */
+export interface FinancialsAnalysis {
+  id: number;
+  product_competitor_id: number;
+  company_type: 'public' | 'private' | 'startup' | string;
+  total_funding: number | null;
+  funding_stage: string | null;
+  market_cap: number | null;
+  revenue_ttm: number | null;
+  employee_count: number | null;
+  financial_health: 'strong' | 'moderate' | 'weak' | string;
+  analysis_summary: string | null;
+  confidence: number;
+  analyzed_at: string;
+}
+
+/**
+ * Response from triggering an async job.
+ */
+export interface AgentJobResponse {
+  job_id: number;
+  job_uuid: string;
+  job_type: string;
+  status: string;
+  message: string;
+}
+
+/**
+ * Request to create ideas from features.
+ */
+export interface CreateIdeasRequest {
+  feature_ids: number[];
+}
