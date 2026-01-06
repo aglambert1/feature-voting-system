@@ -96,6 +96,7 @@ def init_db():
     import app.models.vote  # noqa: F401
     import app.models.competitor_intelligence  # noqa: F401
     import app.models.queue  # noqa: F401
+    import app.models.competitive_agent  # noqa: F401
 
     # Create standard tables
     Base.metadata.create_all(bind=engine)

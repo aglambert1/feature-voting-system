@@ -35,6 +35,18 @@ class JobType(str, enum.Enum):
     - IDEA_TRIAGE: Auto-categorize and dedupe ideas
     - COMPETITIVE_MONITORING: Scheduled monitoring
     - REPORT_GENERATION: Generate reports
+
+    Agent-Centric Architecture (New):
+    - DEEP_ANALYSIS: Per-competitor deep analysis (features + strategic)
+    - FEATURE_EXTRACTION_ONLY: Feature extraction only (if triggered separately)
+    - STRATEGIC_ANALYSIS_ONLY: Strategic analysis only (if triggered separately)
+    - PRICING_ANALYSIS: Analyze competitor pricing
+    - POSITIONING_ANALYSIS: Analyze competitor positioning/messaging
+    - CHANGES_TRACKING: Track competitor changes from release notes/blogs
+    - MOMENTUM_ANALYSIS: Analyze competitor momentum signals
+    - FINANCIALS_ANALYSIS: Analyze competitor financials (when available)
+    - FEATURE_CLUSTERING: Run feature clustering across competitors
+    - INTENSITY_IDEA_GENERATION: Generate ideas from high-intensity clusters
     """
     PRODUCT_ANALYSIS = "product_analysis"
     COMPETITOR_DISCOVERY = "competitor_discovery"
@@ -44,6 +56,19 @@ class JobType(str, enum.Enum):
     IDEA_TRIAGE = "idea_triage"
     COMPETITIVE_MONITORING = "competitive_monitoring"
     REPORT_GENERATION = "report_generation"
+
+    # Agent-Centric Architecture job types
+    DEEP_ANALYSIS = "deep_analysis"
+    SCHEDULED_DEEP_ANALYSIS = "scheduled_deep_analysis"  # Orchestrates multiple deep_analysis jobs
+    FEATURE_EXTRACTION_ONLY = "feature_extraction_only"
+    STRATEGIC_ANALYSIS_ONLY = "strategic_analysis_only"
+    PRICING_ANALYSIS = "pricing_analysis"
+    POSITIONING_ANALYSIS = "positioning_analysis"
+    CHANGES_TRACKING = "changes_tracking"
+    MOMENTUM_ANALYSIS = "momentum_analysis"
+    FINANCIALS_ANALYSIS = "financials_analysis"
+    FEATURE_CLUSTERING = "feature_clustering"
+    INTENSITY_IDEA_GENERATION = "intensity_idea_generation"
 
 
 class JobStatus(str, enum.Enum):

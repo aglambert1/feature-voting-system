@@ -98,6 +98,7 @@ class CIProduct(Base):
     agent_logs = relationship("AgentExecutionLog", back_populates="product")
     permissions = relationship("ProductPermission", back_populates="product", cascade="all, delete-orphan")
     analysis_history = relationship("ProductAnalysisHistory", back_populates="product", cascade="all, delete-orphan")
+    competitive_agent_config = relationship("CompetitiveAgentConfig", back_populates="product", uselist=False, cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<CIProduct(id={self.id}, name='{self.product_name}', created_by={self.created_by_user_id})>"
@@ -187,9 +188,15 @@ class ProductCompetitor(Base):
     last_seen_session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=True)
     # Queue job reference for queue-based workflows
     first_discovered_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
-    # Monitoring fields
+    # Monitoring fields (legacy - kept for backward compatibility)
     monitoring_enabled = Column(Boolean, default=False)
     last_monitored_at = Column(DateTime, nullable=True)
+
+    # Deep Analysis fields (new agent-centric architecture)
+    deep_analysis_enabled = Column(Boolean, nullable=False, default=False)  # PO marks for deep analysis
+    deep_analysis_last_run = Column(DateTime, nullable=True)  # Last time deep analysis ran
+    deep_analysis_status = Column(String(50), nullable=True)  # "pending", "running", "completed", "failed"
+
     status = Column(String(50), nullable=False, default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

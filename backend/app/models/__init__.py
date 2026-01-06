@@ -34,6 +34,17 @@ from app.models.pm_review import (
     ReviewQueuePriority,
     AlertType
 )
+from app.models.competitive_agent import (
+    AgentMode,
+    CompetitiveAgentConfig,
+    FeatureCluster,
+    FeatureClusterMember,
+    CompetitorPricingAnalysis,
+    CompetitorPositioningAnalysis,
+    CompetitorChangeEvent,
+    CompetitorMomentumAnalysis,
+    CompetitorFinancialsAnalysis
+)
 
 __all__ = [
     "User", "UserRole", "ProductAccessMode",
@@ -44,5 +55,8 @@ __all__ = [
     "ProductPermission", "ProductPermissionLevel", "ProductAnalysisHistory",
     "QueueJob", "JobType", "JobStatus", "JobPriority",
     "PMReviewQueue", "CompetitorSnapshot", "MonitoringConfig",
-    "ReviewQueueType", "ReviewQueueStatus", "ReviewQueuePriority", "AlertType"
+    "ReviewQueueType", "ReviewQueueStatus", "ReviewQueuePriority", "AlertType",
+    "AgentMode", "CompetitiveAgentConfig", "FeatureCluster", "FeatureClusterMember",
+    "CompetitorPricingAnalysis", "CompetitorPositioningAnalysis", "CompetitorChangeEvent",
+    "CompetitorMomentumAnalysis", "CompetitorFinancialsAnalysis"
 ]

@@ -141,6 +141,10 @@ class Idea(Base):
     # Queue job reference (for tracking)
     triage_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
 
+    # Competitive intensity traceability (for ideas generated from feature clusters)
+    source_cluster_id = Column(Integer, ForeignKey("feature_clusters.id"), nullable=True)
+    source_feature_ids = Column(JSON, nullable=True)  # [feature_id, ...] for tracing back to source features
+
     # Timestamps
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -154,6 +158,7 @@ class Idea(Base):
     triage_job = relationship("QueueJob", foreign_keys=[triage_job_id])
     comments = relationship("IdeaComment", back_populates="idea", cascade="all, delete-orphan", order_by="IdeaComment.created_at")
     status_history = relationship("IdeaStatusHistory", back_populates="idea", cascade="all, delete-orphan", order_by="IdeaStatusHistory.created_at")
+    source_cluster = relationship("FeatureCluster", foreign_keys=[source_cluster_id])
 
     def __repr__(self):
         return f"<Idea(id={self.id}, title='{self.title}', source='{self.source_type}', status='{self.status}')>"
@@ -200,5 +205,7 @@ class Idea(Base):
             "competitive_context": self.competitive_context,
             "auto_response_text": self.auto_response_text,
             "review_notes": self.review_notes,
+            "source_cluster_id": self.source_cluster_id,
+            "source_feature_ids": self.source_feature_ids,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

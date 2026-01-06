@@ -6,7 +6,12 @@ analysis sessions. Sessions are lightweight workflow containers that
 track progression through CI stages (competitor discovery, feature analysis).
 
 Products must be created and analyzed BEFORE creating a session.
+
+DEPRECATED: This session-based workflow is being replaced by the agent-centric
+architecture. Use the new /product-intelligence/agents endpoints instead.
+See app/api/competitive_agents.py for the new API.
 """
+import warnings
 
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
@@ -27,7 +32,8 @@ from app.models.user import User
 
 router = APIRouter(
     prefix="/product-intelligence/sessions",
-    tags=["Product Intelligence - Sessions"]
+    tags=["Product Intelligence - Sessions (DEPRECATED)"],
+    deprecated=True
 )
 
 

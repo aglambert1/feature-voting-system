@@ -6,13 +6,85 @@ It sets up the app, configures CORS, includes routes, and initializes the databa
 """
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from jose import jwt, JWTError
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
 from app.database import init_db, create_initial_admin
-from app.api import auth, ideas, votes, submissions, products, sessions, pm_review, monitoring
+from app.api import auth, ideas, votes, submissions, products, sessions, pm_review, monitoring, competitive_agents
+from app.utils.security import create_access_token
+
+# Token refresh threshold: refresh token if it's older than this many minutes
+# This creates a sliding window - any activity within 30 min of last activity keeps you logged in
+TOKEN_REFRESH_THRESHOLD_MINUTES = 5
+
+
+class SlidingSessionMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware that implements sliding session window for JWT tokens.
+
+    When a valid JWT token is used that was issued more than TOKEN_REFRESH_THRESHOLD_MINUTES ago,
+    a new token is issued and returned in the X-New-Access-Token response header.
+    This effectively resets the session timeout on user activity.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        # Only process if request had an Authorization header
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return response
+
+        # Only issue new token if the request was successful (not 401/403)
+        if response.status_code in (401, 403):
+            return response
+
+        token = auth_header.split(" ")[1]
+
+        try:
+            # Decode the token to check its age
+            payload = jwt.decode(
+                token,
+                settings.secret_key,
+                algorithms=[settings.algorithm]
+            )
+
+            # Get the token's issued-at time (iat) or calculate from exp
+            exp_timestamp = payload.get("exp")
+            if not exp_timestamp:
+                return response
+
+            # Calculate when token was issued (exp - token_lifetime)
+            # Use utcfromtimestamp to match utcnow() for consistent comparison
+            exp_time = datetime.utcfromtimestamp(exp_timestamp)
+            issued_at = exp_time - timedelta(minutes=settings.access_token_expire_minutes)
+
+            # Check if token is older than refresh threshold
+            token_age = datetime.utcnow() - issued_at
+            if token_age > timedelta(minutes=TOKEN_REFRESH_THRESHOLD_MINUTES):
+                # Issue a new token with the same claims
+                username = payload.get("sub")
+                user_id = payload.get("user_id")
+
+                if username and user_id:
+                    new_token = create_access_token(
+                        data={"sub": username, "user_id": user_id}
+                    )
+                    # Add new token to response header
+                    response.headers["X-New-Access-Token"] = new_token
+                    # Expose this header to the browser (CORS)
+                    response.headers["Access-Control-Expose-Headers"] = "X-New-Access-Token"
+
+        except JWTError:
+            # Token is invalid or expired - don't issue new token
+            pass
+
+        return response
 
 
 @asynccontextmanager
@@ -73,7 +145,12 @@ app.add_middleware(
     allow_credentials=True,  # Allow cookies and authorization headers
     allow_methods=["*"],  # Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
     allow_headers=["*"],  # Allow all headers
+    expose_headers=["X-New-Access-Token"],  # Expose token refresh header to browser
 )
+
+# Add sliding session middleware for automatic token refresh
+# This must be added AFTER CORSMiddleware so CORS headers are processed first
+app.add_middleware(SlidingSessionMiddleware)
 
 
 # Include routers from different modules
@@ -87,6 +164,7 @@ app.include_router(products.jobs_router)  # Queue-based job endpoints
 app.include_router(sessions.router)
 app.include_router(pm_review.router)  # Phase 4: PM Review Queue
 app.include_router(monitoring.router)  # Phase 4: Competitive Monitoring
+app.include_router(competitive_agents.router)  # Agent-centric competitive intelligence
 
 
 @app.get("/")

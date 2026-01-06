@@ -12,7 +12,7 @@ for asynchronous execution. Each task:
 import traceback
 from typing import Dict, Any, Optional, List
 from celery import shared_task, group, chain
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.database import SessionLocal
 from app.models.queue import JobStatus, JobType
@@ -1489,3 +1489,1059 @@ def scheduled_monitoring_task(self) -> Dict[str, Any]:
 
 # Note: triage_existing_idea_task was removed as it was redundant with triage_idea_task.
 # Use triage_idea_task for triaging existing ideas.
+
+
+# ============================================================================
+# Scheduled Execution Tasks (Chunk 7)
+# ============================================================================
+
+def _calculate_next_run(schedule: str) -> datetime:
+    """
+    Calculate the next run time based on schedule frequency.
+
+    Args:
+        schedule: One of 'daily', 'weekly', 'biweekly', 'monthly'
+
+    Returns:
+        Next run datetime (UTC)
+    """
+    now = datetime.utcnow()
+    if schedule == 'daily':
+        return now + timedelta(days=1)
+    elif schedule == 'weekly':
+        return now + timedelta(weeks=1)
+    elif schedule == 'biweekly':
+        return now + timedelta(weeks=2)
+    elif schedule == 'monthly':
+        return now + timedelta(days=30)
+    else:
+        # Default to weekly
+        return now + timedelta(weeks=1)
+
+
+@shared_task(bind=True, name='app.queue.tasks.check_scheduled_tasks')
+def check_scheduled_tasks(self) -> Dict[str, Any]:
+    """
+    Master scheduler task - runs hourly via Celery Beat.
+
+    Checks CompetitiveAgentConfig for each product and queues work if due:
+    - Product analysis (if scheduled mode and next_run <= now)
+    - Competitor discovery (if scheduled mode and next_run <= now)
+    - Deep analysis (if scheduled mode and next_run <= now)
+
+    Returns:
+        Dictionary with queued jobs summary
+    """
+    from app.models.competitive_agent import CompetitiveAgentConfig, AgentMode
+
+    db = None
+    try:
+        db = get_db()
+        queue_service = QueueService(db)
+        now = datetime.utcnow()
+
+        jobs_queued = {
+            'product_analysis': [],
+            'competitor_discovery': [],
+            'deep_analysis': [],
+        }
+
+        # Get all enabled configs
+        configs = db.query(CompetitiveAgentConfig).filter(
+            CompetitiveAgentConfig.enabled == True
+        ).all()
+
+        print(f"[check_scheduled_tasks] Checking {len(configs)} products for scheduled tasks...")
+
+        for config in configs:
+            try:
+                product_id = config.product_id
+
+                # Check Product Analysis
+                if (config.product_analysis_mode == AgentMode.SCHEDULED
+                        and config.product_analysis_next_run
+                        and config.product_analysis_next_run <= now):
+                    print(f"[check_scheduled_tasks] Product {product_id}: Product analysis due")
+                    job = queue_service.create_job(
+                        job_type=JobType.PRODUCT_ANALYSIS,
+                        input_data={'product_id': product_id, 'scheduled': True},
+                        product_id=product_id,
+                        user_id=None  # System scheduled
+                    )
+                    db.commit()
+
+                    # Queue the task
+                    analyze_product_task.delay(job.id)
+
+                    # Update next run time
+                    config.product_analysis_last_run = now
+                    config.product_analysis_next_run = _calculate_next_run(
+                        config.product_analysis_schedule or 'weekly'
+                    )
+                    db.commit()
+
+                    jobs_queued['product_analysis'].append({
+                        'product_id': product_id,
+                        'job_id': job.id
+                    })
+
+                # Check Competitor Discovery
+                if (config.competitor_discovery_mode == AgentMode.SCHEDULED
+                        and config.competitor_discovery_next_run
+                        and config.competitor_discovery_next_run <= now):
+                    print(f"[check_scheduled_tasks] Product {product_id}: Competitor discovery due")
+                    job = queue_service.create_job(
+                        job_type=JobType.COMPETITOR_DISCOVERY,
+                        input_data={'product_id': product_id, 'scheduled': True},
+                        product_id=product_id,
+                        user_id=None
+                    )
+                    db.commit()
+
+                    discover_competitors_task.delay(job.id)
+
+                    config.competitor_discovery_last_run = now
+                    config.competitor_discovery_next_run = _calculate_next_run(
+                        config.competitor_discovery_schedule or 'weekly'
+                    )
+                    db.commit()
+
+                    jobs_queued['competitor_discovery'].append({
+                        'product_id': product_id,
+                        'job_id': job.id
+                    })
+
+                # Check Deep Analysis
+                if (config.deep_analysis_mode == AgentMode.SCHEDULED
+                        and config.deep_analysis_next_run
+                        and config.deep_analysis_next_run <= now):
+                    print(f"[check_scheduled_tasks] Product {product_id}: Deep analysis due")
+                    job = queue_service.create_job(
+                        job_type=JobType.SCHEDULED_DEEP_ANALYSIS,
+                        input_data={'product_id': product_id, 'scheduled': True},
+                        product_id=product_id,
+                        user_id=None
+                    )
+                    db.commit()
+
+                    scheduled_deep_analysis_task.delay(job.id)
+
+                    config.deep_analysis_last_run = now
+                    config.deep_analysis_next_run = _calculate_next_run(
+                        config.deep_analysis_schedule or 'weekly'
+                    )
+                    db.commit()
+
+                    jobs_queued['deep_analysis'].append({
+                        'product_id': product_id,
+                        'job_id': job.id
+                    })
+
+            except Exception as e:
+                print(f"[check_scheduled_tasks] Error processing product {config.product_id}: {e}")
+                continue
+
+        total_queued = sum(len(v) for v in jobs_queued.values())
+        print(f"[check_scheduled_tasks] Queued {total_queued} jobs across {len(configs)} products")
+
+        return {
+            'products_checked': len(configs),
+            'jobs_queued': jobs_queued,
+            'total_jobs': total_queued,
+            'checked_at': now.isoformat()
+        }
+
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[check_scheduled_tasks] Error: {error_msg}")
+        raise
+
+    finally:
+        if db:
+            db.close()
+
+
+# ============================================================================
+# Agent-Centric Architecture Tasks (Chunk 5)
+# ============================================================================
+
+@shared_task(bind=True, name='app.queue.tasks.deep_analysis_task')
+def deep_analysis_task(self, job_id: int) -> Dict[str, Any]:
+    """
+    Background task to run deep analysis for a SINGLE competitor.
+
+    Deep analysis includes:
+    1. Feature extraction (10-25 features)
+    2. Strategic analyses based on config toggles:
+       - Pricing analysis
+       - Positioning analysis
+       - Changes tracking
+       - Momentum analysis
+       - Financials analysis (if enabled)
+
+    Args:
+        job_id: QueueJob ID to process
+
+    Returns:
+        Dictionary with deep analysis results
+    """
+    from app.models.competitive_agent import (
+        CompetitiveAgentConfig,
+        CompetitorPricingAnalysis,
+        CompetitorPositioningAnalysis,
+        CompetitorChangeEvent,
+        CompetitorMomentumAnalysis,
+        CompetitorFinancialsAnalysis
+    )
+
+    db = None
+    try:
+        db = get_db()
+        queue_service = QueueService(db)
+
+        # Mark job as running
+        job = queue_service.mark_running(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        input_data = job.input_data or {}
+        competitor_id = input_data.get('competitor_id')
+        product_id = job.product_id
+
+        if not competitor_id:
+            raise ValueError("Competitor ID is required")
+
+        # Get competitor
+        competitor = db.query(ProductCompetitor).filter(
+            ProductCompetitor.id == competitor_id
+        ).first()
+        if not competitor:
+            raise ValueError(f"Competitor {competitor_id} not found")
+
+        # Get product config for enabled analyses
+        config = db.query(CompetitiveAgentConfig).filter(
+            CompetitiveAgentConfig.product_id == product_id
+        ).first()
+
+        # Update progress
+        queue_service.update_progress(job_id, 5.0, f"Starting deep analysis for {competitor.competitor_name}...")
+
+        results = {
+            'competitor_id': competitor_id,
+            'competitor_name': competitor.competitor_name,
+            'analyses_completed': [],
+            'errors': []
+        }
+
+        # Mark competitor as running
+        competitor.deep_analysis_status = 'running'
+        db.commit()
+
+        # Step 1: Feature Extraction (always run)
+        queue_service.update_progress(job_id, 10.0, "Extracting features...")
+        try:
+            feature_result = _run_feature_extraction(db, competitor, product_id)
+            results['feature_extraction'] = feature_result
+            results['analyses_completed'].append('feature_extraction')
+        except Exception as e:
+            results['errors'].append({'analysis': 'feature_extraction', 'error': str(e)})
+
+        # Step 2: Pricing Analysis (if enabled)
+        if not config or config.enable_pricing_analysis:
+            queue_service.update_progress(job_id, 25.0, "Analyzing pricing...")
+            try:
+                pricing_result = _run_pricing_analysis(db, competitor, product_id)
+                results['pricing_analysis'] = pricing_result
+                results['analyses_completed'].append('pricing_analysis')
+            except Exception as e:
+                results['errors'].append({'analysis': 'pricing_analysis', 'error': str(e)})
+
+        # Step 3: Positioning Analysis (if enabled)
+        if not config or config.enable_positioning_analysis:
+            queue_service.update_progress(job_id, 40.0, "Analyzing positioning...")
+            try:
+                positioning_result = _run_positioning_analysis(db, competitor, product_id)
+                results['positioning_analysis'] = positioning_result
+                results['analyses_completed'].append('positioning_analysis')
+            except Exception as e:
+                results['errors'].append({'analysis': 'positioning_analysis', 'error': str(e)})
+
+        # Step 4: Changes Tracking (if enabled)
+        if not config or config.enable_changes_tracking:
+            queue_service.update_progress(job_id, 55.0, "Tracking changes...")
+            try:
+                changes_result = _run_changes_tracking(db, competitor, product_id)
+                results['changes_tracking'] = changes_result
+                results['analyses_completed'].append('changes_tracking')
+            except Exception as e:
+                results['errors'].append({'analysis': 'changes_tracking', 'error': str(e)})
+
+        # Step 5: Momentum Analysis (if enabled)
+        if not config or config.enable_momentum_analysis:
+            queue_service.update_progress(job_id, 70.0, "Analyzing momentum...")
+            try:
+                momentum_result = _run_momentum_analysis(db, competitor, product_id)
+                results['momentum_analysis'] = momentum_result
+                results['analyses_completed'].append('momentum_analysis')
+            except Exception as e:
+                results['errors'].append({'analysis': 'momentum_analysis', 'error': str(e)})
+
+        # Step 6: Financials Analysis (if enabled - usually disabled)
+        if config and config.enable_financials_analysis:
+            queue_service.update_progress(job_id, 85.0, "Analyzing financials...")
+            try:
+                financials_result = _run_financials_analysis(db, competitor, product_id)
+                results['financials_analysis'] = financials_result
+                results['analyses_completed'].append('financials_analysis')
+            except Exception as e:
+                results['errors'].append({'analysis': 'financials_analysis', 'error': str(e)})
+
+        # Update competitor status
+        competitor.deep_analysis_status = 'completed'
+        competitor.deep_analysis_last_run = datetime.utcnow()
+        db.commit()
+
+        # Final progress
+        queue_service.update_progress(job_id, 95.0, "Finalizing...")
+
+        # Mark job as success
+        queue_service.mark_success(job_id, results)
+
+        return results
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[deep_analysis_task] Error: {error_msg}")
+
+        if db:
+            try:
+                # Mark competitor as failed
+                if competitor_id:
+                    competitor = db.query(ProductCompetitor).filter(
+                        ProductCompetitor.id == competitor_id
+                    ).first()
+                    if competitor:
+                        competitor.deep_analysis_status = 'failed'
+                        db.commit()
+
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
+            except Exception:
+                pass
+
+        raise
+
+    finally:
+        if db:
+            db.close()
+
+
+def _run_feature_extraction(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
+    """Run feature extraction for a competitor."""
+    llm_service = LLMService()
+    agent = FeatureExtractorAgent(
+        db=db,
+        llm_service=llm_service,
+        product_id=product_id
+    )
+
+    agent_input = {
+        'competitor_name': competitor.competitor_name,
+        'competitor_url': competitor.competitor_url,
+    }
+
+    result = agent.execute(agent_input)
+
+    # Store features
+    features = result.get('features', [])
+    feature_count = 0
+    new_features = []
+
+    for feat_data in features:
+        feature = ProductCompetitorFeature(
+            product_competitor_id=competitor.id,
+            feature_name=feat_data.get('name', ''),
+            feature_description=feat_data.get('description', ''),
+            feature_category=feat_data.get('category', ''),
+            status='active'
+        )
+        db.add(feature)
+        db.flush()
+        new_features.append(feature)
+        feature_count += 1
+
+    db.commit()
+
+    # Store embeddings
+    try:
+        from app.services.similarity_detector import SimilarityDetectorService
+        similarity_service = SimilarityDetectorService(db)
+        for feature in new_features:
+            feature_text = f"{feature.feature_name}\n{feature.feature_description or ''}"
+            similarity_service.store_competitor_feature_embedding(feature.id, feature_text)
+        db.commit()
+    except Exception as e:
+        print(f"[_run_feature_extraction] Warning: Failed to store embeddings: {e}")
+
+    return {
+        'features_extracted': feature_count,
+        'extraction_summary': result.get('extraction_summary', '')
+    }
+
+
+def _run_pricing_analysis(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
+    """Run pricing analysis for a competitor."""
+    from app.agents.pricing_analyzer import PricingAnalyzerAgent
+    from app.models.competitive_agent import CompetitorPricingAnalysis
+
+    llm_service = LLMService()
+    agent = PricingAnalyzerAgent(
+        db=db,
+        llm_service=llm_service,
+        product_id=product_id
+    )
+
+    # Get product context
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+
+    agent_input = {
+        'competitor_name': competitor.competitor_name,
+        'competitor_url': competitor.competitor_url,
+        'pricing_url': f"{competitor.competitor_url}/pricing",
+        'pricing_content': '',  # Would be fetched in real implementation
+        'product_context': {
+            'product_name': product.product_name if product else '',
+        }
+    }
+
+    result = agent.execute(agent_input)
+
+    # Store pricing analysis
+    pricing = CompetitorPricingAnalysis(
+        product_competitor_id=competitor.id,
+        pricing_model=result.get('pricing_model'),
+        has_free_tier=result.get('has_free_tier', False),
+        has_trial=result.get('has_trial', False),
+        trial_days=result.get('trial_days'),
+        pricing_tiers=result.get('pricing_tiers', []),
+        has_enterprise=result.get('has_enterprise', False),
+        source_url=result.get('source_url'),
+        confidence=result.get('confidence', 0.5)
+    )
+    db.add(pricing)
+    db.commit()
+
+    return {
+        'pricing_model': result.get('pricing_model'),
+        'has_free_tier': result.get('has_free_tier'),
+        'confidence': result.get('confidence')
+    }
+
+
+def _run_positioning_analysis(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
+    """Run positioning analysis for a competitor."""
+    from app.agents.positioning_analyzer import PositioningAnalyzerAgent
+    from app.models.competitive_agent import CompetitorPositioningAnalysis
+
+    llm_service = LLMService()
+    agent = PositioningAnalyzerAgent(
+        db=db,
+        llm_service=llm_service,
+        product_id=product_id
+    )
+
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+
+    agent_input = {
+        'competitor_name': competitor.competitor_name,
+        'competitor_url': competitor.competitor_url,
+        'homepage_content': '',  # Would be fetched in real implementation
+        'product_context': {
+            'product_name': product.product_name if product else '',
+            'product_category': product.product_category if product else '',
+        }
+    }
+
+    result = agent.execute(agent_input)
+
+    # Store positioning analysis
+    positioning = CompetitorPositioningAnalysis(
+        product_competitor_id=competitor.id,
+        tagline=result.get('tagline'),
+        value_propositions=result.get('value_propositions', []),
+        target_audience=result.get('target_audience', ''),
+        key_differentiators=result.get('key_differentiators', []),
+        positioning_statement=result.get('positioning_statement', ''),
+        market_segment=result.get('market_segment', ''),
+        source_urls=result.get('source_urls', []),
+        confidence=result.get('confidence', 0.5)
+    )
+    db.add(positioning)
+    db.commit()
+
+    return {
+        'market_segment': result.get('market_segment'),
+        'tagline': result.get('tagline'),
+        'confidence': result.get('confidence')
+    }
+
+
+def _run_changes_tracking(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
+    """Run changes tracking for a competitor."""
+    from app.agents.changes_tracker import ChangesTrackerAgent
+    from app.models.competitive_agent import CompetitorChangeEvent
+
+    llm_service = LLMService()
+    agent = ChangesTrackerAgent(
+        db=db,
+        llm_service=llm_service,
+        product_id=product_id
+    )
+
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+
+    agent_input = {
+        'competitor_name': competitor.competitor_name,
+        'competitor_url': competitor.competitor_url,
+        'release_notes_content': '',  # Would be fetched in real implementation
+        'analysis_period': 'last 30 days',
+        'product_context': {
+            'product_name': product.product_name if product else '',
+        }
+    }
+
+    result = agent.execute(agent_input)
+
+    # Store change events
+    changes = result.get('changes', [])
+    for change_data in changes:
+        change = CompetitorChangeEvent(
+            product_competitor_id=competitor.id,
+            event_type=change_data.get('event_type', 'other'),
+            event_title=change_data.get('event_title', ''),
+            event_description=change_data.get('event_description', ''),
+            event_date=None,  # Would parse from change_data.get('event_date')
+            source_url=change_data.get('source_url'),
+            source_type=change_data.get('source_type', 'release_notes'),
+            impact_level=change_data.get('impact_level', 'minor')
+        )
+        db.add(change)
+
+    db.commit()
+
+    return {
+        'total_changes': result.get('total_changes', 0),
+        'major_changes': result.get('major_changes', 0),
+        'release_velocity': result.get('release_velocity')
+    }
+
+
+def _run_momentum_analysis(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
+    """Run momentum analysis for a competitor."""
+    from app.agents.momentum_analyzer import MomentumAnalyzerAgent
+    from app.models.competitive_agent import CompetitorMomentumAnalysis
+
+    llm_service = LLMService()
+    agent = MomentumAnalyzerAgent(
+        db=db,
+        llm_service=llm_service,
+        product_id=product_id
+    )
+
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+
+    agent_input = {
+        'competitor_name': competitor.competitor_name,
+        'competitor_url': competitor.competitor_url,
+        'analysis_period': 'last 90 days',
+        'product_context': {
+            'product_name': product.product_name if product else '',
+        }
+    }
+
+    result = agent.execute(agent_input)
+
+    # Store momentum analysis
+    momentum = CompetitorMomentumAnalysis(
+        product_competitor_id=competitor.id,
+        customer_wins=result.get('customer_wins', []),
+        customer_growth_trend=result.get('customer_growth_trend', 'stable'),
+        notable_customers=result.get('notable_customers', []),
+        new_markets=result.get('market_expansions', []),
+        partnership_announcements=result.get('partnerships', []),
+        release_velocity=result.get('release_velocity', 'medium'),
+        major_launches_last_90_days=result.get('major_launches_count', 0),
+        community_growth_signals=result.get('community_signals', {}),
+        momentum_score=result.get('momentum_score', 0.5),
+        momentum_trend=result.get('momentum_trend', 'stable'),
+        analysis_summary=result.get('analysis_summary', ''),
+        confidence=result.get('confidence', 0.5)
+    )
+    db.add(momentum)
+    db.commit()
+
+    return {
+        'momentum_score': result.get('momentum_score'),
+        'momentum_trend': result.get('momentum_trend'),
+        'confidence': result.get('confidence')
+    }
+
+
+def _run_financials_analysis(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
+    """Run financials analysis for a competitor."""
+    from app.agents.financials_analyzer import FinancialsAnalyzerAgent
+    from app.models.competitive_agent import CompetitorFinancialsAnalysis
+
+    llm_service = LLMService()
+    agent = FinancialsAnalyzerAgent(
+        db=db,
+        llm_service=llm_service,
+        product_id=product_id
+    )
+
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+
+    agent_input = {
+        'competitor_name': competitor.competitor_name,
+        'competitor_url': competitor.competitor_url,
+        'product_context': {
+            'product_name': product.product_name if product else '',
+        }
+    }
+
+    result = agent.execute(agent_input)
+
+    # Store financials analysis
+    financials = CompetitorFinancialsAnalysis(
+        product_competitor_id=competitor.id,
+        company_type=result.get('company_type', 'unknown'),
+        total_funding=result.get('total_funding'),
+        last_funding_round=result.get('funding_rounds', [{}])[-1] if result.get('funding_rounds') else None,
+        funding_stage=result.get('funding_stage'),
+        market_cap=result.get('market_cap'),
+        revenue_ttm=result.get('revenue_estimate'),
+        revenue_growth_yoy=result.get('revenue_growth_yoy'),
+        employee_count=result.get('employee_count'),
+        employee_growth_yoy=result.get('employee_growth_yoy'),
+        financial_health=result.get('financial_health', 'unknown'),
+        analysis_summary=result.get('analysis_summary', ''),
+        data_sources=result.get('data_sources', []),
+        confidence=result.get('confidence', 0.5)
+    )
+    db.add(financials)
+    db.commit()
+
+    return {
+        'company_type': result.get('company_type'),
+        'financial_health': result.get('financial_health'),
+        'confidence': result.get('confidence')
+    }
+
+
+@shared_task(bind=True, name='app.queue.tasks.feature_clustering_task')
+def feature_clustering_task(self, job_id: int) -> Dict[str, Any]:
+    """
+    Background task to run feature clustering for a product.
+
+    This task:
+    1. Gets all competitor features with embeddings
+    2. Runs agglomerative clustering
+    3. Creates/updates FeatureCluster records
+    4. Calculates competitive intensity
+
+    Args:
+        job_id: QueueJob ID to process
+
+    Returns:
+        Dictionary with clustering results
+    """
+    from app.services.feature_clustering_service import FeatureClusteringService
+
+    db = None
+    try:
+        db = get_db()
+        queue_service = QueueService(db)
+
+        # Mark job as running
+        job = queue_service.mark_running(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        product_id = job.product_id
+        if not product_id:
+            raise ValueError("Product ID is required")
+
+        input_data = job.input_data or {}
+        similarity_threshold = input_data.get('similarity_threshold', 0.75)
+
+        # Update progress
+        queue_service.update_progress(job_id, 10.0, "Initializing clustering service...")
+
+        # Run clustering
+        clustering_service = FeatureClusteringService(db)
+
+        queue_service.update_progress(job_id, 20.0, "Running feature clustering...")
+        result = clustering_service.cluster_features(
+            product_id=product_id,
+            similarity_threshold=similarity_threshold
+        )
+
+        # Update progress
+        queue_service.update_progress(job_id, 90.0, "Finalizing...")
+
+        output_data = {
+            'product_id': product_id,
+            'clusters_created': result.clusters_created,
+            'clusters_updated': result.clusters_updated,
+            'features_clustered': result.features_clustered,
+            'high_intensity_clusters': result.high_intensity_clusters,
+            'execution_time_ms': result.execution_time_ms
+        }
+
+        # Mark success
+        queue_service.mark_success(job_id, output_data)
+
+        return output_data
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[feature_clustering_task] Error: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
+            except Exception:
+                pass
+
+        raise
+
+    finally:
+        if db:
+            db.close()
+
+
+@shared_task(bind=True, name='app.queue.tasks.intensity_idea_generation_task')
+def intensity_idea_generation_task(self, job_id: int) -> Dict[str, Any]:
+    """
+    Background task to generate ideas from high-intensity feature clusters.
+
+    This task:
+    1. Gets high-intensity clusters (meeting threshold)
+    2. For each cluster, generates an idea using IntensityIdeaGeneratorAgent
+    3. Creates Idea records with traceability to source clusters
+    4. Optionally chains to triage for dedup and recommendations
+
+    Args:
+        job_id: QueueJob ID to process
+
+    Returns:
+        Dictionary with generation results
+    """
+    from app.services.feature_clustering_service import FeatureClusteringService
+
+    db = None
+    try:
+        db = get_db()
+        queue_service = QueueService(db)
+        llm_service = LLMService()
+
+        # Mark job as running
+        job = queue_service.mark_running(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        product_id = job.product_id
+        if not product_id:
+            raise ValueError("Product ID is required")
+
+        input_data = job.input_data or {}
+        threshold = input_data.get('threshold')
+        chain_triage = input_data.get('chain_triage', True)
+
+        # Update progress
+        queue_service.update_progress(job_id, 10.0, "Loading high-intensity clusters...")
+
+        # Generate ideas
+        clustering_service = FeatureClusteringService(db)
+
+        queue_service.update_progress(job_id, 20.0, "Generating ideas from clusters...")
+        results = clustering_service.generate_ideas_for_high_intensity_clusters(
+            product_id=product_id,
+            threshold=threshold,
+            llm_service=llm_service
+        )
+
+        # Chain to triage if requested
+        if chain_triage:
+            queue_service.update_progress(job_id, 80.0, "Queueing triage for generated ideas...")
+
+            for result in results:
+                if result.get('status') == 'generated' and result.get('idea_id'):
+                    # Create triage job
+                    triage_job = queue_service.create_job(
+                        job_type=JobType.IDEA_TRIAGE,
+                        input_data={'idea_id': result['idea_id']},
+                        product_id=product_id,
+                        user_id=job.user_id,
+                        parent_job_id=job.id,
+                    )
+                    db.commit()
+
+                    # Queue the triage task
+                    triage_idea_task.delay(triage_job.id)
+
+                    result['triage_job_id'] = triage_job.id
+
+        # Update progress
+        queue_service.update_progress(job_id, 95.0, "Finalizing...")
+
+        output_data = {
+            'product_id': product_id,
+            'ideas_generated': len([r for r in results if r.get('status') == 'generated']),
+            'ideas_skipped': len([r for r in results if r.get('status') == 'skipped']),
+            'errors': len([r for r in results if r.get('status') == 'error']),
+            'results': results
+        }
+
+        # Mark success
+        queue_service.mark_success(job_id, output_data)
+
+        return output_data
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[intensity_idea_generation_task] Error: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
+            except Exception:
+                pass
+
+        raise
+
+    finally:
+        if db:
+            db.close()
+
+
+@shared_task(bind=True, name='app.queue.tasks.scheduled_deep_analysis_task')
+def scheduled_deep_analysis_task(self, job_id: int) -> Dict[str, Any]:
+    """
+    Run scheduled deep analysis for a product.
+
+    This task:
+    1. Finds all competitors with deep_analysis_enabled=True
+    2. Queues deep_analysis_task for each (parallel via chord)
+    3. After all complete, runs clustering and intensity idea generation
+
+    Args:
+        job_id: QueueJob ID to process
+
+    Returns:
+        Dictionary indicating chord was dispatched
+    """
+    from celery import chord
+    from app.models.competitive_agent import CompetitiveAgentConfig
+
+    db = None
+    try:
+        db = get_db()
+        queue_service = QueueService(db)
+
+        # Mark job as running
+        job = queue_service.mark_running(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        product_id = job.product_id
+        if not product_id:
+            raise ValueError("Product ID is required")
+
+        # Get enabled competitors
+        competitors = db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id == product_id,
+            ProductCompetitor.status == 'active',
+            ProductCompetitor.deep_analysis_enabled == True
+        ).all()
+
+        if not competitors:
+            output_data = {
+                'product_id': product_id,
+                'message': 'No competitors enabled for deep analysis',
+                'competitors_processed': 0
+            }
+            queue_service.mark_success(job_id, output_data)
+            return output_data
+
+        # Update progress
+        queue_service.update_progress(
+            job_id, 10.0,
+            f"Creating deep analysis jobs for {len(competitors)} competitors..."
+        )
+
+        # Create child jobs for each competitor
+        child_job_ids = []
+        for competitor in competitors:
+            child_job = queue_service.create_job(
+                job_type=JobType.DEEP_ANALYSIS,
+                input_data={'competitor_id': competitor.id},
+                product_id=product_id,
+                user_id=job.user_id,
+                parent_job_id=job_id,
+            )
+            child_job_ids.append(child_job.id)
+
+        db.commit()
+
+        # Update progress
+        queue_service.update_progress(
+            job_id, 20.0,
+            f"Dispatching {len(child_job_ids)} deep analysis tasks..."
+        )
+
+        # Use chord: group of deep analysis tasks -> callback to aggregate and cluster
+        analysis_chord = chord(
+            [deep_analysis_task.s(child_id) for child_id in child_job_ids],
+            aggregate_deep_analysis_results.s(job_id, child_job_ids, product_id)
+        )
+
+        # Dispatch the chord
+        chord_result = analysis_chord.apply_async()
+
+        db.commit()
+
+        return {
+            'status': 'chord_dispatched',
+            'parent_job_id': job_id,
+            'child_job_ids': child_job_ids,
+            'chord_id': chord_result.id if chord_result else None,
+        }
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[scheduled_deep_analysis_task] Error: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
+            except Exception:
+                pass
+
+        raise
+
+    finally:
+        if db:
+            db.close()
+
+
+@shared_task(bind=True, name='app.queue.tasks.aggregate_deep_analysis_results')
+def aggregate_deep_analysis_results(
+    self,
+    results: List[Dict],
+    parent_job_id: int,
+    child_job_ids: List[int],
+    product_id: int
+) -> Dict[str, Any]:
+    """
+    Callback task to aggregate results from parallel deep analysis.
+
+    After all deep analysis tasks complete, this:
+    1. Aggregates results
+    2. Runs feature clustering
+    3. Generates ideas from high-intensity clusters
+    4. Marks parent job as complete
+
+    Args:
+        results: List of results from each deep analysis task
+        parent_job_id: Parent QueueJob ID to update
+        child_job_ids: List of child job IDs that were processed
+        product_id: Product ID
+
+    Returns:
+        Aggregated results
+    """
+    from app.services.feature_clustering_service import FeatureClusteringService
+
+    db = None
+    try:
+        db = get_db()
+        queue_service = QueueService(db)
+        llm_service = LLMService()
+
+        # Get parent job
+        job = queue_service.get_job(parent_job_id)
+        if not job:
+            raise ValueError(f"Parent job {parent_job_id} not found")
+
+        # Aggregate deep analysis results
+        successful = 0
+        total_features = 0
+        for r in results:
+            if r and r.get('analyses_completed'):
+                successful += 1
+                if 'feature_extraction' in r.get('analyses_completed', []):
+                    total_features += r.get('feature_extraction', {}).get('features_extracted', 0)
+
+        # Update progress
+        queue_service.update_progress(
+            parent_job_id, 70.0,
+            f"Running feature clustering across {total_features} features..."
+        )
+
+        # Run clustering
+        clustering_service = FeatureClusteringService(db)
+        cluster_result = clustering_service.cluster_features(product_id=product_id)
+
+        # Update progress
+        queue_service.update_progress(
+            parent_job_id, 85.0,
+            "Generating ideas from high-intensity clusters..."
+        )
+
+        # Generate ideas
+        idea_results = clustering_service.generate_ideas_for_high_intensity_clusters(
+            product_id=product_id,
+            llm_service=llm_service
+        )
+
+        output_data = {
+            'product_id': product_id,
+            'competitors_analyzed': len(child_job_ids),
+            'successful_analyses': successful,
+            'total_features_extracted': total_features,
+            'clusters_created': cluster_result.clusters_created,
+            'high_intensity_clusters': cluster_result.high_intensity_clusters,
+            'ideas_generated': len([r for r in idea_results if r.get('status') == 'generated']),
+            'child_job_ids': child_job_ids,
+        }
+
+        # Mark parent job as success
+        queue_service.mark_success(parent_job_id, output_data)
+
+        return output_data
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[aggregate_deep_analysis_results] Error: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(parent_job_id, error_msg, error_tb)
+            except Exception:
+                pass
+
+        raise
+
+    finally:
+        if db:
+            db.close()

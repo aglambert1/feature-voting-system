@@ -244,6 +244,9 @@ class MonitoringConfig(Base):
     """
     Per-product monitoring configuration.
 
+    DEPRECATED: This model is replaced by CompetitiveAgentConfig in
+    app/models/competitive_agent.py. Use the new model for all new features.
+
     Stores settings for automated competitive monitoring:
     - Enabled/disabled status
     - Monitoring frequency
