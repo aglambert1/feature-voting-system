@@ -21,7 +21,6 @@ from sqlalchemy import text
 import numpy as np
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import pdist, squareform
-import sqlite_vec
 
 from app.models.competitive_agent import FeatureCluster, FeatureClusterMember
 from app.models.competitor_intelligence import (
@@ -127,9 +126,9 @@ class FeatureClusteringService:
             feature_id, feature_name, feature_description, feature_category, \
                 competitor_id, competitor_name, embedding_blob = row
 
-            # Deserialize embedding from sqlite-vec format
+            # Deserialize embedding from sqlite-vec format (stored as raw float32 bytes)
             if embedding_blob:
-                embedding = sqlite_vec.deserialize_float32(embedding_blob)
+                embedding = np.frombuffer(embedding_blob, dtype=np.float32)
                 embeddings.append(embedding)
 
                 features.append({
@@ -589,7 +588,7 @@ class FeatureClusteringService:
 
         product_context = {
             'product_name': product.product_name,
-            'product_category': product.analyzed_category or '',
+            'product_category': product.product_category or '',
             'product_description': product.product_description or ''
         }
 
@@ -597,6 +596,41 @@ class FeatureClusteringService:
 
         for cluster in clusters:
             try:
+                # Check if an idea already exists for this cluster's feature set
+                # This prevents duplicates when re-running competitive analysis
+                cluster_feature_ids = set(self.get_cluster_feature_ids(cluster.id))
+
+                # Look for existing ideas with overlapping source features
+                existing_idea = self.db.query(Idea).filter(
+                    Idea.product_id == product_id,
+                    Idea.source_type == SourceType.COMPETITOR_AUTOMATED,
+                    Idea.source_feature_ids.isnot(None)
+                ).all()
+
+                # Check for significant overlap (>50% of features match)
+                skip_cluster = False
+                for idea in existing_idea:
+                    if idea.source_feature_ids:
+                        existing_feature_ids = set(idea.source_feature_ids)
+                        overlap = len(cluster_feature_ids & existing_feature_ids)
+                        overlap_ratio = overlap / max(len(cluster_feature_ids), 1)
+                        if overlap_ratio > 0.5:
+                            # Already have an idea covering most of these features
+                            results.append({
+                                'cluster_id': cluster.id,
+                                'cluster_name': cluster.cluster_name,
+                                'status': 'skipped',
+                                'reason': f'Existing idea {idea.id} covers {overlap_ratio*100:.0f}% of cluster features',
+                                'existing_idea_id': idea.id
+                            })
+                            # Mark cluster as processed to prevent future attempts
+                            self.mark_cluster_idea_generated(cluster.id, idea.id)
+                            skip_cluster = True
+                            break
+
+                if skip_cluster:
+                    continue
+
                 # Get cluster member details
                 members_info = self.get_clusters_by_intensity(
                     product_id,
@@ -623,10 +657,16 @@ class FeatureClusteringService:
                     for m in cluster_data.get('members', [])
                 ]
 
+                # Get unique competitor names for this cluster
+                unique_competitor_names = list(set(
+                    f.get('competitor_name') for f in features
+                    if f.get('competitor_name') and f.get('competitor_name') != 'Unknown'
+                ))
+
                 agent_input = {
                     'cluster_name': cluster.cluster_name,
                     'cluster_description': cluster.cluster_description or '',
-                    'competitor_count': cluster.competitor_count,
+                    'competitor_count': len(unique_competitor_names),  # Use actual unique count
                     'total_competitors': total_competitors,
                     'features': features,
                     'product_context': product_context
@@ -662,7 +702,8 @@ class FeatureClusteringService:
                         'generation_type': 'competitive_intensity',
                         'cluster_id': cluster.id,
                         'cluster_name': cluster.cluster_name,
-                        'competitor_count': cluster.competitor_count,
+                        'competitor_count': len(unique_competitor_names),
+                        'competitor_names': unique_competitor_names,  # Unique competitor names for triage
                         'total_competitors': total_competitors,
                         'competitive_urgency': idea_output.get('competitive_urgency', 'medium'),
                         'differentiation_opportunities': idea_output.get('differentiation_opportunities', [])
@@ -674,9 +715,7 @@ class FeatureClusteringService:
                     is_active=False,  # Pending = not visible yet
                     triage_confidence=idea_output.get('confidence'),
                     competitive_context={
-                        'competitors_with_feature': [
-                            f.get('competitor_name') for f in features
-                        ],
+                        'competitors_with_feature': unique_competitor_names,  # Deduplicated list
                         'competitive_urgency': idea_output.get('competitive_urgency', 'medium'),
                         'urgency_reasoning': idea_output.get('urgency_reasoning', '')
                     },
@@ -779,7 +818,7 @@ class FeatureClusteringService:
             'features': features,
             'product_context': {
                 'product_name': product.product_name,
-                'product_category': product.analyzed_category or '',
+                'product_category': product.product_category or '',
                 'product_description': product.product_description or ''
             }
         }

@@ -122,11 +122,24 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
     return words.slice(0, wordLimit).join(' ') + '...';
   };
 
-  // Determine if this is an inactive idea
-  const isInactive = idea.is_active === false;
+  // Determine if this idea should have reduced visual prominence
+  // Only apply inactive styling to "final" rejection statuses, not to pending/needs_review
+  const rejectedStatuses = ['duplicate', 'merged', 'feature_exists', 'not_appropriate'];
+  const isRejected = idea.status && rejectedStatuses.includes(idea.status);
+
+  // Determine if this idea is awaiting review (highlight with orange for POs)
+  const awaitingReviewStatuses = ['pending', 'needs_review'];
+  const isAwaitingReview = idea.status && awaitingReviewStatuses.includes(idea.status);
+
+  // Title styling: orange for awaiting review, strikethrough for rejected, normal otherwise
+  const getTitleClassName = () => {
+    if (isRejected) return 'text-xl font-bold line-through text-gray-500';
+    if (isAwaitingReview) return 'text-xl font-bold text-yellow-600';
+    return 'text-xl font-bold text-gray-900';
+  };
 
   return (
-    <div className={`bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow ${isInactive ? 'opacity-60' : ''}`}>
+    <div className={`bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow ${isRejected ? 'opacity-60' : ''}`}>
       <div className="idea-card-inner">
         <div className="flex">
           {/* Vote Section */}
@@ -160,7 +173,7 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
           <div className="flex-1 min-w-0">
             {/* Title with PO Respond Button */}
             <div className="flex items-start justify-between gap-4 mb-2">
-              <h3 className={`text-xl font-bold text-gray-900 ${isInactive ? 'line-through text-gray-500' : ''}`}>
+              <h3 className={getTitleClassName()}>
                 {idea.title}
               </h3>
 

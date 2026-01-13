@@ -34,6 +34,14 @@ except ImportError:
     HAS_MAGIC = False
 
 
+class NoContentError(Exception):
+    """Raised when URL fetch succeeds but no extractable content is found."""
+
+    def __init__(self, message: str, meta_info: dict = None):
+        super().__init__(message)
+        self.meta_info = meta_info or {}
+
+
 class DocumentParsingService:
     """Service for parsing documents and fetching URL content."""
 
@@ -341,13 +349,133 @@ class DocumentParsingService:
         extracted_text = self.clean_text(extracted_text)
 
         if not extracted_text.strip():
-            raise Exception("No text content found in URL")
+            # Extract meta tags as fallback info
+            meta_info = self._extract_meta_tags(soup)
+            raise NoContentError(
+                "This page appears to use JavaScript to render content (Single Page Application). "
+                "The server cannot extract text from JavaScript-rendered pages.",
+                meta_info=meta_info
+            )
 
         return {
             'url': response.url,  # Final URL after redirects
             'title': title or parsed_url.hostname,
             'extracted_text': extracted_text,
             'fetch_timestamp': datetime.utcnow().isoformat() + 'Z'
+        }
+
+    def _extract_meta_tags(self, soup: BeautifulSoup) -> dict:
+        """Extract SEO meta tags from parsed HTML."""
+        meta_info = {}
+
+        # Title
+        title_tag = soup.find('title')
+        if title_tag:
+            meta_info['title'] = title_tag.get_text().strip()
+
+        # Description
+        desc_tag = soup.find('meta', attrs={'name': 'description'})
+        if desc_tag and desc_tag.get('content'):
+            meta_info['description'] = desc_tag['content'].strip()
+
+        # Keywords
+        keywords_tag = soup.find('meta', attrs={'name': 'keywords'})
+        if keywords_tag and keywords_tag.get('content'):
+            meta_info['keywords'] = keywords_tag['content'].strip()
+
+        # Open Graph tags
+        og_title = soup.find('meta', attrs={'property': 'og:title'})
+        if og_title and og_title.get('content'):
+            meta_info['og_title'] = og_title['content'].strip()
+
+        og_desc = soup.find('meta', attrs={'property': 'og:description'})
+        if og_desc and og_desc.get('content'):
+            meta_info['og_description'] = og_desc['content'].strip()
+
+        return meta_info
+
+    def fetch_url_meta_only(self, url: str) -> dict:
+        """
+        Fetch only meta tags from a URL (for SPA/JavaScript-rendered pages).
+
+        Returns:
+            {
+                'url': str,
+                'title': str,
+                'extracted_text': str (composed from meta tags),
+                'fetch_timestamp': str,
+                'source': 'meta_tags'
+            }
+        """
+        from datetime import datetime
+
+        # Validate URL format
+        parsed_url = urllib.parse.urlparse(url)
+        if parsed_url.scheme not in ['http', 'https']:
+            raise ValueError(f"Invalid URL scheme '{parsed_url.scheme}'. Only http and https are allowed.")
+
+        # SSRF prevention: block internal IPs
+        hostname = parsed_url.hostname
+        if hostname:
+            try:
+                import socket
+                ip_address = socket.gethostbyname(hostname)
+                for pattern in self.BLOCKED_IP_PATTERNS:
+                    if re.match(pattern, ip_address):
+                        raise ValueError("Access to internal IP addresses is blocked for security reasons.")
+            except socket.gaierror:
+                pass
+
+        # Fetch URL
+        try:
+            session = requests.Session()
+            session.max_redirects = self.MAX_REDIRECTS
+            response = session.get(
+                url,
+                timeout=self.URL_FETCH_TIMEOUT,
+                allow_redirects=True,
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; ProductIntelligenceBot/1.0)'}
+            )
+            response.raise_for_status()
+        except requests.Timeout:
+            raise Exception(f"URL fetch timed out after {self.URL_FETCH_TIMEOUT}s")
+        except requests.TooManyRedirects:
+            raise Exception(f"Too many redirects (max {self.MAX_REDIRECTS})")
+        except requests.RequestException as e:
+            raise Exception(f"URL fetch failed: {str(e)}")
+
+        # Parse HTML and extract meta tags
+        soup = BeautifulSoup(response.text, 'lxml')
+        meta_info = self._extract_meta_tags(soup)
+
+        if not meta_info:
+            raise Exception("No meta tags found in URL")
+
+        # Compose extracted text from meta tags
+        text_parts = []
+        title = meta_info.get('title') or meta_info.get('og_title', '')
+        if title:
+            text_parts.append(f"# {title}")
+
+        description = meta_info.get('description') or meta_info.get('og_description', '')
+        if description:
+            text_parts.append(f"\n{description}")
+
+        keywords = meta_info.get('keywords', '')
+        if keywords:
+            text_parts.append(f"\nKeywords: {keywords}")
+
+        extracted_text = '\n'.join(text_parts)
+
+        if not extracted_text.strip():
+            raise Exception("No usable meta tag content found in URL")
+
+        return {
+            'url': response.url,
+            'title': title or parsed_url.hostname,
+            'extracted_text': extracted_text,
+            'fetch_timestamp': datetime.utcnow().isoformat() + 'Z',
+            'source': 'meta_tags'
         }
 
     def clean_text(self, text: str) -> str:

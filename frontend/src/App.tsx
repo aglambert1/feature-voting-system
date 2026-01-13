@@ -26,6 +26,9 @@ import ProductListPage from './pages/CompetitorIntelligence/ProductListPage';
 import CreateProductPage from './pages/CompetitorIntelligence/CreateProductPage';
 import AnalyzeProductPage from './pages/CompetitorIntelligence/AnalyzeProductPage';
 import ProductDetailPage from './pages/CompetitorIntelligence/ProductDetailPage';
+import CompetitorsPage from './pages/CompetitorIntelligence/CompetitorsPage';
+import CompetitiveReportPage from './pages/CompetitorIntelligence/CompetitiveReportPage';
+// Legacy pages - kept for hidden route access
 import SessionWorkflowPage from './pages/CompetitorIntelligence/SessionWorkflowPage';
 import ProductDashboardPage from './pages/ProductDashboardPage';
 import IntelligenceHubPage from './pages/CompetitorIntelligence/IntelligenceHubPage';
@@ -128,6 +131,27 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/product-intelligence/products/:productId/competitors"
+            element={
+              <ProtectedRoute>
+                <ProductOwnerRoute>
+                  <CompetitorsPage />
+                </ProductOwnerRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/product-intelligence/products/:productId/report"
+            element={
+              <ProtectedRoute>
+                <ProductOwnerRoute>
+                  <CompetitiveReportPage />
+                </ProductOwnerRoute>
+              </ProtectedRoute>
+            }
+          />
+          {/* Legacy routes - hidden from navigation but still accessible */}
           <Route
             path="/product-intelligence/products/:productId/sessions/:sessionId"
             element={

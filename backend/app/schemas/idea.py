@@ -88,6 +88,9 @@ class IdeaListItem(BaseModel):
     duplicate_of_idea_id: Optional[int] = None
     duplicate_of_title: Optional[str] = None
 
+    # Submitter info (for "My Ideas" sorting)
+    submitter_id: Optional[int] = None
+
     # Vote counts
     vote_counts: VoteCount
 

@@ -59,6 +59,7 @@ export default function IdeaResponseModal({
   // Source summary drill-down toggles
   const [showVoters, setShowVoters] = useState(false);
   const [showCompetitors, setShowCompetitors] = useState(false);
+  const [showExistingFeature, setShowExistingFeature] = useState(false);
 
   // Track if the current form values match the AI recommendation
   const [isUsingAiRecommendation, setIsUsingAiRecommendation] = useState(false);
@@ -409,6 +410,82 @@ export default function IdeaResponseModal({
                         )}
                       </div>
                     </div>
+
+                    {/* Existing Feature Match Alert */}
+                    {recommendation.source_summary.existing_feature && (
+                      <div className="mt-4">
+                        <button
+                          onClick={() => setShowExistingFeature(!showExistingFeature)}
+                          className="w-full text-left p-3 bg-orange-50 rounded-lg border border-orange-200 hover:border-orange-300 transition-colors"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <svg className="w-5 h-5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                              </svg>
+                              <span className="text-sm font-medium text-orange-800">Similar Existing Feature Detected</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs px-2 py-0.5 bg-orange-200 text-orange-800 rounded-full">
+                                {Math.round(recommendation.source_summary.existing_feature.similarity_score * 100)}% match
+                              </span>
+                              <svg
+                                className={`w-4 h-4 text-orange-400 transition-transform ${showExistingFeature ? 'rotate-180' : ''}`}
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </div>
+                          </div>
+                          <p className="mt-1 text-sm text-orange-700">
+                            This idea may overlap with: <strong>{recommendation.source_summary.existing_feature.feature_name}</strong>
+                          </p>
+                        </button>
+
+                        {/* Existing feature details */}
+                        {showExistingFeature && (
+                          <div className="mt-2 p-3 bg-white rounded-lg border border-orange-200">
+                            <div className="space-y-2">
+                              <div>
+                                <p className="text-xs text-gray-500 mb-1">Feature Name</p>
+                                <p className="text-sm font-medium text-gray-900">
+                                  {recommendation.source_summary.existing_feature.feature_name}
+                                </p>
+                              </div>
+                              {recommendation.source_summary.existing_feature.feature_description && (
+                                <div>
+                                  <p className="text-xs text-gray-500 mb-1">Description</p>
+                                  <p className="text-sm text-gray-700">
+                                    {recommendation.source_summary.existing_feature.feature_description}
+                                  </p>
+                                </div>
+                              )}
+                              {recommendation.source_summary.existing_feature.source_url && (
+                                <div>
+                                  <p className="text-xs text-gray-500 mb-1">Documentation</p>
+                                  <a
+                                    href={recommendation.source_summary.existing_feature.source_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-sm text-blue-600 hover:text-blue-800 underline"
+                                  >
+                                    View documentation →
+                                  </a>
+                                </div>
+                              )}
+                              <div className="pt-2 border-t border-gray-100">
+                                <p className="text-xs text-orange-600">
+                                  <strong>Note:</strong> If competitor features offer additional capabilities beyond what exists today,
+                                  consider accepting this idea as an enhancement rather than marking as "Feature Exists".
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

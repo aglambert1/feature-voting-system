@@ -1,18 +1,31 @@
 /**
- * ProductDetailPage
+ * ProductDetailPage (Product Dashboard)
  *
- * Detailed view of a single product with current analysis and history.
- * Enhanced with alerts summary and link to monitoring dashboard.
+ * Redesigned unified Product Dashboard with:
+ * - Agent Status tiles (Idea Triage, Market Discovery, Competitive Analysis)
+ * - Current Product Analysis
+ * - Product Information Sources
+ * - Analysis History
  */
 
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
-import { formatDistanceToNow } from 'date-fns';
-import api, { getProductPendingCounts } from '../../services/api';
+import { format } from 'date-fns';
+import api, {
+  getProductPendingCounts,
+  getAgentConfig,
+  getAgentCompetitors,
+  getFeatureClusters,
+  getTriageSettings,
+  triggerCompetitorDiscovery,
+  triggerCompetitiveAnalysis,
+} from '../../services/api';
 import Navigation from '../../components/Navigation';
-import { ProductSource, ProductPendingCounts } from '../../types';
-import SessionSelectorModal, { SessionSummary } from './components/SessionSelectorModal';
-import SourceChangeWarning from './components/SourceChangeWarning';
+import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, FeatureCluster, TriageSettings, JobType } from '../../types';
+import IdeaTriageSetupModal from './components/IdeaTriageSetupModal';
+import MarketDiscoverySetupModal from './components/MarketDiscoverySetupModal';
+import CompetitiveAnalysisSetupModal from './components/CompetitiveAnalysisSetupModal';
+import AgentJobStatus from '../../components/AgentJobStatus';
 
 interface StructuredProductData {
   core_features?: string[];
@@ -25,6 +38,7 @@ interface StructuredProductData {
 interface SourceData {
   url?: string;
   filename?: string;
+  sources?: ProductSource[];
 }
 
 interface ProductDetail {
@@ -52,44 +66,40 @@ interface AnalysisHistory {
 export default function ProductDetailPage() {
   const { productId } = useParams<{ productId: string }>();
   const location = useLocation();
-  const [product, setProduct] = useState<ProductDetail | null>(null);
-  const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistory[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [expandedVersions, setExpandedVersions] = useState<Set<number>>(new Set());
-  const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
-  const [sources, setSources] = useState<ProductSource[]>([]);
-  const [sourcesModified, setSourcesModified] = useState<boolean>(false);
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [loadingSessions, setLoadingSessions] = useState<boolean>(false);
-  const [showSessionSelector, setShowSessionSelector] = useState<boolean>(false);
-  const [showSourceChangeWarning, setShowSourceChangeWarning] = useState<boolean>(false);
-  const [pendingCounts, setPendingCounts] = useState<ProductPendingCounts | null>(null);
   const navigate = useNavigate();
 
-  // Fetch pending counts for the alerts section
-  const fetchPendingCounts = useCallback(async () => {
+  // Core product data
+  const [product, setProduct] = useState<ProductDetail | null>(null);
+  const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistory[]>([]);
+  const [sources, setSources] = useState<ProductSource[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Agent-related state
+  const [pendingCounts, setPendingCounts] = useState<ProductPendingCounts | null>(null);
+  const [agentConfig, setAgentConfig] = useState<CompetitiveAgentConfig | null>(null);
+  const [competitors, setCompetitors] = useState<AgentCompetitor[]>([]);
+  const [clusters, setClusters] = useState<FeatureCluster[]>([]);
+  const [triageSettings, setTriageSettings] = useState<TriageSettings | null>(null);
+
+  // UI state
+  const [expandedVersions, setExpandedVersions] = useState<Set<number>>(new Set());
+  const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
+
+  // Modal state
+  const [showIdeaTriageSetup, setShowIdeaTriageSetup] = useState(false);
+  const [showMarketDiscoverySetup, setShowMarketDiscoverySetup] = useState(false);
+  const [showCompetitiveAnalysisSetup, setShowCompetitiveAnalysisSetup] = useState(false);
+
+  // Action state
+  const [runningAction, setRunningAction] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Fetch all data
+  const fetchAllData = useCallback(async () => {
     if (!productId) return;
-    try {
-      const counts = await getProductPendingCounts(parseInt(productId));
-      setPendingCounts(counts);
-    } catch (err) {
-      console.error('[ProductDetail] Failed to fetch pending counts:', err);
-      // Non-critical - don't show error to user
-    }
-  }, [productId]);
+    const numProductId = parseInt(productId);
 
-  // Fetch product data on mount and whenever navigation changes (location.key)
-  // This ensures data is refreshed when returning from other pages
-  useEffect(() => {
-    if (productId) {
-      console.log('[ProductDetail] Fetching product data (location.key:', location.key, ')');
-      fetchProductData();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId, location.key]);
-
-  const fetchProductData = async (): Promise<void> => {
     try {
       setLoading(true);
 
@@ -97,47 +107,57 @@ export default function ProductDetailPage() {
       const productResponse = await api.get<ProductDetail>(`/product-intelligence/products/${productId}`);
       setProduct(productResponse.data);
 
-      // Load sources into state
+      // Parse sources
       const loadedSources = parseProductSources(productResponse.data);
       setSources(loadedSources);
-      setSourcesModified(false);
 
-      // Fetch pending counts for alerts section
-      fetchPendingCounts();
+      // Parallel fetch of additional data
+      const [
+        pendingCountsRes,
+        agentConfigRes,
+        competitorsRes,
+        clustersRes,
+        triageRes,
+        historyRes
+      ] = await Promise.all([
+        getProductPendingCounts(numProductId).catch(() => null),
+        getAgentConfig(numProductId).catch(() => null),
+        getAgentCompetitors(numProductId).catch(() => []),
+        getFeatureClusters(numProductId).catch(() => []),
+        getTriageSettings(numProductId).catch(() => null),
+        productResponse.data.analysis_version > 0
+          ? api.get<AnalysisHistory[]>(`/product-intelligence/products/${productId}/analysis-history`).then(r => r.data)
+          : Promise.resolve([])
+      ]);
 
-      // Fetch analysis history if product has been analyzed
-      if (productResponse.data.analysis_version > 0) {
-        const historyResponse = await api.get<AnalysisHistory[]>(
-          `/product-intelligence/products/${productId}/analysis-history`
-        );
-        setAnalysisHistory(historyResponse.data);
+      setPendingCounts(pendingCountsRes);
+      setAgentConfig(agentConfigRes);
+      setCompetitors(competitorsRes);
+      setClusters(clustersRes);
+      setTriageSettings(triageRes);
+      setAnalysisHistory(historyRes);
 
-        // Fetch sessions for button logic
-        fetchSessions();
-      }
     } catch (err: any) {
       setError(err.message || err.data?.detail || 'Failed to load product');
     } finally {
       setLoading(false);
     }
-  };
+  }, [productId]);
 
-  const fetchSessions = async (): Promise<void> => {
-    try {
-      setLoadingSessions(true);
-      const response = await api.get<SessionSummary[]>(`/product-intelligence/sessions/products/${productId}/sessions`);
-      setSessions(response.data || []);
-    } catch (err) {
-      console.error('[ProductDetail] Failed to fetch sessions:', err);
-      setSessions([]);
-    } finally {
-      setLoadingSessions(false);
+  useEffect(() => {
+    fetchAllData();
+  }, [fetchAllData, location.key]);
+
+  // Clear action message after timeout
+  useEffect(() => {
+    if (actionMessage) {
+      const timer = setTimeout(() => setActionMessage(null), 5000);
+      return () => clearTimeout(timer);
     }
-  };
+  }, [actionMessage]);
 
   const parseProductSources = (productData: ProductDetail): ProductSource[] => {
     if (!productData || !productData.product_source_data) {
-      // Fallback to legacy single-source format
       if (productData?.product_description) {
         return [{
           type: 'text',
@@ -154,7 +174,6 @@ export default function ProductDetailPage() {
       return sourceData.sources;
     }
 
-    // Legacy single-source format
     if (productData.product_description) {
       return [{
         type: 'text',
@@ -167,124 +186,41 @@ export default function ProductDetailPage() {
     return [];
   };
 
-  const handleRemoveSource = async (index: number): Promise<void> => {
-    if (!window.confirm('Are you sure you want to remove this source?')) {
-      return;
-    }
-
-    const newSources = sources.filter((_, i) => i !== index);
-    setSources(newSources);
-    setSourcesModified(true);
-
-    // Save immediately to backend
-    try {
-      const product_description = concatenateSources(newSources);
-      const source_data = {
-        sources: newSources,
-        concatenated_text: product_description,
-        total_tokens_estimate: newSources.reduce((sum, s) => sum + (s.token_estimate || 0), 0),
-      };
-
-      await api.put(`/product-intelligence/products/${productId}`, {
-        product_description,
-        source_type: 'text',
-        source_data,
-      });
-    } catch (err: any) {
-      setError(err.message || err.data?.detail || 'Failed to update product sources');
-    }
-  };
-
-  const concatenateSources = (sourcesToConcat: ProductSource[]): string => {
-    return sourcesToConcat
-      .map((source, index) => {
-        const label =
-          source.type === 'text'
-            ? `Source ${index + 1}: Text Description`
-            : source.type === 'document'
-            ? `Source ${index + 1}: ${source.filename}`
-            : `Source ${index + 1}: ${source.title || source.url}`;
-
-        return `===== ${label.toUpperCase()} =====\n${source.extracted_text || source.content || ''}`;
-      })
-      .join('\n\n');
-  };
-
-  const handleAnalyze = (): void => {
+  const handleChangeSources = () => {
     navigate(`/product-intelligence/products/${productId}/analyze`);
   };
 
-  const handleFindCompetitors = (): void => {
-    // Simple flow for first-time users (no sessions exist)
-    navigate(`/product-intelligence/products/${productId}/sessions`);
-  };
-
-  const handleShowCompetitors = (): void => {
-    // Navigate to most recent session
-    const mostRecentSession = sessions[0]; // Sessions are ordered newest first
-    if (mostRecentSession) {
-      navigate(`/product-intelligence/products/${productId}/sessions/${mostRecentSession.id}`);
-    }
-  };
-
-  const handleDiscoverChanges = async (): Promise<void> => {
-    // Check for source changes before navigating
+  const handleRunMarketDiscovery = async () => {
+    if (!productId) return;
+    setRunningAction('market-discovery');
     try {
-      const response = await api.get(`/product-intelligence/products/${productId}/source-status`);
-
-      if (response.data.sources_changed) {
-        setShowSourceChangeWarning(true);
-        return;
-      }
-    } catch (err) {
-      console.error('[ProductDetail] Failed to check source status:', err);
-      // Continue anyway if check fails
-    }
-
-    // No changes - proceed normally
-    if (sessions.length === 0) {
-      // Fallback: create new session without comparison
-      navigate(`/product-intelligence/products/${productId}/sessions`);
-      return;
-    }
-    setShowSessionSelector(true);
-  };
-
-  const handleSessionSelected = (sessionId: number | null): void => {
-    setShowSessionSelector(false);
-    if (sessionId === null) {
-      // No comparison - fresh discovery
-      navigate(`/product-intelligence/products/${productId}/sessions`);
-    } else {
-      // Navigate with comparison parameters
-      navigate(`/product-intelligence/products/${productId}/sessions?compare=true&compareToSession=${sessionId}`);
+      await triggerCompetitorDiscovery(parseInt(productId));
+      setActionMessage({ type: 'success', text: 'Market Discovery started. Check back shortly for results.' });
+      // Refresh data after a delay
+      setTimeout(fetchAllData, 2000);
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err.message || 'Failed to start Market Discovery' });
+    } finally {
+      setRunningAction(null);
     }
   };
 
-  const handleCancelSessionSelector = (): void => {
-    setShowSessionSelector(false);
-  };
-
-  const handleSourceWarningReanalyze = (): void => {
-    setShowSourceChangeWarning(false);
-    handleAnalyze();  // Trigger product re-analysis
-  };
-
-  const handleSourceWarningContinue = (): void => {
-    setShowSourceChangeWarning(false);
-    // Proceed with session selector
-    if (sessions.length === 0) {
-      navigate(`/product-intelligence/products/${productId}/sessions`);
-      return;
+  const handleRunCompetitiveAnalysis = async () => {
+    if (!productId) return;
+    setRunningAction('competitive-analysis');
+    try {
+      await triggerCompetitiveAnalysis(parseInt(productId));
+      setActionMessage({ type: 'success', text: 'Competitive Analysis started. Deep analysis, clustering, and idea generation will run for all enabled competitors.' });
+      setTimeout(fetchAllData, 2000);
+    } catch (err: any) {
+      const errorDetail = err.response?.data?.detail || err.message || 'Failed to start Competitive Analysis';
+      setActionMessage({ type: 'error', text: errorDetail });
+    } finally {
+      setRunningAction(null);
     }
-    setShowSessionSelector(true);
   };
 
-  const handleSourceWarningCancel = (): void => {
-    setShowSourceChangeWarning(false);
-  };
-
-  const toggleVersionExpanded = (versionId: number): void => {
+  const toggleVersionExpanded = (versionId: number) => {
     setExpandedVersions(prev => {
       const newSet = new Set(prev);
       if (newSet.has(versionId)) {
@@ -296,7 +232,7 @@ export default function ProductDetailPage() {
     });
   };
 
-  const toggleSourceExpansion = (index: number): void => {
+  const toggleSourceExpansion = (index: number) => {
     setExpandedSources(prev => {
       const newSet = new Set(prev);
       if (newSet.has(index)) {
@@ -309,20 +245,19 @@ export default function ProductDetailPage() {
   };
 
   const getSourceLabel = (source: ProductSource, index: number): string => {
-    if (source.type === 'text') {
-      return `Text Description ${index + 1}`;
-    } else if (source.type === 'document') {
-      return source.filename || 'Document';
-    } else if (source.type === 'url') {
-      return source.title || source.url || 'URL';
-    }
+    if (source.type === 'text') return `Text Description ${index + 1}`;
+    if (source.type === 'document') return source.filename || 'Document';
+    if (source.type === 'url') return source.title || source.url || 'URL';
     return `Source ${index + 1}`;
   };
 
-  const getSourcePreview = (source: ProductSource): string => {
-    const text = source.extracted_text || source.content || '';
-    return text.length > 150 ? text.substring(0, 150) + '...' : text;
-  };
+  // Calculate stats
+  const totalCompetitors = competitors.length;
+  const newCompetitors = competitors.filter(c => (c as any).is_new).length;
+  const trackingCompetitors = competitors.filter(c => c.deep_analysis_enabled).length;
+  const totalFeatures = competitors.reduce((sum, c) => sum + (c.feature_count || 0), 0);
+  const totalClusters = clusters.length;
+  const ideasFromClusters = clusters.filter(c => c.idea_generated).length;
 
   if (loading) {
     return (
@@ -355,384 +290,203 @@ export default function ProductDetailPage() {
       <Navigation />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Header */}
         <div className="mb-6">
           <button
             onClick={() => navigate('/product-intelligence')}
             className="text-blue-600 hover:text-blue-800 mb-4 font-medium"
           >
-            ← Back to Products
+            ← All Products
           </button>
 
           <div className="flex justify-between items-start">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-3">
-                {product.product_name}
-              </h1>
-              <div className="flex flex-wrap gap-2">
-                {product.analysis_version > 0 ? (
-                  <span className="inline-block px-3 py-1 bg-green-100 text-green-800 text-sm rounded-full font-medium">
-                    ✓ Analyzed (v{product.analysis_version})
-                  </span>
-                ) : (
-                  <span className="inline-block px-3 py-1 bg-yellow-100 text-yellow-800 text-sm rounded-full font-medium">
-                    Not Analyzed
-                  </span>
-                )}
-                {product.product_category && (
-                  <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full font-medium">
-                    {product.product_category}
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="flex flex-col sm:flex-row gap-3">
-              {/* Intelligence Hub - New Agent-Centric UI */}
-              <Link
-                to={`/product-intelligence/products/${productId}/intelligence`}
-                className="w-full sm:w-auto px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium flex items-center justify-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-                <span className="hidden md:inline">Intelligence Hub</span>
-                <span className="md:hidden">Intel</span>
-              </Link>
-              {/* Manage Monitoring link (Legacy) */}
-              <Link
-                to={`/product-intelligence/products/${productId}/dashboard`}
-                className="w-full sm:w-auto px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium flex items-center justify-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <span className="hidden md:inline">Monitoring</span>
-                <span className="md:hidden">Mon</span>
-              </Link>
-              {/* Scenario 1: No sessions - Simple "Find Competitors" button */}
-              {product.analysis_version > 0 && sessions.length === 0 && (
-                <button
-                  onClick={handleFindCompetitors}
-                  className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2"
-                >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                  Find Competitors
-                </button>
-              )}
-
-              {/* Scenario 2: Sessions exist - Show Competitors & Discover Changes */}
-              {product.analysis_version > 0 && sessions.length > 0 && (
-                <>
-                  {/* Show existing competitors */}
-                  <button
-                    onClick={handleShowCompetitors}
-                    className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2"
-                  >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                    <span className="hidden md:inline">Show Competitors</span>
-                    <span className="md:hidden">Competitors</span>
-                  </button>
-
-                  {/* Discover changes (differential) */}
-                  <button
-                    onClick={handleDiscoverChanges}
-                    className="w-full sm:w-auto px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium flex items-center justify-center gap-2"
-                  >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                    </svg>
-                    <span className="hidden md:inline">Discover Changes</span>
-                    <span className="md:hidden">Changes</span>
-                  </button>
-                </>
-              )}
-
-              {/* Always show re-analyze */}
-              <button
-                onClick={handleAnalyze}
-                className="w-full sm:w-auto px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                </svg>
-                {product.analysis_version > 0 ? (
-                  <>
-                    <span className="hidden md:inline">Re-analyze Product</span>
-                    <span className="md:hidden">Re-analyze</span>
-                  </>
-                ) : (
-                  'Analyze Product'
-                )}
-              </button>
-            </div>
+            <h1 className="text-3xl font-bold text-gray-900">
+              {product.product_name}
+            </h1>
+            <button
+              onClick={handleChangeSources}
+              className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+            >
+              Change Sources
+            </button>
           </div>
         </div>
 
-        {/* Alerts Summary Section */}
-        {pendingCounts && (pendingCounts.ideas_pending > 0 || pendingCounts.ideas_auto_responded > 0 || pendingCounts.competitive_alerts > 0) && (
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Items Awaiting Review
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Ideas awaiting response */}
-              {pendingCounts.ideas_pending > 0 && (
-                <Link
-                  to={`/ideas?product_id=${productId}&status=pending`}
-                  className="flex items-center p-4 bg-yellow-50 border border-yellow-200 rounded-lg hover:bg-yellow-100 transition-colors"
-                >
-                  <div className="flex-shrink-0 p-2 bg-yellow-100 rounded-lg">
-                    <svg className="w-6 h-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                    </svg>
-                  </div>
-                  <div className="ml-4">
-                    <p className="text-sm font-medium text-gray-900">
-                      {pendingCounts.ideas_pending} {pendingCounts.ideas_pending === 1 ? 'Idea' : 'Ideas'} Awaiting Response
-                    </p>
-                    <p className="text-xs text-gray-500">Click to review</p>
-                  </div>
-                </Link>
-              )}
-
-              {/* Auto-responded ideas */}
-              {pendingCounts.ideas_auto_responded > 0 && (
-                <Link
-                  to={`/ideas?product_id=${productId}&auto_responded=true`}
-                  className="flex items-center p-4 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors"
-                >
-                  <div className="flex-shrink-0 p-2 bg-purple-100 rounded-lg">
-                    <svg className="w-6 h-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                    </svg>
-                  </div>
-                  <div className="ml-4">
-                    <p className="text-sm font-medium text-gray-900">
-                      {pendingCounts.ideas_auto_responded} Auto-{pendingCounts.ideas_auto_responded === 1 ? 'Response' : 'Responses'} to Review
-                    </p>
-                    <p className="text-xs text-gray-500">AI-generated responses</p>
-                  </div>
-                </Link>
-              )}
-
-              {/* Competitive alerts */}
-              {pendingCounts.competitive_alerts > 0 && (
-                <Link
-                  to={`/product-intelligence/products/${productId}/dashboard`}
-                  className="flex items-center p-4 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 transition-colors"
-                >
-                  <div className="flex-shrink-0 p-2 bg-orange-100 rounded-lg">
-                    <svg className="w-6 h-6 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                  </div>
-                  <div className="ml-4">
-                    <p className="text-sm font-medium text-gray-900">
-                      {pendingCounts.competitive_alerts} Competitive {pendingCounts.competitive_alerts === 1 ? 'Alert' : 'Alerts'}
-                    </p>
-                    <p className="text-xs text-gray-500">Market changes detected</p>
-                  </div>
-                </Link>
-              )}
-            </div>
+        {/* Action Message */}
+        {actionMessage && (
+          <div className={`mb-6 p-4 rounded-lg ${
+            actionMessage.type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'
+          }`}>
+            {actionMessage.text}
           </div>
         )}
 
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">
-              Product Information Sources
-            </h2>
-            <button
-              onClick={handleAnalyze}
-              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium"
-            >
-              + Add Sources
-            </button>
+        {/* Agent Status Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          {/* Idea Triage Agent Tile */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900">Idea Triage Agent</h3>
+              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                triageSettings?.auto_enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+              }`}>
+                {triageSettings?.auto_enabled ? 'Automatic' : 'Recommendations'}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              <div className="text-sm text-gray-600">
+                {pendingCounts && (pendingCounts.ideas_pending > 0 || pendingCounts.ideas_needs_review > 0) ? (
+                  <Link
+                    to={`/ideas?product_id=${productId}`}
+                    className="text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    {(pendingCounts.ideas_pending || 0) + (pendingCounts.ideas_needs_review || 0)} {
+                      (pendingCounts.ideas_pending || 0) + (pendingCounts.ideas_needs_review || 0) === 1 ? 'idea' : 'ideas'
+                    } awaiting review →
+                  </Link>
+                ) : (
+                  <span className="text-gray-500">No ideas awaiting review</span>
+                )}
+              </div>
+
+              <div className="text-sm text-gray-500">
+                Automatic Responses: {triageSettings?.auto_enabled ? 'On' : 'Off'}
+                {triageSettings?.auto_enabled && ` (${Math.round((triageSettings.auto_threshold || 0) * 100)}% threshold)`}
+              </div>
+
+              <button
+                onClick={() => setShowIdeaTriageSetup(true)}
+                className="w-full px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+              >
+                Setup
+              </button>
+            </div>
           </div>
 
-          {sourcesModified && product?.analysis_version && product.analysis_version > 0 && (
-            <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-              <p className="text-sm text-yellow-800">
-                <span className="font-medium">Sources modified.</span> Click "Re-analyze Product" to update your analysis with the new information.
-              </p>
+          {/* Market Discovery Agent Tile */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900">Market Discovery Agent</h3>
+              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                agentConfig?.competitor_discovery_mode === 'scheduled' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+              }`}>
+                {agentConfig?.competitor_discovery_mode === 'scheduled' ? 'Automatic' : 'Manual'}
+              </span>
             </div>
-          )}
 
-          {sources.length > 0 ? (
-            <div className="space-y-2">
-              {sources.map((source, index) => {
-                const isExpanded = expandedSources.has(index);
-                const fullText = source.extracted_text || source.content || '';
+            <div className="space-y-3">
+              {/* Job Status */}
+              <AgentJobStatus
+                productId={parseInt(productId!)}
+                jobTypes={[JobType.COMPETITOR_DISCOVERY]}
+                onJobComplete={fetchAllData}
+              />
 
-                return (
-                  <div
-                    key={index}
-                    className="bg-gray-50 rounded-md border border-gray-200 overflow-hidden"
+              <div className="text-sm text-gray-600">
+                {totalCompetitors > 0 ? (
+                  <Link
+                    to={`/product-intelligence/products/${productId}/competitors`}
+                    className="text-blue-600 hover:text-blue-800 font-medium"
                   >
-                    {/* Header - Always visible, clickable to expand */}
-                    <div className="flex items-start gap-3 p-3">
-                      {/* Source Icon */}
-                      <div className="flex-shrink-0 mt-1">
-                        {source.type === 'text' && (
-                          <svg
-                            className="h-5 w-5 text-gray-400"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M4 6h16M4 12h16M4 18h7"
-                            />
-                          </svg>
-                        )}
-                        {source.type === 'document' && (
-                          <svg
-                            className="h-5 w-5 text-blue-500"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
-                            />
-                          </svg>
-                        )}
-                        {source.type === 'url' && (
-                          <svg
-                            className="h-5 w-5 text-green-500"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
-                            />
-                          </svg>
-                        )}
-                      </div>
+                    {totalCompetitors} competitors discovered{newCompetitors > 0 && `; ${newCompetitors} new`} →
+                  </Link>
+                ) : (
+                  <span className="text-gray-500">No competitors discovered</span>
+                )}
+              </div>
 
-                      {/* Source Content - Clickable area */}
-                      <div
-                        className="flex-1 min-w-0 cursor-pointer"
-                        onClick={() => toggleSourceExpansion(index)}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <h4 className="text-sm font-medium text-gray-900 truncate">
-                            {getSourceLabel(source, index)}
-                          </h4>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500 whitespace-nowrap">
-                              {source.token_estimate?.toLocaleString() || 0} tokens
-                            </span>
-                            {/* Expand/Collapse icon */}
-                            <svg
-                              className={`h-4 w-4 text-gray-400 transition-transform ${
-                                isExpanded ? 'transform rotate-180' : ''
-                              }`}
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M19 9l-7 7-7-7"
-                              />
-                            </svg>
-                          </div>
-                        </div>
+              <div className="text-sm text-gray-500">
+                {trackingCompetitors} competitors selected for deep analysis
+              </div>
 
-                        {!isExpanded && (
-                          <p className="text-xs text-gray-600 mt-1">
-                            {getSourcePreview(source)}
-                          </p>
-                        )}
-
-                        {source.type === 'document' && source.size_mb !== undefined && !isExpanded && (
-                          <p className="text-xs text-gray-500 mt-1">
-                            {source.size_mb.toFixed(1)} MB
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Remove Button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRemoveSource(index);
-                        }}
-                        className="flex-shrink-0 p-1 text-gray-400 hover:text-red-600 transition-colors"
-                        title="Remove source"
-                      >
-                        <svg
-                          className="h-5 w-5"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M6 18L18 6M6 6l12 12"
-                          />
-                        </svg>
-                      </button>
-                    </div>
-
-                    {/* Expanded Content - Show full text when expanded */}
-                    {isExpanded && (
-                      <div className="px-3 pb-3 pl-11">
-                        <div className="mt-2 p-3 bg-white rounded border border-gray-200 max-h-96 overflow-y-auto">
-                          <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans">
-                            {fullText}
-                          </pre>
-                        </div>
-
-                        {/* Additional metadata when expanded */}
-                        <div className="mt-2 flex gap-4 text-xs text-gray-500">
-                          {source.type === 'document' && source.size_mb !== undefined && (
-                            <span>File size: {source.size_mb.toFixed(1)} MB</span>
-                          )}
-                          {source.type === 'url' && source.url && (
-                            <span>URL: {source.url}</span>
-                          )}
-                          {source.type === 'url' && source.fetch_timestamp && (
-                            <span>Fetched: {new Date(source.fetch_timestamp).toLocaleString()}</span>
-                          )}
-                          <span>Characters: {fullText.length.toLocaleString()}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleRunMarketDiscovery}
+                  disabled={runningAction === 'market-discovery'}
+                  className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
+                >
+                  {runningAction === 'market-discovery' ? 'Running...' : 'Run Now'}
+                </button>
+                <button
+                  onClick={() => setShowMarketDiscoverySetup(true)}
+                  className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+                >
+                  Setup
+                </button>
+              </div>
             </div>
-          ) : (
-            <p className="text-gray-500 text-sm">No product information available</p>
-          )}
+          </div>
+
+          {/* Competitive Analysis Agent Tile */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900">Competitive Analysis Agent</h3>
+              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                agentConfig?.deep_analysis_mode === 'scheduled' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+              }`}>
+                {agentConfig?.deep_analysis_mode === 'scheduled' ? 'Automatic' : 'Manual'}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {/* Job Status */}
+              <AgentJobStatus
+                productId={parseInt(productId!)}
+                jobTypes={[JobType.FEATURE_CLUSTERING, JobType.DEEP_ANALYSIS, JobType.SCHEDULED_DEEP_ANALYSIS]}
+                onJobComplete={fetchAllData}
+              />
+
+              <div className="text-sm text-gray-600">
+                {(pendingCounts?.competitive_alerts || 0) > 0 ? (
+                  <Link
+                    to={`/product-intelligence/products/${productId}/report`}
+                    className="text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    {pendingCounts?.competitive_alerts} new competitive alerts →
+                  </Link>
+                ) : (
+                  <Link
+                    to={`/product-intelligence/products/${productId}/report`}
+                    className="text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    Go to Report →
+                  </Link>
+                )}
+              </div>
+
+              <div className="text-sm text-gray-500">
+                {totalFeatures} competitive features extracted
+              </div>
+
+              <div className="text-sm text-gray-500">
+                {totalClusters} feature clusters; {ideasFromClusters} ideas created
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={handleRunCompetitiveAnalysis}
+                  disabled={runningAction === 'competitive-analysis'}
+                  className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
+                >
+                  {runningAction === 'competitive-analysis' ? 'Running...' : 'Run Now'}
+                </button>
+                <button
+                  onClick={() => setShowCompetitiveAnalysisSetup(true)}
+                  className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+                >
+                  Setup
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
+        {/* Current Product Analysis */}
         {currentAnalysis && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Current Analysis (Version {product.analysis_version})
+              Current Product Analysis
             </h2>
             <div className="space-y-4">
               {currentAnalysis.core_features && currentAnalysis.core_features.length > 0 && (
@@ -801,6 +555,95 @@ export default function ProductDetailPage() {
           </div>
         )}
 
+        {/* Product Information Sources */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Product Information Sources
+            </h2>
+            <button
+              onClick={handleChangeSources}
+              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium"
+            >
+              Change Sources
+            </button>
+          </div>
+
+          {sources.length > 0 ? (
+            <div className="space-y-2">
+              {sources.map((source, index) => {
+                const isExpanded = expandedSources.has(index);
+                const fullText = source.extracted_text || source.content || '';
+
+                return (
+                  <div
+                    key={index}
+                    className="bg-gray-50 rounded-md border border-gray-200 overflow-hidden"
+                  >
+                    <div
+                      className="flex items-center gap-3 p-3 cursor-pointer"
+                      onClick={() => toggleSourceExpansion(index)}
+                    >
+                      <div className="flex-shrink-0">
+                        {source.type === 'text' && (
+                          <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+                          </svg>
+                        )}
+                        {source.type === 'document' && (
+                          <svg className="h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                          </svg>
+                        )}
+                        {source.type === 'url' && (
+                          <svg className="h-5 w-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                          </svg>
+                        )}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-medium text-gray-900 truncate">
+                          {getSourceLabel(source, index)}
+                        </h4>
+                        {source.url && (
+                          <p className="text-xs text-gray-500 truncate">{source.url}</p>
+                        )}
+                      </div>
+
+                      <span className="text-xs text-gray-500">
+                        {source.token_estimate?.toLocaleString() || 0} tokens
+                      </span>
+
+                      <svg
+                        className={`h-4 w-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="px-3 pb-3 pl-11">
+                        <div className="p-3 bg-white rounded border border-gray-200 max-h-60 overflow-y-auto">
+                          <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans">
+                            {fullText}
+                          </pre>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-gray-500 text-sm">No product information sources configured</p>
+          )}
+        </div>
+
+        {/* Analysis History */}
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">
             Analysis History ({analysisHistory.length})
@@ -808,134 +651,155 @@ export default function ProductDetailPage() {
 
           {analysisHistory.length === 0 ? (
             <div className="text-center py-8">
-              <div className="text-gray-500 mb-4">
-                <svg
-                  className="mx-auto h-12 w-12 text-gray-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                  />
-                </svg>
-              </div>
               <p className="text-gray-500 mb-4">No analyses yet</p>
               <button
-                onClick={handleAnalyze}
+                onClick={handleChangeSources}
                 className="text-blue-600 hover:text-blue-800 font-medium"
               >
-                Run your first analysis
+                Add sources and run analysis
               </button>
             </div>
           ) : (
             <div className="space-y-4">
-              {analysisHistory.map((analysis) => (
-                <div
-                  key={analysis.id}
-                  className="border border-gray-200 rounded-lg p-4"
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <div>
-                      <h3 className="font-medium text-gray-900">
-                        Version {analysis.analysis_version}
-                        {analysis.analysis_version === product.analysis_version && (
-                          <span className="ml-2 text-xs text-green-600 font-semibold">
-                            (Current)
-                          </span>
+              {analysisHistory.map((analysis) => {
+                const isExpanded = expandedVersions.has(analysis.id);
+                const historySources = analysis.product_source_data?.sources || [];
+
+                return (
+                  <div
+                    key={analysis.id}
+                    className="border border-gray-200 rounded-lg overflow-hidden"
+                  >
+                    <div
+                      className="flex justify-between items-start p-4 cursor-pointer hover:bg-gray-50"
+                      onClick={() => toggleVersionExpanded(analysis.id)}
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-medium text-gray-900">
+                            Version {analysis.analysis_version}
+                            {analysis.analysis_version === product.analysis_version && (
+                              <span className="ml-2 text-xs text-green-600 font-semibold">(Current)</span>
+                            )}
+                          </h3>
+                        </div>
+                        <p className="text-sm text-gray-500">
+                          {format(new Date(analysis.created_at), 'MMM d, yyyy h:mm a')}
+                        </p>
+                        {historySources.length > 0 && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            {historySources.length} {historySources.length === 1 ? 'source' : 'sources'}
+                            {historySources.filter(s => s.url).length > 0 && (
+                              <span className="ml-1">
+                                ({historySources.filter(s => s.url).map(s => s.title || s.url).slice(0, 2).join(', ')}
+                                {historySources.filter(s => s.url).length > 2 && '...'})
+                              </span>
+                            )}
+                          </p>
                         )}
-                      </h3>
-                      <p className="text-sm text-gray-500">
-                        Analyzed {formatDistanceToNow(new Date(analysis.created_at), {
-                          addSuffix: true,
-                        })}
-                      </p>
+                      </div>
+                      <svg
+                        className={`h-5 w-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
                     </div>
-                    {analysis.tokens_used && (
-                      <span className="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full">
-                        {analysis.tokens_used} tokens
-                      </span>
+
+                    {isExpanded && (
+                      <div className="border-t border-gray-200 p-4 bg-gray-50">
+                        {/* Sources for this version */}
+                        {historySources.length > 0 && (
+                          <div className="mb-4">
+                            <h4 className="text-sm font-medium text-gray-700 mb-2">Sources Used</h4>
+                            <div className="space-y-1">
+                              {historySources.map((source, idx) => (
+                                <div key={idx} className="text-sm text-gray-600 flex items-center gap-2">
+                                  <span className="font-medium">{source.type}:</span>
+                                  {source.url ? (
+                                    <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline truncate">
+                                      {source.title || source.url}
+                                    </a>
+                                  ) : source.filename ? (
+                                    <span>{source.filename}</span>
+                                  ) : (
+                                    <span>Text description</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Analysis structure */}
+                        {analysis.analyzed_structure && (
+                          <div className="space-y-2">
+                            <h4 className="text-sm font-medium text-gray-700">Analysis Results</h4>
+                            <p className="text-sm text-gray-600">
+                              {analysis.analyzed_structure.core_features?.length || 0} features •{' '}
+                              {analysis.analyzed_structure.value_propositions?.length || 0} value props •{' '}
+                              {analysis.analyzed_structure.competitor_search_keywords?.length || 0} keywords
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Full description if available */}
+                        {analysis.product_description && (
+                          <div className="mt-4">
+                            <h4 className="text-sm font-medium text-gray-700 mb-2">Consolidated Product Info</h4>
+                            <div className="p-3 bg-white rounded border border-gray-200 max-h-60 overflow-y-auto">
+                              <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans">
+                                {analysis.product_description}
+                              </pre>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
-                  {analysis.analyzed_structure && (
-                    <div className="mt-3 text-sm text-gray-600 space-y-1">
-                      <p>
-                        {analysis.analyzed_structure.core_features?.length || 0} features •{' '}
-                        {analysis.analyzed_structure.value_propositions?.length || 0} value props
-                      </p>
-                      {analysis.product_source_type && analysis.product_source_type !== 'text' && (
-                        <p className="text-xs">
-                          <span className="font-medium">Source:</span>{' '}
-                          <span className="capitalize">{analysis.product_source_type}</span>
-                          {analysis.product_source_data?.url && (
-                            <span className="ml-1 text-blue-600">
-                              <a href={analysis.product_source_data.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                                {analysis.product_source_data.url}
-                              </a>
-                            </span>
-                          )}
-                          {analysis.product_source_data?.filename && (
-                            <span className="ml-1">: {analysis.product_source_data.filename}</span>
-                          )}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  {analysis.product_description && (
-                    <div className="mt-3 border-t border-gray-200 pt-3">
-                      <button
-                        onClick={() => toggleVersionExpanded(analysis.id)}
-                        className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 font-medium"
-                      >
-                        {expandedVersions.has(analysis.id) ? (
-                          <>
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
-                            Hide Product Description
-                          </>
-                        ) : (
-                          <>
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                            </svg>
-                            View Product Description
-                          </>
-                        )}
-                      </button>
-                      {expandedVersions.has(analysis.id) && (
-                        <div className="mt-2 p-3 bg-gray-50 rounded text-sm text-gray-700 whitespace-pre-wrap">
-                          {analysis.product_description}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       </main>
 
-      {/* Session Selector Modal */}
-      {showSessionSelector && (
-        <SessionSelectorModal
-          sessions={sessions}
-          currentSessionId={sessions[0]?.id || null}
-          onSelect={handleSessionSelected}
-          onCancel={handleCancelSessionSelector}
+      {/* Setup Modals */}
+      {showIdeaTriageSetup && (
+        <IdeaTriageSetupModal
+          productId={parseInt(productId!)}
+          currentSettings={triageSettings}
+          onClose={() => setShowIdeaTriageSetup(false)}
+          onSave={(settings) => {
+            setTriageSettings(settings);
+            setShowIdeaTriageSetup(false);
+          }}
         />
       )}
 
-      {/* Source Change Warning Modal */}
-      {showSourceChangeWarning && (
-        <SourceChangeWarning
-          onReanalyze={handleSourceWarningReanalyze}
-          onContinueAnyway={handleSourceWarningContinue}
-          onCancel={handleSourceWarningCancel}
+      {showMarketDiscoverySetup && (
+        <MarketDiscoverySetupModal
+          productId={parseInt(productId!)}
+          currentConfig={agentConfig}
+          onClose={() => setShowMarketDiscoverySetup(false)}
+          onSave={(config) => {
+            setAgentConfig(config);
+            setShowMarketDiscoverySetup(false);
+          }}
+        />
+      )}
+
+      {showCompetitiveAnalysisSetup && (
+        <CompetitiveAnalysisSetupModal
+          productId={parseInt(productId!)}
+          currentConfig={agentConfig}
+          onClose={() => setShowCompetitiveAnalysisSetup(false)}
+          onSave={(config) => {
+            setAgentConfig(config);
+            setShowCompetitiveAnalysisSetup(false);
+          }}
         />
       )}
     </div>

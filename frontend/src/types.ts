@@ -78,6 +78,9 @@ export interface VoteCount {
   total_votes: number;
 }
 
+// Sort options for ideas list
+export type IdeaSortOption = 'most_votes' | 'pending_first' | 'most_recent' | 'my_ideas';
+
 export interface IdeaListItem {
   id: number;
   title: string;
@@ -93,6 +96,8 @@ export interface IdeaListItem {
   is_active: boolean | null;
   duplicate_of_idea_id: number | null;
   duplicate_of_title: string | null;
+  // Submitter info
+  submitter_id: number | null;
   // Vote counts
   vote_counts: VoteCount;
   user_vote: number | null;
@@ -306,6 +311,11 @@ export enum JobType {
   IDEA_TRIAGE = 'idea_triage',
   COMPETITIVE_MONITORING = 'competitive_monitoring',
   FULL_WORKFLOW = 'full_workflow',
+  // Agent-Centric Architecture job types
+  DEEP_ANALYSIS = 'deep_analysis',
+  SCHEDULED_DEEP_ANALYSIS = 'scheduled_deep_analysis',
+  FEATURE_CLUSTERING = 'feature_clustering',
+  INTENSITY_IDEA_GENERATION = 'intensity_idea_generation',
 }
 
 export enum JobStatus {
@@ -580,12 +590,20 @@ export interface IdeaVoter {
   username: string;
 }
 
+export interface ExistingFeatureMatch {
+  feature_name: string;
+  feature_description: string;
+  similarity_score: number;
+  source_url?: string | null;
+}
+
 export interface SourceSummary {
   vote_count: number;
   downvote_count: number;
   voters: IdeaVoter[];
   competitors_with_feature: string[];
   competitive_urgency: string | null;
+  existing_feature: ExistingFeatureMatch | null;
 }
 
 export interface CurrentResponse {
@@ -634,7 +652,7 @@ export interface CanRespondResponse {
 export interface ProductPendingCounts {
   product_id: number;
   ideas_pending: number;
-  ideas_needs_review: number;
+  ideas_needs_review: number;  // Used as "auto-responded" in display
   competitive_alerts: number;
 }
 

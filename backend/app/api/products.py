@@ -820,8 +820,11 @@ async def fetch_url(
 
     Raises:
         400: If URL is invalid, blocked, or fetch fails
+        422: If URL fetched but no content found (SPA/JavaScript page)
         500: If unexpected error occurs
     """
+    from app.services.document_parsing_service import NoContentError
+
     parsing_service = DocumentParsingService()
 
     try:
@@ -833,6 +836,17 @@ async def fetch_url(
         )
 
         return result
+    except NoContentError as e:
+        # No extractable content - return 422 with meta info for fallback options
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "no_content",
+                "message": str(e),
+                "meta_info": e.meta_info,
+                "has_meta": bool(e.meta_info)
+            }
+        )
     except ValueError as e:
         # Validation errors (invalid URL, blocked IP, etc.)
         raise HTTPException(
@@ -841,6 +855,50 @@ async def fetch_url(
         )
     except Exception as e:
         # Fetch errors (timeout, connection failed, etc.)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+
+@router.post("/fetch-url-meta")
+async def fetch_url_meta(
+    url: str = Body(..., embed=True),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Fetch only meta tags from a URL.
+
+    Use this endpoint as a fallback when the main fetch-url endpoint
+    returns no content (e.g., for Single Page Applications).
+
+    Returns:
+        {
+            'url': str,
+            'title': str,
+            'extracted_text': str (composed from meta tags),
+            'fetch_timestamp': str,
+            'token_estimate': int,
+            'source': 'meta_tags'
+        }
+    """
+    parsing_service = DocumentParsingService()
+
+    try:
+        result = parsing_service.fetch_url_meta_only(url)
+
+        # Add token estimate
+        result['token_estimate'] = parsing_service.count_tokens_estimate(
+            result['extracted_text']
+        )
+
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)

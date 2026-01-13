@@ -214,6 +214,7 @@ interface GetIdeasParams {
   skip?: number;
   limit?: number;
   product_id?: number;
+  sort_by?: 'most_votes' | 'pending_first' | 'most_recent' | 'my_ideas';
 }
 
 /**
@@ -825,11 +826,22 @@ export const triggerProductReanalysis = async (productId: number): Promise<Agent
 };
 
 /**
- * Trigger feature clustering
+ * Trigger feature clustering only (re-cluster existing features)
  */
 export const triggerFeatureClustering = async (productId: number): Promise<AgentJobResponse> => {
   const response = await api.post<AgentJobResponse>(
     `/product-intelligence/agents/${productId}/run-clustering`
+  );
+  return response.data;
+};
+
+/**
+ * Trigger full competitive analysis workflow.
+ * This runs deep analysis on all enabled competitors, then clustering, then idea generation.
+ */
+export const triggerCompetitiveAnalysis = async (productId: number): Promise<AgentJobResponse> => {
+  const response = await api.post<AgentJobResponse>(
+    `/product-intelligence/agents/${productId}/run-competitive-analysis`
   );
   return response.data;
 };

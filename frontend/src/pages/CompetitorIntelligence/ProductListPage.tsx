@@ -17,6 +17,7 @@ interface ProductWithCounts extends Product {
   product_name?: string;
   product_description?: string;
   product_category?: string;
+  product_source_data?: { sources?: any[] };
   analysis_version?: number;
   analysis_count?: number;
   last_analyzed_at?: string;
@@ -150,15 +151,26 @@ export default function ProductListPage() {
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {products.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                onClick={() => handleViewProduct(product.id)}
-              />
-            ))}
-          </div>
+          <>
+            {/* Products Section Header */}
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Products</h2>
+
+            {/* Grid - full width for single product, grid for multiple */}
+            <div className={
+              products.length === 1
+                ? 'space-y-4'
+                : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6'
+            }>
+              {products.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  onClick={() => handleViewProduct(product.id)}
+                  fullWidth={products.length === 1}
+                />
+              ))}
+            </div>
+          </>
         )}
       </main>
     </div>

@@ -21,10 +21,18 @@ import { getIdeas, checkCanRespond } from '../services/api';
 import IdeaCard from '../components/IdeaCard';
 import IdeaResponseModal from '../components/IdeaResponseModal';
 import Navigation from '../components/Navigation';
-import type { IdeaListItem, ApiError } from '../types';
+import type { IdeaListItem, ApiError, IdeaSortOption } from '../types';
 import { UserRole } from '../types';
 
 const ITEMS_PER_PAGE = 20;
+
+// Sort option labels for the dropdown
+const SORT_OPTIONS: { value: IdeaSortOption; label: string; description: string }[] = [
+  { value: 'pending_first', label: 'Needs Review', description: 'Ideas awaiting review first' },
+  { value: 'most_votes', label: 'Most Popular', description: 'Highest voted ideas first' },
+  { value: 'most_recent', label: 'Most Recent', description: 'Newest ideas first' },
+  { value: 'my_ideas', label: 'My Ideas', description: 'Your submitted ideas first' },
+];
 
 const IdeasPage = () => {
   const { user } = useAuth();
@@ -44,6 +52,9 @@ const IdeasPage = () => {
   const [ideas, setIdeas] = useState<IdeaListItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
+
+  // Sort state - default depends on role (set in useEffect)
+  const [sortBy, setSortBy] = useState<IdeaSortOption | undefined>(undefined);
 
   // PO mode state
   const [respondingToIdeaId, setRespondingToIdeaId] = useState<number | null>(null);
@@ -70,7 +81,7 @@ const IdeasPage = () => {
   }, [searchParams, setSelectedProductId]);
 
   /**
-   * Fetch ideas from API with pagination
+   * Fetch ideas from API with pagination and sorting
    */
   const fetchIdeas = useCallback(async () => {
     try {
@@ -78,9 +89,14 @@ const IdeasPage = () => {
       setError('');
 
       const skip = (currentPage - 1) * ITEMS_PER_PAGE;
+      const baseParams = {
+        skip,
+        limit: ITEMS_PER_PAGE,
+        ...(sortBy && { sort_by: sortBy }),
+      };
       const params = (selectedProductId === 'all' || selectedProductId === null)
-        ? { skip, limit: ITEMS_PER_PAGE }
-        : { product_id: selectedProductId, skip, limit: ITEMS_PER_PAGE };
+        ? baseParams
+        : { ...baseParams, product_id: selectedProductId };
 
       const response = await getIdeas(params);
 
@@ -94,9 +110,9 @@ const IdeasPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedProductId, currentPage]);
+  }, [selectedProductId, currentPage, sortBy]);
 
-  // Fetch ideas when product selection or page changes
+  // Fetch ideas when product selection, page, or sort changes
   useEffect(() => {
     if (!loadingProducts) {
       fetchIdeas();
@@ -123,6 +139,12 @@ const IdeasPage = () => {
       setSearchParams({ product: newProductId.toString() });
     }
   }, [setSelectedProductId, setSearchParams]);
+
+  const handleSortChange = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value as IdeaSortOption;
+    setSortBy(value);
+    setCurrentPage(1);  // Reset to first page when changing sort
+  }, []);
 
   const handlePageChange = useCallback((newPage: number) => {
     setCurrentPage(newPage);
@@ -242,25 +264,49 @@ const IdeasPage = () => {
           </div>
         )}
 
-        {/* Product Selector */}
+        {/* Filters: Product Selector and Sort */}
         {!loadingProducts && hasProducts && (
           <div className="mb-6 bg-white rounded-lg border border-gray-200 p-4">
-            <label htmlFor="product-filter" className="block text-sm font-medium text-gray-700 mb-2">
-              Filter by Product
-            </label>
-            <select
-              id="product-filter"
-              value={selectedProductId ?? 'all'}
-              onChange={handleProductChange}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="all">All Products</option>
-              {products.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {product.product_name}
-                </option>
-              ))}
-            </select>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Product Filter */}
+              <div>
+                <label htmlFor="product-filter" className="block text-sm font-medium text-gray-700 mb-2">
+                  Filter by Product
+                </label>
+                <select
+                  id="product-filter"
+                  value={selectedProductId ?? 'all'}
+                  onChange={handleProductChange}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="all">All Products</option>
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.product_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Sort Order */}
+              <div>
+                <label htmlFor="sort-order" className="block text-sm font-medium text-gray-700 mb-2">
+                  Sort By
+                </label>
+                <select
+                  id="sort-order"
+                  value={sortBy || (isPOOrAdmin ? 'pending_first' : 'most_votes')}
+                  onChange={handleSortChange}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  {SORT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
         )}
 

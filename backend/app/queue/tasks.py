@@ -959,6 +959,16 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             auto_respond_enabled = product.idea_triage_auto_enabled
             auto_respond_threshold = getattr(product, 'idea_triage_auto_threshold', 0.9)
 
+        # Apply existing feature fallback BEFORE status determination
+        # If agent didn't populate existing_feature_info but we detected a match, use the detected match
+        if not triage_result.get('existing_feature_info') and product_feature_result.has_match and product_feature_result.best_match:
+            triage_result['existing_feature_info'] = {
+                'feature_name': product_feature_result.best_match.feature_name,
+                'feature_description': product_feature_result.best_match.feature_description,
+                'similarity_score': product_feature_result.best_match.similarity_score,
+                'source_url': product_feature_result.best_match.source_url,
+            }
+
         # Determine status (only auto-approves if auto-respond is enabled)
         # Returns IdeaStatus enum directly
         new_status = agent.determine_triage_status(
@@ -996,11 +1006,20 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         comp_context = triage_result.get('competitive_context', {})
         competitors_with_feature = comp_context.get('competitors_with_feature', [])
 
-        # For competitor-sourced ideas, ensure source competitor is included in the list
+        # For competitor-sourced ideas, ensure source competitors are included in the list
         if is_competitor_idea and idea.source_metadata:
-            source_competitor_name = idea.source_metadata.get('competitor_name')
-            if source_competitor_name and source_competitor_name not in competitors_with_feature:
-                competitors_with_feature = [source_competitor_name] + competitors_with_feature
+            # Support both singular 'competitor_name' and plural 'competitor_names' for cluster-based ideas
+            source_competitor_names = idea.source_metadata.get('competitor_names', [])
+            if not source_competitor_names:
+                # Fallback to singular for backwards compatibility
+                single_name = idea.source_metadata.get('competitor_name')
+                if single_name:
+                    source_competitor_names = [single_name]
+
+            # Add source competitors that aren't already in the list
+            for name in source_competitor_names:
+                if name and name not in competitors_with_feature:
+                    competitors_with_feature.append(name)
 
         if comp_context or competitors_with_feature:
             idea.competitive_context = {
@@ -1009,15 +1028,8 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             }
 
         # Store existing feature info if detected (feature exists case)
+        # Note: Fallback was already applied before status determination above
         existing_feature_info = triage_result.get('existing_feature_info')
-        if not existing_feature_info and product_feature_result.has_match and product_feature_result.best_match:
-            # Fallback to detected match if agent didn't provide info
-            existing_feature_info = {
-                'feature_name': product_feature_result.best_match.feature_name,
-                'feature_description': product_feature_result.best_match.feature_description,
-                'similarity_score': product_feature_result.best_match.similarity_score,
-                'source_url': product_feature_result.best_match.source_url,
-            }
         if existing_feature_info:
             idea.competitive_context = idea.competitive_context or {}
             idea.competitive_context['existing_feature'] = existing_feature_info
@@ -1028,8 +1040,13 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             idea.auto_response_text = triage_result['auto_response_text']
         elif is_competitor_idea:
             # Competitor ideas get a default response referencing the source
-            competitor_name = idea.source_metadata.get('competitor_name', 'competitor analysis') if idea.source_metadata else 'competitor analysis'
-            idea.auto_response_text = f"From analysis of {competitor_name}"
+            source_names = idea.source_metadata.get('competitor_names', []) if idea.source_metadata else []
+            if not source_names:
+                source_names = [idea.source_metadata.get('competitor_name')] if idea.source_metadata and idea.source_metadata.get('competitor_name') else []
+            competitor_ref = ', '.join(source_names[:3]) if source_names else 'competitor analysis'
+            if len(source_names) > 3:
+                competitor_ref += f" and {len(source_names) - 3} others"
+            idea.auto_response_text = f"From analysis of {competitor_ref}"
 
         # Record status history for agent triage
         # Only record as automated action if auto-respond is ON and status changed
@@ -1193,6 +1210,14 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             limit=5
         )
 
+        # Step 4b: Check if idea matches existing product features ("Feature Exists" detection)
+        queue_service.update_progress(job_id, 60.0, "Checking for existing product features...")
+        product_feature_result = similarity_service.find_product_feature_matches(
+            idea_text=idea_text,
+            product_id=idea.product_id,
+            threshold=0.80
+        )
+
         # Get product context
         product = db.query(CIProduct).filter(CIProduct.id == idea.product_id).first()
         product_context = {}
@@ -1230,6 +1255,16 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             ],
             # Pass full competitive context with structured urgency
             'competitive_context': competitive_context,
+            # Pass existing product feature match for "Feature Exists" detection
+            'existing_feature_match': {
+                'has_match': product_feature_result.has_match,
+                'best_match': {
+                    'feature_name': product_feature_result.best_match.feature_name,
+                    'feature_description': product_feature_result.best_match.feature_description,
+                    'similarity_score': product_feature_result.best_match.similarity_score,
+                    'source_url': product_feature_result.best_match.source_url,
+                } if product_feature_result.best_match else None,
+            } if product_feature_result else None,
         }
 
         agent = IdeaTriageAgent(
@@ -1248,6 +1283,16 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         if product and hasattr(product, 'idea_triage_auto_enabled'):
             auto_respond_enabled = product.idea_triage_auto_enabled
             auto_respond_threshold = getattr(product, 'idea_triage_auto_threshold', 0.9)
+
+        # Apply existing feature fallback BEFORE status determination
+        # If agent didn't populate existing_feature_info but we detected a match, use the detected match
+        if not triage_result.get('existing_feature_info') and product_feature_result.has_match and product_feature_result.best_match:
+            triage_result['existing_feature_info'] = {
+                'feature_name': product_feature_result.best_match.feature_name,
+                'feature_description': product_feature_result.best_match.feature_description,
+                'similarity_score': product_feature_result.best_match.similarity_score,
+                'source_url': product_feature_result.best_match.source_url,
+            }
 
         # Determine status (only auto-approves if auto-respond is enabled)
         # Returns IdeaStatus enum directly
@@ -1285,6 +1330,12 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
                 'competitive_urgency': comp_context.get('competitive_urgency', 'low'),
             }
 
+        # Store existing feature info if detected (feature exists case)
+        existing_feature_info = triage_result.get('existing_feature_info')
+        if existing_feature_info:
+            idea.competitive_context = idea.competitive_context or {}
+            idea.competitive_context['existing_feature'] = existing_feature_info
+
         # Store auto-response text (always store for PO to use, regardless of auto-respond setting)
         if triage_result.get('auto_response_text'):
             idea.auto_response_text = triage_result['auto_response_text']
@@ -1313,6 +1364,7 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             'has_similar': similarity_result.has_similar,
             'duplicate_of_idea_id': idea.duplicate_of_idea_id,
             'competitors_with_feature': comp_context.get('competitors_with_feature', []),
+            'existing_feature_match': product_feature_result.has_match if product_feature_result else False,
             'auto_response_text': idea.auto_response_text,
         }
 
@@ -2512,6 +2564,30 @@ def aggregate_deep_analysis_results(
             llm_service=llm_service
         )
 
+        # Chain to triage for all generated ideas (duplicate + feature exists detection)
+        queue_service.update_progress(
+            parent_job_id, 90.0,
+            "Queueing triage for generated ideas..."
+        )
+
+        triage_jobs_created = 0
+        for result in idea_results:
+            if result.get('status') == 'generated' and result.get('idea_id'):
+                # Create triage job for each generated idea
+                triage_job = queue_service.create_job(
+                    job_type=JobType.IDEA_TRIAGE,
+                    input_data={'idea_id': result['idea_id']},
+                    product_id=product_id,
+                    parent_job_id=parent_job_id,
+                )
+                db.commit()
+
+                # Queue the triage task
+                triage_idea_task.delay(triage_job.id)
+
+                result['triage_job_id'] = triage_job.id
+                triage_jobs_created += 1
+
         output_data = {
             'product_id': product_id,
             'competitors_analyzed': len(child_job_ids),
@@ -2520,6 +2596,7 @@ def aggregate_deep_analysis_results(
             'clusters_created': cluster_result.clusters_created,
             'high_intensity_clusters': cluster_result.high_intensity_clusters,
             'ideas_generated': len([r for r in idea_results if r.get('status') == 'generated']),
+            'triage_jobs_created': triage_jobs_created,
             'child_job_ids': child_job_ids,
         }
 

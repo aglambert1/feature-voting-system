@@ -6,12 +6,17 @@ and managing background jobs. It bridges the gap between the API
 layer and Celery task execution.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.queue import QueueJob, JobType, JobStatus, JobPriority
+
+# Jobs older than this without a celery_task_id are considered stale
+STALE_PENDING_THRESHOLD_MINUTES = 5
+# Jobs running longer than this without progress are considered stale
+STALE_RUNNING_THRESHOLD_MINUTES = 60
 
 
 class QueueServiceError(Exception):
@@ -52,6 +57,7 @@ class QueueService:
         user_id: Optional[int] = None,
         parent_job_id: Optional[int] = None,
         priority: JobPriority = JobPriority.NORMAL,
+        auto_commit: bool = True,
     ) -> QueueJob:
         """
         Create a new job record in the database.
@@ -63,6 +69,7 @@ class QueueService:
             user_id: Optional user who initiated the job
             parent_job_id: Optional parent job for chaining
             priority: Job priority level
+            auto_commit: If True, commit immediately. If False, caller must commit.
 
         Returns:
             Created QueueJob instance
@@ -77,8 +84,11 @@ class QueueService:
             parent_job_id=parent_job_id,
         )
         self.db.add(job)
-        self.db.commit()
-        self.db.refresh(job)
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(job)
+        else:
+            self.db.flush()  # Get the ID without committing
         return job
 
     def get_job(self, job_id: int) -> Optional[QueueJob]:
@@ -353,10 +363,75 @@ class QueueService:
 
         return query.order_by(QueueJob.created_at.desc()).limit(limit).all()
 
+    def cleanup_stale_jobs(
+        self,
+        product_id: Optional[int] = None,
+    ) -> int:
+        """
+        Mark stale jobs as failed.
+
+        A job is considered stale if:
+        - It's PENDING without a celery_task_id for more than STALE_PENDING_THRESHOLD_MINUTES
+        - It's QUEUED/RUNNING without started_at for more than STALE_PENDING_THRESHOLD_MINUTES
+        - It's RUNNING for more than STALE_RUNNING_THRESHOLD_MINUTES
+
+        Args:
+            product_id: Optional product filter
+
+        Returns:
+            Number of jobs marked as failed
+        """
+        now = datetime.utcnow()
+        pending_threshold = now - timedelta(minutes=STALE_PENDING_THRESHOLD_MINUTES)
+        running_threshold = now - timedelta(minutes=STALE_RUNNING_THRESHOLD_MINUTES)
+
+        # Find stale jobs
+        query = self.db.query(QueueJob).filter(
+            QueueJob.status.in_([JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING])
+        )
+
+        if product_id:
+            query = query.filter(QueueJob.product_id == product_id)
+
+        stale_jobs = []
+        for job in query.all():
+            is_stale = False
+            reason = ""
+
+            if job.status == JobStatus.PENDING:
+                # PENDING jobs without celery_task_id that are old
+                if not job.celery_task_id and job.created_at < pending_threshold:
+                    is_stale = True
+                    reason = "Job stuck in PENDING state without being dispatched to Celery"
+
+            elif job.status == JobStatus.QUEUED:
+                # QUEUED jobs that never started
+                if not job.started_at and job.queued_at and job.queued_at < pending_threshold:
+                    is_stale = True
+                    reason = "Job stuck in QUEUED state without starting"
+
+            elif job.status == JobStatus.RUNNING:
+                # RUNNING jobs that have been running too long
+                if job.started_at and job.started_at < running_threshold:
+                    is_stale = True
+                    reason = f"Job running for more than {STALE_RUNNING_THRESHOLD_MINUTES} minutes"
+
+            if is_stale:
+                job.status = JobStatus.FAILURE
+                job.error_message = reason
+                job.completed_at = now
+                stale_jobs.append(job)
+
+        if stale_jobs:
+            self.db.commit()
+
+        return len(stale_jobs)
+
     def get_active_jobs(
         self,
         product_id: Optional[int] = None,
         user_id: Optional[int] = None,
+        cleanup_stale: bool = True,
     ) -> List[QueueJob]:
         """
         Get currently active (queued or running) jobs.
@@ -364,10 +439,15 @@ class QueueService:
         Args:
             product_id: Optional product filter
             user_id: Optional user filter
+            cleanup_stale: If True, automatically mark stale jobs as failed first
 
         Returns:
             List of active QueueJob records
         """
+        # Clean up stale jobs first
+        if cleanup_stale:
+            self.cleanup_stale_jobs(product_id=product_id)
+
         query = self.db.query(QueueJob).filter(
             QueueJob.status.in_([JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING])
         )

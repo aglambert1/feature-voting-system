@@ -437,15 +437,24 @@ def trigger_competitor_discovery(
         job_type=JobType.COMPETITOR_DISCOVERY,
         input_data={'product_id': product_id},
         product_id=product_id,
-        user_id=current_user.id
+        user_id=current_user.id,
+        auto_commit=False,  # Don't commit until Celery dispatch succeeds
     )
-    db.commit()
 
-    # Queue the task
-    from app.queue.tasks import discover_competitors_task
-    result = discover_competitors_task.delay(job.id)
-    job.celery_task_id = result.id
-    db.commit()
+    # Queue the task - if this fails, rollback the job creation
+    try:
+        from app.queue.tasks import discover_competitors_task
+        result = discover_competitors_task.delay(job.id)
+        job.celery_task_id = result.id
+        job.status = JobStatus.QUEUED
+        job.queued_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
+        )
 
     return JobResponse(
         job_id=job.id,
@@ -487,15 +496,24 @@ def trigger_product_reanalysis(
             'source_type': product.product_source_type,
         },
         product_id=product_id,
-        user_id=current_user.id
+        user_id=current_user.id,
+        auto_commit=False,  # Don't commit until Celery dispatch succeeds
     )
-    db.commit()
 
-    # Queue the task
-    from app.queue.tasks import analyze_product_task
-    result = analyze_product_task.delay(job.id)
-    job.celery_task_id = result.id
-    db.commit()
+    # Queue the task - if this fails, rollback the job creation
+    try:
+        from app.queue.tasks import analyze_product_task
+        result = analyze_product_task.delay(job.id)
+        job.celery_task_id = result.id
+        job.status = JobStatus.QUEUED
+        job.queued_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
+        )
 
     return JobResponse(
         job_id=job.id,
@@ -538,15 +556,24 @@ def trigger_feature_clustering(
             'similarity_threshold': config.intensity_similarity_threshold,
         },
         product_id=product_id,
-        user_id=current_user.id
+        user_id=current_user.id,
+        auto_commit=False,  # Don't commit until Celery dispatch succeeds
     )
-    db.commit()
 
-    # Queue the task
-    from app.queue.tasks import feature_clustering_task
-    result = feature_clustering_task.delay(job.id)
-    job.celery_task_id = result.id
-    db.commit()
+    # Queue the task - if this fails, rollback the job creation
+    try:
+        from app.queue.tasks import feature_clustering_task
+        result = feature_clustering_task.delay(job.id)
+        job.celery_task_id = result.id
+        job.status = JobStatus.QUEUED
+        job.queued_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
+        )
 
     return JobResponse(
         job_id=job.id,
@@ -554,6 +581,91 @@ def trigger_feature_clustering(
         job_type=job.job_type.value,
         status=job.status.value,
         message=f"Feature clustering queued for product {product_id}"
+    )
+
+
+@router.post("/{product_id}/run-competitive-analysis", response_model=JobResponse)
+def trigger_competitive_analysis(
+    product_id: int,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Trigger full competitive analysis workflow.
+
+    This runs the complete analysis pipeline:
+    1. Deep analysis (feature extraction + strategic analysis) for all enabled competitors
+    2. Feature clustering across all extracted features
+    3. Idea generation from high-intensity clusters
+
+    Use this endpoint for the "Run Now" button on the Competitive Analysis Agent.
+    Use /run-clustering if you only want to re-cluster existing features.
+    """
+    verify_product_access(db, product_id, current_user)
+
+    queue_service = QueueService(db)
+
+    # Check for existing active competitive analysis job
+    active_jobs = queue_service.get_active_jobs(product_id=product_id)
+    existing_analysis = next(
+        (j for j in active_jobs if j.job_type in [
+            JobType.SCHEDULED_DEEP_ANALYSIS,
+            JobType.DEEP_ANALYSIS,
+            JobType.FEATURE_CLUSTERING
+        ]),
+        None
+    )
+    if existing_analysis:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Competitive analysis already in progress (job {existing_analysis.job_uuid})"
+        )
+
+    # Check if there are competitors enabled for deep analysis
+    enabled_competitors = db.query(ProductCompetitor).filter(
+        ProductCompetitor.product_id == product_id,
+        ProductCompetitor.status == 'active',
+        ProductCompetitor.deep_analysis_enabled == True
+    ).count()
+
+    if enabled_competitors == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No competitors are enabled for deep analysis. Enable at least one competitor first."
+        )
+
+    job = queue_service.create_job(
+        job_type=JobType.SCHEDULED_DEEP_ANALYSIS,
+        input_data={
+            'triggered_by': 'manual',
+            'competitors_enabled': enabled_competitors,
+        },
+        product_id=product_id,
+        user_id=current_user.id,
+        auto_commit=False,  # Don't commit until Celery dispatch succeeds
+    )
+
+    # Queue the task - if this fails, rollback the job creation
+    try:
+        from app.queue.tasks import scheduled_deep_analysis_task
+        result = scheduled_deep_analysis_task.delay(job.id)
+        job.celery_task_id = result.id
+        job.status = JobStatus.QUEUED
+        job.queued_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
+        )
+
+    return JobResponse(
+        job_id=job.id,
+        job_uuid=job.job_uuid,
+        job_type=job.job_type.value,
+        status=job.status.value,
+        message=f"Competitive analysis started for {enabled_competitors} competitors"
     )
 
 
@@ -669,15 +781,24 @@ def trigger_deep_analysis(
         job_type=JobType.DEEP_ANALYSIS,
         input_data={'competitor_id': competitor_id},
         product_id=product_id,
-        user_id=current_user.id
+        user_id=current_user.id,
+        auto_commit=False,  # Don't commit until Celery dispatch succeeds
     )
-    db.commit()
 
-    # Queue the task
-    from app.queue.tasks import deep_analysis_task
-    result = deep_analysis_task.delay(job.id)
-    job.celery_task_id = result.id
-    db.commit()
+    # Queue the task - if this fails, rollback the job creation
+    try:
+        from app.queue.tasks import deep_analysis_task
+        result = deep_analysis_task.delay(job.id)
+        job.celery_task_id = result.id
+        job.status = JobStatus.QUEUED
+        job.queued_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
+        )
 
     return JobResponse(
         job_id=job.id,

@@ -510,7 +510,9 @@ IMPORTANT:
             - FEATURE_EXISTS if action=reject and existing_feature_info present and confidence >= threshold
             - ACCEPTED if action=approve and confidence >= threshold
             - DUPLICATE if action=merge
-            - NOT_APPROPRIATE if action=reject and confidence >= 0.7
+            - NEEDS_REVIEW if action=reject but reasoning mentions existing functionality
+              (fallback when agent didn't populate existing_feature_info)
+            - NOT_APPROPRIATE if action=reject and confidence >= 0.7 (for truly inappropriate content)
             - NEEDS_REVIEW otherwise
         """
         from app.models.idea import IdeaStatus
@@ -537,7 +539,19 @@ IMPORTANT:
         if action == 'merge':
             return IdeaStatus.DUPLICATE
         elif action == 'reject' and confidence >= self.REJECT_THRESHOLD:
-            # Only auto-reject if we're confident
+            # Check if reasoning indicates this is about existing functionality
+            # (fallback for when agent doesn't populate existing_feature_info)
+            reasoning = recommendation.get('reasoning', '').lower()
+            existing_feature_keywords = [
+                'already exists', 'existing feature', 'existing functionality',
+                'currently available', 'already available', 'already have',
+                'duplicate of existing', 'feature exists', 'functionality exists'
+            ]
+            if any(keyword in reasoning for keyword in existing_feature_keywords):
+                # Agent identified existing feature in reasoning but didn't populate existing_feature_info
+                # Route to NEEDS_REVIEW so PM can verify and set FEATURE_EXISTS
+                return IdeaStatus.NEEDS_REVIEW
+            # Only auto-reject as NOT_APPROPRIATE if we're confident and it's not about existing features
             return IdeaStatus.NOT_APPROPRIATE if confidence >= 0.7 else IdeaStatus.NEEDS_REVIEW
         elif action == 'approve' and confidence >= auto_respond_threshold:
             return IdeaStatus.ACCEPTED

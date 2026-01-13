@@ -18,9 +18,18 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 from typing import Optional, List
 from datetime import datetime
+from enum import Enum
 from pydantic import BaseModel, Field
 
 from app.database import get_db
+
+
+class IdeaSortOption(str, Enum):
+    """Sort options for ideas list."""
+    MOST_VOTES = "most_votes"      # Highest score first (default for voters)
+    PENDING_FIRST = "pending_first"  # Pending/needs_review first, then by votes (default for POs)
+    MOST_RECENT = "most_recent"    # Newest first
+    MY_IDEAS = "my_ideas"          # User's own ideas first, then by votes
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.idea_comment import IdeaComment
 from app.models.idea_status_history import IdeaStatusHistory
@@ -155,6 +164,7 @@ def list_ideas(
     skip: int = 0,
     limit: int = 100,
     product_id: Optional[int] = None,
+    sort_by: Optional[IdeaSortOption] = None,
     current_user: Optional[User] = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -166,12 +176,17 @@ def list_ideas(
     - PRODUCT_OWNER: See all ideas (active and inactive) for products they own
     - VOTER: See all their own submitted ideas (any status) + only active ideas from others
 
-    Ideas are sorted by score (highest first).
+    Sort options:
+    - most_votes: Highest score first (default for voters)
+    - pending_first: Pending/needs_review first, then by votes (default for POs)
+    - most_recent: Newest first
+    - my_ideas: User's own ideas first, then by votes
 
     Args:
         skip: Number of items to skip (pagination)
         limit: Maximum number of items to return
         product_id: Optional product ID to filter by
+        sort_by: Sort order (defaults to pending_first for PO/Admin, most_votes for voters)
         current_user: Current authenticated user (optional for backward compatibility)
         db: Database session
 
@@ -275,11 +290,45 @@ def list_ideas(
             duplicate_of_title=duplicate_title,
             vote_counts=vote_counts,
             user_vote=user_vote,
-            user_vote_timestamp=user_vote_timestamp
+            user_vote_timestamp=user_vote_timestamp,
+            submitter_id=idea.submitter_id
         ))
 
-    # Sort by score (highest first)
-    idea_items.sort(key=lambda x: x.vote_counts.score, reverse=True)
+    # Determine effective sort order
+    # Default: pending_first for PO/Admin, most_votes for voters
+    effective_sort = sort_by
+    if effective_sort is None:
+        if is_admin or is_po:
+            effective_sort = IdeaSortOption.PENDING_FIRST
+        else:
+            effective_sort = IdeaSortOption.MOST_VOTES
+
+    # Apply sorting
+    if effective_sort == IdeaSortOption.MOST_VOTES:
+        # Sort by score (highest first)
+        idea_items.sort(key=lambda x: x.vote_counts.score, reverse=True)
+    elif effective_sort == IdeaSortOption.PENDING_FIRST:
+        # Pending/needs_review first, then by votes
+        # Status priority: pending=0, needs_review=1, others=2
+        def pending_sort_key(item):
+            status_priority = 2  # Default for other statuses
+            if item.status == IdeaStatus.PENDING:
+                status_priority = 0
+            elif item.status == IdeaStatus.NEEDS_REVIEW:
+                status_priority = 1
+            # Secondary sort by votes (negative for descending)
+            return (status_priority, -item.vote_counts.score)
+        idea_items.sort(key=pending_sort_key)
+    elif effective_sort == IdeaSortOption.MOST_RECENT:
+        # Newest first
+        idea_items.sort(key=lambda x: x.created_at, reverse=True)
+    elif effective_sort == IdeaSortOption.MY_IDEAS:
+        # User's own ideas first, then by votes
+        user_id = current_user.id if current_user else None
+        def my_ideas_sort_key(item):
+            is_mine = 0 if item.submitter_id == user_id else 1
+            return (is_mine, -item.vote_counts.score)
+        idea_items.sort(key=my_ideas_sort_key)
 
     # Apply pagination
     paginated_items = idea_items[skip:skip + limit]
@@ -1571,6 +1620,7 @@ def get_triage_recommendation(
     competitive_context = idea.competitive_context or {}
     competitors_with_feature = competitive_context.get('competitors_with_feature', [])
     competitive_urgency = competitive_context.get('competitive_urgency', None)
+    existing_feature = competitive_context.get('existing_feature', None)
 
     # Map status to user-facing status for current response
     current_status = None
@@ -1628,6 +1678,8 @@ def get_triage_recommendation(
             'voters': voters,
             'competitors_with_feature': competitors_with_feature,
             'competitive_urgency': competitive_urgency,
+            # Existing feature match info (from triage analysis)
+            'existing_feature': existing_feature,
         },
         # Current response (if already responded) - derived from status history
         'current_response': {
