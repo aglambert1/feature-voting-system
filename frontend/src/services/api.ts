@@ -57,6 +57,7 @@ import type {
   FinancialsAnalysis,
   AgentJobResponse,
   CreateIdeasRequest,
+  FeatureQueryResponse,
 } from '../types';
 
 // Create axios instance with base configuration
@@ -771,6 +772,36 @@ export const updateTriageSettings = async (
   const response = await api.put<TriageSettings>(
     `/product-intelligence/products/${productId}/triage-settings`,
     settings
+  );
+  return response.data;
+};
+
+// ============================================================================
+// FEATURE QUERY API (Chat Interface)
+// ============================================================================
+
+/**
+ * Query if a feature exists in a product.
+ *
+ * Uses the same similarity detection logic as the Idea Triage Agent,
+ * ensuring consistent results between asking "Does feature X exist?"
+ * and submitting an idea for feature X.
+ */
+export const queryProductFeatures = async (
+  productId: number,
+  query: string,
+  options?: {
+    includeSimilar?: boolean;
+    threshold?: number;
+  }
+): Promise<FeatureQueryResponse> => {
+  const response = await api.post<FeatureQueryResponse>(
+    `/product-intelligence/products/${productId}/feature-query`,
+    {
+      query,
+      include_similar: options?.includeSimilar ?? true,
+      similarity_threshold: options?.threshold ?? 0.85,
+    }
   );
   return response.data;
 };

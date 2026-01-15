@@ -85,6 +85,36 @@ class ProductResponse(BaseModel):
 
 
 # ============================================================================
+# Feature Query Schemas
+# ============================================================================
+
+class FeatureQueryRequest(BaseModel):
+    """Schema for querying product features."""
+    query: str = Field(..., min_length=10, max_length=1000, description="Feature description to search for")
+    include_similar: bool = Field(default=True, description="Include similar features below threshold")
+    similarity_threshold: float = Field(default=0.85, ge=0.0, le=1.0, description="Similarity threshold for exact match")
+
+
+class MatchedFeature(BaseModel):
+    """Schema for a matched product feature."""
+    feature_name: str
+    feature_description: str
+    similarity_score: float
+    source_url: Optional[str] = None
+    is_core_feature: bool = False  # True if from structured_product_data.core_features
+
+
+class FeatureQueryResponse(BaseModel):
+    """Schema for feature query response."""
+    query: str
+    feature_exists: bool  # True if best_match.similarity_score >= threshold
+    confidence: float  # Best match similarity score
+    response_text: str  # LLM-generated conversational response
+    matched_features: List[MatchedFeature]  # Matches >= threshold
+    similar_features: List[MatchedFeature]  # Matches between 0.5 and threshold
+
+
+# ============================================================================
 # Product CRUD Endpoints
 # ============================================================================
 
@@ -542,6 +572,226 @@ def search_product_content(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Search failed: {str(e)}"
         )
+
+
+@router.post("/{product_id}/feature-query", response_model=FeatureQueryResponse)
+def query_product_features(
+    product_id: int,
+    request: FeatureQueryRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Query if a feature exists in the product.
+
+    Uses the EXACT same similarity detection logic as the Idea Triage Agent,
+    ensuring consistent results between:
+    - Asking "Does feature X exist?" via this endpoint
+    - Submitting an idea for feature X (triage will detect if it exists)
+
+    This endpoint searches:
+    1. ProductFeature table (detailed features with embeddings)
+    2. core_features from structured_product_data
+
+    Requires VIEW permission on the product.
+
+    Args:
+        product_id: Product ID to search within
+        request: Query parameters including feature description
+
+    Returns:
+        FeatureQueryResponse with:
+        - feature_exists: True if similarity >= threshold
+        - confidence: Best match similarity score
+        - response_text: AI-generated explanation
+        - matched_features: Features meeting threshold
+        - similar_features: Features between 0.5 and threshold
+
+    Raises:
+        400: If product not analyzed
+        403: If user lacks VIEW permission
+        404: If product not found
+    """
+    from app.services.permission_service import PermissionService
+    from app.services.similarity_detector import SimilarityDetectorService
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.VIEW
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have VIEW permission for product {product_id}"
+        )
+
+    # Get product
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product {product_id} not found"
+        )
+
+    # Check product is analyzed
+    if not product.structured_product_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Product {product_id} must be analyzed before feature queries"
+        )
+
+    # Use EXACT same method as triage_idea_task (tasks.py:878)
+    similarity_service = SimilarityDetectorService(db)
+    product_feature_result = similarity_service.find_product_feature_matches(
+        idea_text=request.query,  # Same parameter name as triage
+        product_id=product_id,
+        similarity_threshold=request.similarity_threshold,
+        limit=5
+    )
+
+    # Convert matches to response format
+    matched_features = []
+    for match in product_feature_result.matches:
+        matched_features.append(MatchedFeature(
+            feature_name=match.feature_name,
+            feature_description=match.feature_description,
+            similarity_score=match.similarity_score,
+            source_url=match.source_url,
+            is_core_feature=(match.feature_id == 0)  # Core features have ID=0
+        ))
+
+    # Get similar features below threshold if requested
+    similar_features = []
+    if request.include_similar:
+        # Get features with lower threshold
+        similar_result = similarity_service.find_product_feature_matches(
+            idea_text=request.query,
+            product_id=product_id,
+            similarity_threshold=0.5,  # Lower threshold for "similar"
+            limit=10
+        )
+
+        # Filter to only features between 0.5 and the main threshold
+        # (exclude ones already in matched_features)
+        matched_names = {m.feature_name.lower() for m in matched_features}
+        for match in similar_result.matches:
+            if (match.similarity_score < request.similarity_threshold and
+                match.feature_name.lower() not in matched_names):
+                similar_features.append(MatchedFeature(
+                    feature_name=match.feature_name,
+                    feature_description=match.feature_description,
+                    similarity_score=match.similarity_score,
+                    source_url=match.source_url,
+                    is_core_feature=(match.feature_id == 0)
+                ))
+
+    # Determine if feature exists (same logic as triage)
+    feature_exists = product_feature_result.has_match
+
+    # Get confidence as the highest match score (regardless of threshold)
+    # This ensures we always show the best match percentage, not 0%
+    if product_feature_result.best_match:
+        confidence = product_feature_result.best_match.similarity_score
+    elif similar_features:
+        # No match above threshold, but we have similar features - use highest similar
+        confidence = max(f.similarity_score for f in similar_features)
+    else:
+        confidence = 0.0
+
+    # Generate conversational response using LLM
+    response_text = _generate_feature_query_response(
+        product_name=product.product_name,
+        product_category=product.structured_product_data.get('product_category', ''),
+        query=request.query,
+        feature_exists=feature_exists,
+        confidence=confidence,
+        matched_features=matched_features,
+        similar_features=similar_features
+    )
+
+    return FeatureQueryResponse(
+        query=request.query,
+        feature_exists=feature_exists,
+        confidence=confidence,
+        response_text=response_text,
+        matched_features=matched_features,
+        similar_features=similar_features
+    )
+
+
+def _generate_feature_query_response(
+    product_name: str,
+    product_category: str,
+    query: str,
+    feature_exists: bool,
+    confidence: float,
+    matched_features: List[MatchedFeature],
+    similar_features: List[MatchedFeature]
+) -> str:
+    """
+    Generate a conversational response for the feature query.
+
+    Uses LLM to create a helpful, natural language response explaining
+    whether the feature exists and providing context.
+    """
+    # Build context for LLM
+    if feature_exists and matched_features:
+        matches_text = "\n".join([
+            f"- {m.feature_name} (similarity: {m.similarity_score:.0%}): {m.feature_description}"
+            for m in matched_features[:3]
+        ])
+        context = f"MATCHING FEATURES FOUND:\n{matches_text}"
+    elif similar_features:
+        similar_text = "\n".join([
+            f"- {m.feature_name} (similarity: {m.similarity_score:.0%}): {m.feature_description}"
+            for m in similar_features[:3]
+        ])
+        context = f"NO EXACT MATCH, BUT SIMILAR FEATURES FOUND:\n{similar_text}"
+    else:
+        context = "NO MATCHING OR SIMILAR FEATURES FOUND"
+
+    system_prompt = """You are a product knowledge assistant. Given a user's feature query and search results,
+provide a helpful response that:
+1. Clearly states whether the feature exists or not
+2. If it exists, briefly describes the matching feature(s)
+3. If not, mention any similar features that might be relevant
+4. Keep responses concise (2-4 sentences)
+
+Be direct and informative. Don't use phrases like "Based on my search" - just state the facts."""
+
+    user_prompt = f"""Product: {product_name}
+Category: {product_category}
+
+User Query: "{query}"
+
+Search Results:
+{context}
+
+Feature Exists: {feature_exists}
+Confidence: {confidence:.0%}
+
+Provide a helpful response about whether this feature exists in {product_name}."""
+
+    try:
+        result = llm_service.call_agent(
+            agent_name="feature_query_responder",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.3,  # Lower temperature for more consistent responses
+            max_tokens=300
+        )
+        return result["content"].strip()
+    except Exception as e:
+        print(f"[API] Error generating feature query response: {e}")
+        # Fallback to simple response if LLM fails
+        if feature_exists:
+            return f"Yes, {product_name} has this feature: {matched_features[0].feature_name}."
+        elif similar_features:
+            return f"This exact feature wasn't found, but {product_name} has similar capabilities like {similar_features[0].feature_name}."
+        else:
+            return f"This feature was not found in {product_name}'s documented capabilities."
 
 
 @router.get("/{product_id}/source-status")

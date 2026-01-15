@@ -32,9 +32,9 @@ class ProductAnalysisOutput(BaseModel):
     )
     detailed_features: list[DetailedProductFeature] = Field(
         ...,
-        description="10-25 detailed tactical features extracted from the product",
+        description="All detailed tactical features extracted from the product",
         min_length=5,
-        max_length=30
+        max_length=200  # Allow comprehensive extraction
     )
     target_users: str = Field(..., description="Target users/customers description")
     value_propositions: list[str] = Field(
@@ -106,9 +106,9 @@ Extract and return the following information in JSON format:
    - Think "what would you put on a homepage banner"
    - Examples: "Contact management", "Sales pipeline", "Email integration"
 
-4. **detailed_features**: List 10-25 TACTICAL, specific features found in the product description
+4. **detailed_features**: List ALL TACTICAL, specific features found in the product description
    - These should be granular, verifiable capabilities
-   - Include everything you can identify from the description
+   - Include EVERY feature you can identify from the description - there is no upper limit
    - For each feature provide:
      * name: Concise feature name (2-5 words)
      * description: Clear description (1-2 sentences)
@@ -124,15 +124,17 @@ Extract and return the following information in JSON format:
 
 IMPORTANT DISTINCTION:
 - **core_features** = High-level strategic capabilities (5-7 items)
-- **detailed_features** = Comprehensive list of all identifiable features (10-25 items)
-- The detailed_features list should include the core_features plus many more specific capabilities
+- **detailed_features** = Comprehensive list of ALL identifiable features (no limit)
+- The detailed_features list should include the core_features plus ALL specific capabilities you can find
 
 Guidelines:
 - Be specific and concrete
 - Focus on differentiating characteristics
 - Use industry-standard terminology
 - Keywords should be search-friendly (2-4 words each)
-- Extract as many detailed features as you can verify from the description
+- Extract ALL features you can verify from the description - there is no upper limit
+- Do not skip features to stay within a target range
+- It's better to extract too many features than to miss real ones
 - Avoid marketing fluff, focus on substance
 
 Return ONLY the JSON object, no additional text.
@@ -184,6 +186,8 @@ Example format:
     "small business crm"
   ]
 }}
+
+Note: The example above shows only 3 detailed_features for brevity. Real products typically have 20-100+ features. Extract ALL of them - do not limit yourself to a small number.
 """
         return prompt
 

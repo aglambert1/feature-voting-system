@@ -26,6 +26,7 @@ import IdeaTriageSetupModal from './components/IdeaTriageSetupModal';
 import MarketDiscoverySetupModal from './components/MarketDiscoverySetupModal';
 import CompetitiveAnalysisSetupModal from './components/CompetitiveAnalysisSetupModal';
 import AgentJobStatus from '../../components/AgentJobStatus';
+import FeatureQueryChat from './components/FeatureQueryChat';
 
 interface StructuredProductData {
   core_features?: string[];
@@ -552,6 +553,16 @@ export default function ProductDetailPage() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Feature Query Chat */}
+        {product && product.structured_product_data && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <FeatureQueryChat
+              productId={product.id}
+              productName={product.product_name}
+            />
           </div>
         )}
 

@@ -923,3 +923,39 @@ export interface AgentJobResponse {
 export interface CreateIdeasRequest {
   feature_ids: number[];
 }
+
+// ============================================================================
+// FEATURE QUERY TYPES (Chat Interface)
+// ============================================================================
+
+/**
+ * Request to query if a feature exists in a product.
+ */
+export interface FeatureQueryRequest {
+  query: string;
+  include_similar?: boolean;
+  similarity_threshold?: number;
+}
+
+/**
+ * A matched product feature from the query.
+ */
+export interface MatchedFeature {
+  feature_name: string;
+  feature_description: string;
+  similarity_score: number;
+  source_url: string | null;
+  is_core_feature: boolean;
+}
+
+/**
+ * Response from a feature query.
+ */
+export interface FeatureQueryResponse {
+  query: string;
+  feature_exists: boolean;
+  confidence: number;
+  response_text: string;
+  matched_features: MatchedFeature[];
+  similar_features: MatchedFeature[];
+}
