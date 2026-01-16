@@ -18,7 +18,7 @@ import api, {
   getFeatureClusters,
   getTriageSettings,
   triggerCompetitorDiscovery,
-  triggerCompetitiveAnalysis,
+  triggerCompetitiveAnalysisV2,
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
 import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, FeatureCluster, TriageSettings, JobType } from '../../types';
@@ -210,8 +210,8 @@ export default function ProductDetailPage() {
     if (!productId) return;
     setRunningAction('competitive-analysis');
     try {
-      await triggerCompetitiveAnalysis(parseInt(productId));
-      setActionMessage({ type: 'success', text: 'Competitive Analysis started. Deep analysis, clustering, and idea generation will run for all enabled competitors.' });
+      await triggerCompetitiveAnalysisV2(parseInt(productId));
+      setActionMessage({ type: 'success', text: 'V2 Competitive Analysis started. Functional audits for all competitors will run, followed by landscape synthesis.' });
       setTimeout(fetchAllData, 2000);
     } catch (err: any) {
       const errorDetail = err.response?.data?.detail || err.message || 'Failed to start Competitive Analysis';
@@ -441,14 +441,14 @@ export default function ProductDetailPage() {
               <div className="text-sm text-gray-600">
                 {(pendingCounts?.competitive_alerts || 0) > 0 ? (
                   <Link
-                    to={`/product-intelligence/products/${productId}/report`}
+                    to={`/product-intelligence/products/${productId}/intelligence?tab=competitor-reports`}
                     className="text-blue-600 hover:text-blue-800 font-medium"
                   >
                     {pendingCounts?.competitive_alerts} new competitive alerts →
                   </Link>
                 ) : (
                   <Link
-                    to={`/product-intelligence/products/${productId}/report`}
+                    to={`/product-intelligence/products/${productId}/intelligence?tab=competitor-reports`}
                     className="text-blue-600 hover:text-blue-800 font-medium"
                   >
                     Go to Report →

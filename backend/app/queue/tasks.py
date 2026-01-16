@@ -1720,173 +1720,40 @@ def check_scheduled_tasks(self) -> Dict[str, Any]:
 @shared_task(bind=True, name='app.queue.tasks.deep_analysis_task')
 def deep_analysis_task(self, job_id: int) -> Dict[str, Any]:
     """
-    Background task to run deep analysis for a SINGLE competitor.
+    DEPRECATED: This task is deprecated in V2.
+    Use functional_audit_task and landscape_synthesis_task instead.
 
-    Deep analysis includes:
-    1. Feature extraction (10-25 features)
-    2. Strategic analyses based on config toggles:
-       - Pricing analysis
-       - Positioning analysis
-       - Changes tracking
-       - Momentum analysis
-       - Financials analysis (if enabled)
-
-    Args:
-        job_id: QueueJob ID to process
-
-    Returns:
-        Dictionary with deep analysis results
+    This task now returns a deprecation error.
     """
-    from app.models.competitive_agent import (
-        CompetitiveAgentConfig,
-        CompetitorPricingAnalysis,
-        CompetitorPositioningAnalysis,
-        CompetitorChangeEvent,
-        CompetitorMomentumAnalysis,
-        CompetitorFinancialsAnalysis
-    )
+    from app.models.competitive_agent import CompetitiveAgentConfig
 
+    # DEPRECATED: Strategic analysis models have been removed in V2
+    # Return a deprecation error immediately
     db = None
     try:
         db = get_db()
         queue_service = QueueService(db)
-
-        # Mark job as running
-        job = queue_service.mark_running(job_id)
-        if not job:
-            raise ValueError(f"Job {job_id} not found")
-
-        input_data = job.input_data or {}
-        competitor_id = input_data.get('competitor_id')
-        product_id = job.product_id
-
-        if not competitor_id:
-            raise ValueError("Competitor ID is required")
-
-        # Get competitor
-        competitor = db.query(ProductCompetitor).filter(
-            ProductCompetitor.id == competitor_id
-        ).first()
-        if not competitor:
-            raise ValueError(f"Competitor {competitor_id} not found")
-
-        # Get product config for enabled analyses
-        config = db.query(CompetitiveAgentConfig).filter(
-            CompetitiveAgentConfig.product_id == product_id
-        ).first()
-
-        # Update progress
-        queue_service.update_progress(job_id, 5.0, f"Starting deep analysis for {competitor.competitor_name}...")
-
-        results = {
-            'competitor_id': competitor_id,
-            'competitor_name': competitor.competitor_name,
-            'analyses_completed': [],
-            'errors': []
+        queue_service.mark_failure(
+            job_id,
+            "DEPRECATED: deep_analysis_task is no longer supported. Use functional_audit_task instead.",
+            None
+        )
+        return {
+            'status': 'deprecated',
+            'message': 'This task is deprecated. Use V2 functional audit workflow instead.'
         }
-
-        # Mark competitor as running
-        competitor.deep_analysis_status = 'running'
-        db.commit()
-
-        # Step 1: Feature Extraction (always run)
-        queue_service.update_progress(job_id, 10.0, "Extracting features...")
-        try:
-            feature_result = _run_feature_extraction(db, competitor, product_id)
-            results['feature_extraction'] = feature_result
-            results['analyses_completed'].append('feature_extraction')
-        except Exception as e:
-            results['errors'].append({'analysis': 'feature_extraction', 'error': str(e)})
-
-        # Step 2: Pricing Analysis (if enabled)
-        if not config or config.enable_pricing_analysis:
-            queue_service.update_progress(job_id, 25.0, "Analyzing pricing...")
-            try:
-                pricing_result = _run_pricing_analysis(db, competitor, product_id)
-                results['pricing_analysis'] = pricing_result
-                results['analyses_completed'].append('pricing_analysis')
-            except Exception as e:
-                results['errors'].append({'analysis': 'pricing_analysis', 'error': str(e)})
-
-        # Step 3: Positioning Analysis (if enabled)
-        if not config or config.enable_positioning_analysis:
-            queue_service.update_progress(job_id, 40.0, "Analyzing positioning...")
-            try:
-                positioning_result = _run_positioning_analysis(db, competitor, product_id)
-                results['positioning_analysis'] = positioning_result
-                results['analyses_completed'].append('positioning_analysis')
-            except Exception as e:
-                results['errors'].append({'analysis': 'positioning_analysis', 'error': str(e)})
-
-        # Step 4: Changes Tracking (if enabled)
-        if not config or config.enable_changes_tracking:
-            queue_service.update_progress(job_id, 55.0, "Tracking changes...")
-            try:
-                changes_result = _run_changes_tracking(db, competitor, product_id)
-                results['changes_tracking'] = changes_result
-                results['analyses_completed'].append('changes_tracking')
-            except Exception as e:
-                results['errors'].append({'analysis': 'changes_tracking', 'error': str(e)})
-
-        # Step 5: Momentum Analysis (if enabled)
-        if not config or config.enable_momentum_analysis:
-            queue_service.update_progress(job_id, 70.0, "Analyzing momentum...")
-            try:
-                momentum_result = _run_momentum_analysis(db, competitor, product_id)
-                results['momentum_analysis'] = momentum_result
-                results['analyses_completed'].append('momentum_analysis')
-            except Exception as e:
-                results['errors'].append({'analysis': 'momentum_analysis', 'error': str(e)})
-
-        # Step 6: Financials Analysis (if enabled - usually disabled)
-        if config and config.enable_financials_analysis:
-            queue_service.update_progress(job_id, 85.0, "Analyzing financials...")
-            try:
-                financials_result = _run_financials_analysis(db, competitor, product_id)
-                results['financials_analysis'] = financials_result
-                results['analyses_completed'].append('financials_analysis')
-            except Exception as e:
-                results['errors'].append({'analysis': 'financials_analysis', 'error': str(e)})
-
-        # Update competitor status
-        competitor.deep_analysis_status = 'completed'
-        competitor.deep_analysis_last_run = datetime.utcnow()
-        db.commit()
-
-        # Final progress
-        queue_service.update_progress(job_id, 95.0, "Finalizing...")
-
-        # Mark job as success
-        queue_service.mark_success(job_id, results)
-
-        return results
-
     except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[deep_analysis_task] Error: {error_msg}")
-
-        if db:
-            try:
-                # Mark competitor as failed
-                if competitor_id:
-                    competitor = db.query(ProductCompetitor).filter(
-                        ProductCompetitor.id == competitor_id
-                    ).first()
-                    if competitor:
-                        competitor.deep_analysis_status = 'failed'
-                        db.commit()
-
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
-
+        print(f"[deep_analysis_task] Deprecation error: {e}")
         raise
-
     finally:
         if db:
             db.close()
+
+
+# NOTE: The old deep_analysis_task implementation has been removed.
+# Strategic analysis models (pricing, positioning, momentum, changes, financials)
+# have been deprecated and replaced by V2 functional audit workflow.
+# See functional_audit_task and landscape_synthesis_task below.
 
 
 def _run_feature_extraction(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
@@ -1942,253 +1809,14 @@ def _run_feature_extraction(db, competitor: ProductCompetitor, product_id: int) 
     }
 
 
-def _run_pricing_analysis(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
-    """Run pricing analysis for a competitor."""
-    from app.agents.pricing_analyzer import PricingAnalyzerAgent
-    from app.models.competitive_agent import CompetitorPricingAnalysis
-
-    llm_service = LLMService()
-    agent = PricingAnalyzerAgent(
-        db=db,
-        llm_service=llm_service,
-        product_id=product_id
-    )
-
-    # Get product context
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-
-    agent_input = {
-        'competitor_name': competitor.competitor_name,
-        'competitor_url': competitor.competitor_url,
-        'pricing_url': f"{competitor.competitor_url}/pricing",
-        'pricing_content': '',  # Would be fetched in real implementation
-        'product_context': {
-            'product_name': product.product_name if product else '',
-        }
-    }
-
-    result = agent.execute(agent_input)
-
-    # Store pricing analysis
-    pricing = CompetitorPricingAnalysis(
-        product_competitor_id=competitor.id,
-        pricing_model=result.get('pricing_model'),
-        has_free_tier=result.get('has_free_tier', False),
-        has_trial=result.get('has_trial', False),
-        trial_days=result.get('trial_days'),
-        pricing_tiers=result.get('pricing_tiers', []),
-        has_enterprise=result.get('has_enterprise', False),
-        source_url=result.get('source_url'),
-        confidence=result.get('confidence', 0.5)
-    )
-    db.add(pricing)
-    db.commit()
-
-    return {
-        'pricing_model': result.get('pricing_model'),
-        'has_free_tier': result.get('has_free_tier'),
-        'confidence': result.get('confidence')
-    }
-
-
-def _run_positioning_analysis(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
-    """Run positioning analysis for a competitor."""
-    from app.agents.positioning_analyzer import PositioningAnalyzerAgent
-    from app.models.competitive_agent import CompetitorPositioningAnalysis
-
-    llm_service = LLMService()
-    agent = PositioningAnalyzerAgent(
-        db=db,
-        llm_service=llm_service,
-        product_id=product_id
-    )
-
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-
-    agent_input = {
-        'competitor_name': competitor.competitor_name,
-        'competitor_url': competitor.competitor_url,
-        'homepage_content': '',  # Would be fetched in real implementation
-        'product_context': {
-            'product_name': product.product_name if product else '',
-            'product_category': product.product_category if product else '',
-        }
-    }
-
-    result = agent.execute(agent_input)
-
-    # Store positioning analysis
-    positioning = CompetitorPositioningAnalysis(
-        product_competitor_id=competitor.id,
-        tagline=result.get('tagline'),
-        value_propositions=result.get('value_propositions', []),
-        target_audience=result.get('target_audience', ''),
-        key_differentiators=result.get('key_differentiators', []),
-        positioning_statement=result.get('positioning_statement', ''),
-        market_segment=result.get('market_segment', ''),
-        source_urls=result.get('source_urls', []),
-        confidence=result.get('confidence', 0.5)
-    )
-    db.add(positioning)
-    db.commit()
-
-    return {
-        'market_segment': result.get('market_segment'),
-        'tagline': result.get('tagline'),
-        'confidence': result.get('confidence')
-    }
-
-
-def _run_changes_tracking(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
-    """Run changes tracking for a competitor."""
-    from app.agents.changes_tracker import ChangesTrackerAgent
-    from app.models.competitive_agent import CompetitorChangeEvent
-
-    llm_service = LLMService()
-    agent = ChangesTrackerAgent(
-        db=db,
-        llm_service=llm_service,
-        product_id=product_id
-    )
-
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-
-    agent_input = {
-        'competitor_name': competitor.competitor_name,
-        'competitor_url': competitor.competitor_url,
-        'release_notes_content': '',  # Would be fetched in real implementation
-        'analysis_period': 'last 30 days',
-        'product_context': {
-            'product_name': product.product_name if product else '',
-        }
-    }
-
-    result = agent.execute(agent_input)
-
-    # Store change events
-    changes = result.get('changes', [])
-    for change_data in changes:
-        change = CompetitorChangeEvent(
-            product_competitor_id=competitor.id,
-            event_type=change_data.get('event_type', 'other'),
-            event_title=change_data.get('event_title', ''),
-            event_description=change_data.get('event_description', ''),
-            event_date=None,  # Would parse from change_data.get('event_date')
-            source_url=change_data.get('source_url'),
-            source_type=change_data.get('source_type', 'release_notes'),
-            impact_level=change_data.get('impact_level', 'minor')
-        )
-        db.add(change)
-
-    db.commit()
-
-    return {
-        'total_changes': result.get('total_changes', 0),
-        'major_changes': result.get('major_changes', 0),
-        'release_velocity': result.get('release_velocity')
-    }
-
-
-def _run_momentum_analysis(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
-    """Run momentum analysis for a competitor."""
-    from app.agents.momentum_analyzer import MomentumAnalyzerAgent
-    from app.models.competitive_agent import CompetitorMomentumAnalysis
-
-    llm_service = LLMService()
-    agent = MomentumAnalyzerAgent(
-        db=db,
-        llm_service=llm_service,
-        product_id=product_id
-    )
-
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-
-    agent_input = {
-        'competitor_name': competitor.competitor_name,
-        'competitor_url': competitor.competitor_url,
-        'analysis_period': 'last 90 days',
-        'product_context': {
-            'product_name': product.product_name if product else '',
-        }
-    }
-
-    result = agent.execute(agent_input)
-
-    # Store momentum analysis
-    momentum = CompetitorMomentumAnalysis(
-        product_competitor_id=competitor.id,
-        customer_wins=result.get('customer_wins', []),
-        customer_growth_trend=result.get('customer_growth_trend', 'stable'),
-        notable_customers=result.get('notable_customers', []),
-        new_markets=result.get('market_expansions', []),
-        partnership_announcements=result.get('partnerships', []),
-        release_velocity=result.get('release_velocity', 'medium'),
-        major_launches_last_90_days=result.get('major_launches_count', 0),
-        community_growth_signals=result.get('community_signals', {}),
-        momentum_score=result.get('momentum_score', 0.5),
-        momentum_trend=result.get('momentum_trend', 'stable'),
-        analysis_summary=result.get('analysis_summary', ''),
-        confidence=result.get('confidence', 0.5)
-    )
-    db.add(momentum)
-    db.commit()
-
-    return {
-        'momentum_score': result.get('momentum_score'),
-        'momentum_trend': result.get('momentum_trend'),
-        'confidence': result.get('confidence')
-    }
-
-
-def _run_financials_analysis(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
-    """Run financials analysis for a competitor."""
-    from app.agents.financials_analyzer import FinancialsAnalyzerAgent
-    from app.models.competitive_agent import CompetitorFinancialsAnalysis
-
-    llm_service = LLMService()
-    agent = FinancialsAnalyzerAgent(
-        db=db,
-        llm_service=llm_service,
-        product_id=product_id
-    )
-
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-
-    agent_input = {
-        'competitor_name': competitor.competitor_name,
-        'competitor_url': competitor.competitor_url,
-        'product_context': {
-            'product_name': product.product_name if product else '',
-        }
-    }
-
-    result = agent.execute(agent_input)
-
-    # Store financials analysis
-    financials = CompetitorFinancialsAnalysis(
-        product_competitor_id=competitor.id,
-        company_type=result.get('company_type', 'unknown'),
-        total_funding=result.get('total_funding'),
-        last_funding_round=result.get('funding_rounds', [{}])[-1] if result.get('funding_rounds') else None,
-        funding_stage=result.get('funding_stage'),
-        market_cap=result.get('market_cap'),
-        revenue_ttm=result.get('revenue_estimate'),
-        revenue_growth_yoy=result.get('revenue_growth_yoy'),
-        employee_count=result.get('employee_count'),
-        employee_growth_yoy=result.get('employee_growth_yoy'),
-        financial_health=result.get('financial_health', 'unknown'),
-        analysis_summary=result.get('analysis_summary', ''),
-        data_sources=result.get('data_sources', []),
-        confidence=result.get('confidence', 0.5)
-    )
-    db.add(financials)
-    db.commit()
-
-    return {
-        'company_type': result.get('company_type'),
-        'financial_health': result.get('financial_health'),
-        'confidence': result.get('confidence')
-    }
+# DEPRECATED: The following helper functions have been removed in V2:
+# - _run_pricing_analysis
+# - _run_positioning_analysis
+# - _run_changes_tracking
+# - _run_momentum_analysis
+# - _run_financials_analysis
+# These used models that no longer exist (CompetitorPricingAnalysis, etc.)
+# Use functional_audit_task for the new V2 workflow.
 
 
 @shared_task(bind=True, name='app.queue.tasks.feature_clustering_task')
@@ -2614,6 +2242,536 @@ def aggregate_deep_analysis_results(
             try:
                 queue_service = QueueService(db)
                 queue_service.mark_failure(parent_job_id, error_msg, error_tb)
+            except Exception:
+                pass
+
+        raise
+
+    finally:
+        if db:
+            db.close()
+
+
+# =============================================================================
+# V2 Competitive Analysis Tasks (Functional Audit + Landscape Synthesis)
+# =============================================================================
+
+@shared_task(bind=True, name='app.queue.tasks.functional_audit_task', max_retries=2, default_retry_delay=60)
+def functional_audit_task(self, job_id: int):
+    """
+    Run a functional audit for a single competitor.
+
+    This task:
+    1. Fetches competitor data and web search results
+    2. Runs the CompetitorFunctionalAuditAgent
+    3. Stores the report in the database
+    4. Returns the report ID for aggregation
+
+    Args:
+        job_id: The QueueJob ID for this audit
+    """
+    from app.agents.functional_audit_agent import (
+        CompetitorFunctionalAuditAgent,
+        generate_markdown_report
+    )
+    from app.models.competitive_reports import CompetitorFunctionalReport
+    from app.schemas.competitive_reports import FunctionalAuditOutput
+    from app.services.llm_service import LLMService
+
+    db = None
+    try:
+        db = SessionLocal()
+        queue_service = QueueService(db)
+
+        # Get job details
+        job = queue_service.get_job(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        queue_service.mark_running(job_id)
+
+        # Extract job parameters
+        input_data = job.input_data or {}
+        competitor_id = input_data.get('competitor_id')
+        product_id = job.product_id
+
+        if not competitor_id:
+            raise ValueError("competitor_id is required in input_data")
+
+        # Get competitor info
+        competitor = db.query(ProductCompetitor).filter(
+            ProductCompetitor.id == competitor_id,
+            ProductCompetitor.product_id == product_id
+        ).first()
+
+        if not competitor:
+            raise ValueError(f"Competitor {competitor_id} not found for product {product_id}")
+
+        # Get product context
+        product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+        product_context = {
+            'product_name': product.product_name if product else 'Unknown',
+            'product_category': product.product_category if product else None,
+            'description': product.product_description if product else None,
+        }
+
+        # Get product features for context
+        features = db.query(ProductFeature).filter(
+            ProductFeature.product_id == product_id,
+            ProductFeature.status == 'active'
+        ).limit(15).all()
+        product_context['core_features'] = [f.feature_name for f in features]
+
+        # Get web search results (from previous web search or fetch now)
+        web_search_results = input_data.get('web_search_results', [])
+
+        if not web_search_results and competitor.competitor_url:
+            # Could trigger web search here if needed
+            # For now, use any cached search data
+            pass
+
+        # Initialize LLM service and agent
+        llm_service = LLMService()
+        agent = CompetitorFunctionalAuditAgent(db=db, llm_service=llm_service)
+
+        # Run the audit
+        agent_input = {
+            'competitor_name': competitor.competitor_name,
+            'competitor_url': competitor.competitor_url or '',
+            'product_context': product_context,
+            'web_search_results': web_search_results,
+        }
+
+        # Use higher max_tokens for detailed audit output
+        result = agent.execute(agent_input, max_tokens=8000)
+
+        # Generate markdown report (convert dict to Pydantic for the report generator)
+        result_model = FunctionalAuditOutput(**result)
+        markdown_content = generate_markdown_report(competitor.competitor_name, result_model)
+
+        # Store or update the report
+        existing_report = db.query(CompetitorFunctionalReport).filter(
+            CompetitorFunctionalReport.product_competitor_id == competitor_id,
+            CompetitorFunctionalReport.product_id == product_id
+        ).first()
+
+        if existing_report:
+            # Update existing report
+            existing_report.report_version += 1
+            existing_report.report_content_md = markdown_content
+            existing_report.competitor_context = result['competitor_context']
+            existing_report.functional_comparison = result['functional_comparison']
+            existing_report.gaps_deep_dive = result['gaps_deep_dive']
+            existing_report.technical_constraints = result['technical_constraints']
+            existing_report.raw_search_results = web_search_results if isinstance(web_search_results, list) else None
+            existing_report.queue_job_id = job_id
+            report = existing_report
+        else:
+            # Create new report
+            report = CompetitorFunctionalReport(
+                product_competitor_id=competitor_id,
+                product_id=product_id,
+                report_version=1,
+                report_content_md=markdown_content,
+                competitor_context=result['competitor_context'],
+                functional_comparison=result['functional_comparison'],
+                gaps_deep_dive=result['gaps_deep_dive'],
+                technical_constraints=result['technical_constraints'],
+                raw_search_results=web_search_results if isinstance(web_search_results, list) else None,
+                queue_job_id=job_id
+            )
+            db.add(report)
+
+        db.commit()
+        db.refresh(report)
+
+        output_data = {
+            'report_id': report.id,
+            'competitor_id': competitor_id,
+            'competitor_name': competitor.competitor_name,
+            'report_version': report.report_version,
+            'features_compared': len(result['functional_comparison']),
+            'gaps_identified': len(result['gaps_deep_dive']),
+        }
+
+        queue_service.mark_success(job_id, output_data)
+        return output_data
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[functional_audit_task] Error for job {job_id}: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
+            except Exception:
+                pass
+
+        raise self.retry(exc=e)
+
+    finally:
+        if db:
+            db.close()
+
+
+@shared_task(bind=True, name='app.queue.tasks.landscape_synthesis_task', max_retries=2, default_retry_delay=60)
+def landscape_synthesis_task(self, job_id: int):
+    """
+    Run landscape synthesis across all competitor functional reports.
+
+    This task:
+    1. Gathers all functional reports for the product
+    2. Runs the LandscapeOpportunitySynthesizerAgent
+    3. Stores the landscape report
+    4. Auto-exports all reports to filesystem
+
+    Args:
+        job_id: The QueueJob ID for this synthesis
+    """
+    from app.agents.landscape_synthesizer_agent import (
+        LandscapeOpportunitySynthesizerAgent,
+        generate_markdown_report
+    )
+    from app.models.competitive_reports import (
+        CompetitorFunctionalReport,
+        LandscapeOpportunityReport
+    )
+    from app.schemas.competitive_reports import LandscapeSynthesisOutput
+    from app.services.llm_service import LLMService
+    from app.services.report_export_service import get_report_export_service
+
+    db = None
+    try:
+        db = SessionLocal()
+        queue_service = QueueService(db)
+
+        # Get job details
+        job = queue_service.get_job(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        queue_service.mark_running(job_id)
+
+        product_id = job.product_id
+        input_data = job.input_data or {}
+
+        # Get product context
+        product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+        if not product:
+            raise ValueError(f"Product {product_id} not found")
+
+        product_context = {
+            'product_name': product.product_name,
+            'product_category': product.product_category,
+            'description': product.product_description,
+        }
+
+        # Get product features
+        features = db.query(ProductFeature).filter(
+            ProductFeature.product_id == product_id,
+            ProductFeature.status == 'active'
+        ).limit(15).all()
+        product_context['core_features'] = [f.feature_name for f in features]
+
+        # Get all functional reports for this product
+        functional_reports = db.query(CompetitorFunctionalReport).filter(
+            CompetitorFunctionalReport.product_id == product_id
+        ).all()
+
+        if not functional_reports:
+            raise ValueError(f"No functional reports found for product {product_id}")
+
+        # Format reports for the agent
+        competitor_reports = []
+        report_ids = []
+        report_tuples = []  # For export service
+
+        for report in functional_reports:
+            # Get competitor name
+            competitor = db.query(ProductCompetitor).filter(
+                ProductCompetitor.id == report.product_competitor_id
+            ).first()
+            competitor_name = competitor.competitor_name if competitor else f"Competitor {report.product_competitor_id}"
+
+            competitor_reports.append({
+                'competitor_name': competitor_name,
+                'audit': {
+                    'competitor_context': report.competitor_context,
+                    'functional_comparison': report.functional_comparison,
+                    'gaps_deep_dive': report.gaps_deep_dive,
+                    'technical_constraints': report.technical_constraints,
+                }
+            })
+            report_ids.append(report.id)
+            report_tuples.append((report, competitor_name))
+
+        # Initialize LLM service and agent
+        llm_service = LLMService()
+        agent = LandscapeOpportunitySynthesizerAgent(db=db, llm_service=llm_service)
+
+        # Run the synthesis
+        agent_input = {
+            'product_context': product_context,
+            'competitor_reports': competitor_reports,
+        }
+
+        # Use higher max_tokens for synthesis output
+        result = agent.execute(agent_input, max_tokens=8000)
+
+        # Convert dict to Pydantic for markdown generation
+        result_model = LandscapeSynthesisOutput(**result)
+
+        # Generate markdown report
+        markdown_content = generate_markdown_report(
+            product.product_name,
+            result_model,
+            len(functional_reports)
+        )
+
+        # Store or update the landscape report
+        existing_report = db.query(LandscapeOpportunityReport).filter(
+            LandscapeOpportunityReport.product_id == product_id
+        ).first()
+
+        if existing_report:
+            existing_report.report_version += 1
+            existing_report.report_content_md = markdown_content
+            existing_report.feature_cluster_matrix = result['feature_cluster_matrix']
+            existing_report.feature_opportunities = result['feature_opportunities']
+            existing_report.high_impact_gaps = result['high_impact_gaps']
+            existing_report.source_competitor_report_ids = report_ids
+            existing_report.queue_job_id = job_id
+            landscape_report = existing_report
+        else:
+            landscape_report = LandscapeOpportunityReport(
+                product_id=product_id,
+                report_version=1,
+                report_content_md=markdown_content,
+                feature_cluster_matrix=result['feature_cluster_matrix'],
+                feature_opportunities=result['feature_opportunities'],
+                high_impact_gaps=result['high_impact_gaps'],
+                source_competitor_report_ids=report_ids,
+                queue_job_id=job_id
+            )
+            db.add(landscape_report)
+
+        db.commit()
+        db.refresh(landscape_report)
+
+        # Auto-export all reports to filesystem
+        export_service = get_report_export_service()
+        export_result = export_service.export_analysis_run(
+            product_id=product_id,
+            product_name=product.product_name,
+            functional_reports=report_tuples,
+            landscape_report=landscape_report
+        )
+
+        output_data = {
+            'landscape_report_id': landscape_report.id,
+            'report_version': landscape_report.report_version,
+            'competitors_analyzed': len(functional_reports),
+            'feature_clusters': len(result['feature_cluster_matrix']),
+            'feature_opportunities': len(result['feature_opportunities']),
+            'high_impact_gaps': len(result['high_impact_gaps']),
+            'source_report_ids': report_ids,
+            'export_folder': export_result.get('folder'),
+            'export_files': export_result.get('total_files', 0),
+        }
+
+        queue_service.mark_success(job_id, output_data)
+        return output_data
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[landscape_synthesis_task] Error for job {job_id}: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
+            except Exception:
+                pass
+
+        raise self.retry(exc=e)
+
+    finally:
+        if db:
+            db.close()
+
+
+@shared_task(bind=True, name='app.queue.tasks.aggregate_functional_audits')
+def aggregate_functional_audits(self, audit_results: list, parent_job_id: int):
+    """
+    Callback task after all functional audits complete.
+
+    Triggers landscape synthesis automatically.
+
+    Args:
+        audit_results: List of results from functional_audit_task
+        parent_job_id: The parent orchestration job ID
+    """
+    from app.models.queue import QueueJob, JobType, JobStatus
+
+    db = None
+    try:
+        db = SessionLocal()
+        queue_service = QueueService(db)
+
+        # Get parent job to find product_id
+        parent_job = queue_service.get_job(parent_job_id)
+        if not parent_job:
+            raise ValueError(f"Parent job {parent_job_id} not found")
+
+        product_id = parent_job.product_id
+
+        # Count successful audits
+        successful_audits = [r for r in audit_results if r and r.get('report_id')]
+        failed_audits = len(audit_results) - len(successful_audits)
+
+        print(f"[aggregate_functional_audits] {len(successful_audits)} successful, {failed_audits} failed")
+
+        if not successful_audits:
+            raise ValueError("All functional audits failed, cannot proceed with synthesis")
+
+        # Create landscape synthesis job
+        synthesis_job = QueueJob(
+            job_type=JobType.LANDSCAPE_SYNTHESIS,
+            status=JobStatus.PENDING,
+            product_id=product_id,
+            parent_job_id=parent_job_id,
+            input_data={
+                'audit_report_ids': [r['report_id'] for r in successful_audits],
+            }
+        )
+        db.add(synthesis_job)
+        db.commit()
+        db.refresh(synthesis_job)
+
+        # Trigger landscape synthesis
+        landscape_synthesis_task.delay(synthesis_job.id)
+
+        return {
+            'status': 'synthesis_triggered',
+            'successful_audits': len(successful_audits),
+            'failed_audits': failed_audits,
+            'synthesis_job_id': synthesis_job.id,
+        }
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[aggregate_functional_audits] Error: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(parent_job_id, error_msg, error_tb)
+            except Exception:
+                pass
+
+        raise
+
+    finally:
+        if db:
+            db.close()
+
+
+@shared_task(bind=True, name='app.queue.tasks.run_competitive_analysis_v2')
+def run_competitive_analysis_v2(self, job_id: int):
+    """
+    Orchestrate the V2 competitive analysis workflow.
+
+    This task:
+    1. Creates functional audit jobs for all enabled competitors
+    2. Dispatches audits in parallel using Celery chord
+    3. Chord callback triggers landscape synthesis
+
+    Args:
+        job_id: The parent orchestration job ID
+    """
+    from celery import chord
+    from app.models.queue import QueueJob, JobType, JobStatus
+
+    db = None
+    try:
+        db = SessionLocal()
+        queue_service = QueueService(db)
+
+        # Get job details
+        job = queue_service.get_job(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        queue_service.mark_running(job_id)
+
+        product_id = job.product_id
+
+        # Get competitors enabled for deep analysis (selected by user in Market Discovery)
+        competitors = db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id == product_id,
+            ProductCompetitor.status == 'active',
+            ProductCompetitor.deep_analysis_enabled == True
+        ).all()
+
+        if not competitors:
+            raise ValueError(f"No competitors enabled for deep analysis. Enable competitors in Market Discovery first.")
+
+        print(f"[run_competitive_analysis_v2] Starting analysis for {len(competitors)} competitors")
+
+        # Create audit jobs for each competitor
+        audit_tasks = []
+        audit_job_ids = []
+
+        for competitor in competitors:
+            # Create job record
+            audit_job = QueueJob(
+                job_type=JobType.FUNCTIONAL_AUDIT,
+                status=JobStatus.PENDING,
+                product_id=product_id,
+                parent_job_id=job_id,
+                input_data={
+                    'competitor_id': competitor.id,
+                    'competitor_name': competitor.competitor_name,
+                }
+            )
+            db.add(audit_job)
+            db.flush()  # Get ID without committing
+
+            audit_job_ids.append(audit_job.id)
+            audit_tasks.append(functional_audit_task.s(audit_job.id))
+
+        db.commit()
+
+        # Update parent job with child job IDs
+        job.output_data = {
+            'status': 'audits_dispatched',
+            'audit_job_ids': audit_job_ids,
+            'competitor_count': len(competitors),
+        }
+        db.commit()
+
+        # Dispatch parallel audits with callback for synthesis
+        workflow = chord(audit_tasks)(aggregate_functional_audits.s(job_id))
+
+        return {
+            'status': 'workflow_started',
+            'audit_jobs': len(audit_job_ids),
+            'competitors': [c.competitor_name for c in competitors],
+        }
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[run_competitive_analysis_v2] Error for job {job_id}: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
             except Exception:
                 pass
 

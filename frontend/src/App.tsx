@@ -8,7 +8,7 @@
  * - Protected routes
  */
 
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ProductProvider } from './contexts/ProductContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -27,11 +27,16 @@ import CreateProductPage from './pages/CompetitorIntelligence/CreateProductPage'
 import AnalyzeProductPage from './pages/CompetitorIntelligence/AnalyzeProductPage';
 import ProductDetailPage from './pages/CompetitorIntelligence/ProductDetailPage';
 import CompetitorsPage from './pages/CompetitorIntelligence/CompetitorsPage';
-import CompetitiveReportPage from './pages/CompetitorIntelligence/CompetitiveReportPage';
 // Legacy pages - kept for hidden route access
 import SessionWorkflowPage from './pages/CompetitorIntelligence/SessionWorkflowPage';
 import ProductDashboardPage from './pages/ProductDashboardPage';
 import IntelligenceHubPage from './pages/CompetitorIntelligence/IntelligenceHubPage';
+
+// Redirect from old /report route to new V2 IntelligenceHub
+function ReportRedirect() {
+  const { productId } = useParams<{ productId: string }>();
+  return <Navigate to={`/product-intelligence/products/${productId}/intelligence?tab=competitor-reports`} replace />;
+}
 
 function App() {
   return (
@@ -141,15 +146,10 @@ function App() {
               </ProtectedRoute>
             }
           />
+          {/* Legacy route - redirect to V2 IntelligenceHub */}
           <Route
             path="/product-intelligence/products/:productId/report"
-            element={
-              <ProtectedRoute>
-                <ProductOwnerRoute>
-                  <CompetitiveReportPage />
-                </ProductOwnerRoute>
-              </ProtectedRoute>
-            }
+            element={<ReportRedirect />}
           />
           {/* Legacy routes - hidden from navigation but still accessible */}
           <Route

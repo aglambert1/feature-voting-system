@@ -1089,5 +1089,190 @@ export const getFinancialsAnalysis = async (
   return response.data;
 };
 
+// ============================================================================
+// V2 COMPETITIVE ANALYSIS API METHODS
+// ============================================================================
+
+// Import V2 types at runtime (they're already in types.ts)
+import type {
+  FunctionalReportSummary,
+  FunctionalReportDetail,
+  LandscapeReportDetail,
+  BatchIdeaStatusesResponse,
+  FeatureOpportunitiesExport,
+} from '../types';
+
+/**
+ * Get all functional reports for a product
+ */
+export const getFunctionalReports = async (productId: number): Promise<FunctionalReportSummary[]> => {
+  const response = await api.get<FunctionalReportSummary[]>(
+    `/product-intelligence/agents/${productId}/functional-reports`
+  );
+  return response.data;
+};
+
+/**
+ * Get functional report detail for a competitor
+ */
+export const getFunctionalReport = async (
+  productId: number,
+  competitorId: number
+): Promise<FunctionalReportDetail | null> => {
+  const response = await api.get<FunctionalReportDetail | null>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/functional-report`
+  );
+  return response.data;
+};
+
+/**
+ * Trigger functional audit for a single competitor
+ */
+export const triggerFunctionalAudit = async (
+  productId: number,
+  competitorId: number
+): Promise<AgentJobResponse> => {
+  const response = await api.post<AgentJobResponse>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/functional-audit`
+  );
+  return response.data;
+};
+
+/**
+ * Export functional report as markdown
+ */
+export const exportFunctionalReportMd = async (
+  productId: number,
+  competitorId: number
+): Promise<string> => {
+  const response = await api.get<string>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/functional-report/export`,
+    { headers: { Accept: 'text/markdown' } }
+  );
+  return response.data;
+};
+
+/**
+ * Get idea statuses for all gaps of a competitor
+ */
+export const getGapIdeaStatuses = async (
+  productId: number,
+  competitorId: number
+): Promise<BatchIdeaStatusesResponse> => {
+  const response = await api.get<BatchIdeaStatusesResponse>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/gaps/idea-statuses`
+  );
+  return response.data;
+};
+
+/**
+ * Create ideas from selected gaps
+ */
+export const createIdeasFromGaps = async (
+  productId: number,
+  competitorId: number,
+  gapIndices: number[]
+): Promise<AgentJobResponse[]> => {
+  const response = await api.post<AgentJobResponse[]>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/gaps/create-ideas`,
+    { gap_indices: gapIndices }
+  );
+  return response.data;
+};
+
+/**
+ * Export selected gaps as JSON
+ */
+export const exportGapsJson = async (
+  productId: number,
+  competitorId: number,
+  gapIndices: number[]
+): Promise<any> => {
+  const response = await api.post(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/gaps/export-json`,
+    { gap_indices: gapIndices }
+  );
+  return response.data;
+};
+
+/**
+ * Get landscape report for a product
+ */
+export const getLandscapeReport = async (productId: number): Promise<LandscapeReportDetail | null> => {
+  const response = await api.get<LandscapeReportDetail | null>(
+    `/product-intelligence/agents/${productId}/landscape-report`
+  );
+  return response.data;
+};
+
+/**
+ * Trigger landscape synthesis
+ */
+export const triggerLandscapeSynthesis = async (productId: number): Promise<AgentJobResponse> => {
+  const response = await api.post<AgentJobResponse>(
+    `/product-intelligence/agents/${productId}/run-landscape-synthesis`
+  );
+  return response.data;
+};
+
+/**
+ * Trigger full V2 competitive analysis
+ */
+export const triggerCompetitiveAnalysisV2 = async (productId: number): Promise<AgentJobResponse> => {
+  const response = await api.post<AgentJobResponse>(
+    `/product-intelligence/agents/${productId}/run-competitive-analysis-v2`
+  );
+  return response.data;
+};
+
+/**
+ * Export landscape report as markdown
+ */
+export const exportLandscapeReportMd = async (productId: number): Promise<string> => {
+  const response = await api.get<string>(
+    `/product-intelligence/agents/${productId}/landscape-report/export`,
+    { headers: { Accept: 'text/markdown' } }
+  );
+  return response.data;
+};
+
+/**
+ * Get idea statuses for all opportunities
+ */
+export const getOpportunityIdeaStatuses = async (productId: number): Promise<BatchIdeaStatusesResponse> => {
+  const response = await api.get<BatchIdeaStatusesResponse>(
+    `/product-intelligence/agents/${productId}/landscape-report/idea-statuses`
+  );
+  return response.data;
+};
+
+/**
+ * Create ideas from selected opportunities
+ */
+export const createIdeasFromOpportunities = async (
+  productId: number,
+  opportunityIndices: number[]
+): Promise<AgentJobResponse[]> => {
+  const response = await api.post<AgentJobResponse[]>(
+    `/product-intelligence/agents/${productId}/landscape-report/create-ideas`,
+    { opportunity_indices: opportunityIndices }
+  );
+  return response.data;
+};
+
+/**
+ * Export selected opportunities as JSON
+ */
+export const exportOpportunitiesJson = async (
+  productId: number,
+  opportunityIndices: number[]
+): Promise<FeatureOpportunitiesExport> => {
+  const response = await api.post<FeatureOpportunitiesExport>(
+    `/product-intelligence/agents/${productId}/landscape-report/export-json`,
+    { opportunity_indices: opportunityIndices }
+  );
+  return response.data;
+};
+
 // Export the axios instance for custom requests
 export default api;

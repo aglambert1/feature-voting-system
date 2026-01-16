@@ -959,3 +959,179 @@ export interface FeatureQueryResponse {
   matched_features: MatchedFeature[];
   similar_features: MatchedFeature[];
 }
+
+// ============================================================================
+// V2 COMPETITIVE ANALYSIS TYPES
+// ============================================================================
+
+/**
+ * Competitor context from functional audit.
+ */
+export interface CompetitorContext {
+  positioning: string;
+  core_differentiation: string;
+  target_customer: string;
+}
+
+/**
+ * Feature comparison entry from functional audit.
+ */
+export interface FunctionalComparison {
+  competitor_feature_name: string;
+  functional_description: string;
+  mapping_status: 'Gap' | 'Parity' | 'Advantage' | 'Differentiator';
+  our_equivalent?: string | null;
+  notes?: string | null;
+}
+
+/**
+ * Gap deep-dive entry from functional audit.
+ */
+export interface GapDeepDive {
+  feature_name: string;
+  user_problem: string;
+  evidence: string;
+}
+
+/**
+ * Technical constraints from functional audit.
+ */
+export interface TechnicalConstraints {
+  integrations?: string[];
+  api_capabilities?: string;
+  platform_requirements?: string;
+  notes?: string;
+}
+
+/**
+ * Summary of a functional report for list views.
+ */
+export interface FunctionalReportSummary {
+  id: number;
+  product_competitor_id: number;
+  competitor_name: string;
+  competitor_url: string | null;
+  report_version: number;
+  features_compared: number;
+  gaps_identified: number;
+  generated_at: string;
+  job_status: string | null;
+}
+
+/**
+ * Full functional report detail.
+ */
+export interface FunctionalReportDetail {
+  id: number;
+  product_competitor_id: number;
+  competitor_name: string;
+  competitor_url: string | null;
+  report_version: number;
+  report_content_md: string | null;
+  competitor_context: CompetitorContext | null;
+  functional_comparison: FunctionalComparison[];
+  gaps_deep_dive: GapDeepDive[];
+  technical_constraints: TechnicalConstraints | null;
+  generated_at: string;
+  job_status: string | null;
+}
+
+/**
+ * Feature cluster entry from landscape synthesis.
+ */
+export interface FeatureClusterEntry {
+  feature_category: string;
+  prevalence: 'Table Stakes' | 'Common' | 'Emerging' | 'Frontier';
+  our_status: 'Have' | 'Gap' | 'Partial';
+  competitors_with_feature: string[];
+  notes?: string | null;
+}
+
+/**
+ * Feature opportunity from landscape synthesis.
+ */
+export interface FeatureOpportunity {
+  feature_name: string;
+  summary: string;
+  user_value: string;
+  market_context: string;
+  priority_score: number;
+  competitors_with_feature: string[];
+  source_evidence: string[];
+  high_impact?: boolean;
+  user_sentiment?: string;
+  priority_rationale?: string;
+}
+
+/**
+ * High-impact gap from landscape synthesis.
+ */
+export interface HighImpactGap {
+  rank: number;
+  feature_name: string;
+  market_gravity: string;
+  competitors_with_feature: string[];
+  user_demand_evidence: string;
+}
+
+/**
+ * Landscape report detail.
+ */
+export interface LandscapeReportDetail {
+  id: number;
+  product_id: number;
+  report_version: number;
+  report_content_md: string | null;
+  feature_cluster_matrix: FeatureClusterEntry[];
+  feature_opportunities: FeatureOpportunity[];
+  high_impact_gaps: HighImpactGap[];
+  innovation_whitespace: string | null;
+  analysis_summary: string | null;
+  source_competitor_report_ids: number[];
+  competitor_count: number;
+  generated_at: string;
+  job_status: string | null;
+}
+
+/**
+ * Idea status for a gap or opportunity.
+ */
+export interface IdeaStatusResponse {
+  idea_created: boolean;
+  idea_id: number | null;
+}
+
+/**
+ * Batch idea statuses response.
+ */
+export interface BatchIdeaStatusesResponse {
+  statuses: Record<number, IdeaStatusResponse>;
+  total_ideas_created: number;
+}
+
+/**
+ * Response from creating ideas (gaps or opportunities).
+ */
+export interface CreateIdeasResponse {
+  job_id: number;
+  job_uuid: string;
+  job_type: string;
+  status: string;
+  message: string;
+  warning?: string;
+}
+
+/**
+ * Feature opportunities export format.
+ */
+export interface FeatureOpportunitiesExport {
+  version: string;
+  generated_at: string;
+  product_id: number;
+  product_name: string;
+  feature_ideas: FeatureOpportunity[];
+  metadata: {
+    total_competitors_analyzed: number;
+    report_ids: number[];
+  };
+}

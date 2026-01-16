@@ -39,11 +39,10 @@ from app.models.competitive_agent import (
     CompetitiveAgentConfig,
     FeatureCluster,
     FeatureClusterMember,
-    CompetitorPricingAnalysis,
-    CompetitorPositioningAnalysis,
-    CompetitorChangeEvent,
-    CompetitorMomentumAnalysis,
-    CompetitorFinancialsAnalysis
+)
+from app.models.competitive_reports import (
+    CompetitorFunctionalReport,
+    LandscapeOpportunityReport,
 )
 
 __all__ = [
@@ -57,6 +56,5 @@ __all__ = [
     "PMReviewQueue", "CompetitorSnapshot", "MonitoringConfig",
     "ReviewQueueType", "ReviewQueueStatus", "ReviewQueuePriority", "AlertType",
     "AgentMode", "CompetitiveAgentConfig", "FeatureCluster", "FeatureClusterMember",
-    "CompetitorPricingAnalysis", "CompetitorPositioningAnalysis", "CompetitorChangeEvent",
-    "CompetitorMomentumAnalysis", "CompetitorFinancialsAnalysis"
+    "CompetitorFunctionalReport", "LandscapeOpportunityReport",
 ]

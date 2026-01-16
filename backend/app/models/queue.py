@@ -36,17 +36,20 @@ class JobType(str, enum.Enum):
     - COMPETITIVE_MONITORING: Scheduled monitoring
     - REPORT_GENERATION: Generate reports
 
-    Agent-Centric Architecture (New):
-    - DEEP_ANALYSIS: Per-competitor deep analysis (features + strategic)
-    - FEATURE_EXTRACTION_ONLY: Feature extraction only (if triggered separately)
-    - STRATEGIC_ANALYSIS_ONLY: Strategic analysis only (if triggered separately)
-    - PRICING_ANALYSIS: Analyze competitor pricing
-    - POSITIONING_ANALYSIS: Analyze competitor positioning/messaging
-    - CHANGES_TRACKING: Track competitor changes from release notes/blogs
-    - MOMENTUM_ANALYSIS: Analyze competitor momentum signals
-    - FINANCIALS_ANALYSIS: Analyze competitor financials (when available)
+    Agent-Centric Architecture:
+    - DEEP_ANALYSIS: Per-competitor deep analysis
+    - SCHEDULED_DEEP_ANALYSIS: Orchestrates multiple deep_analysis jobs
+    - FEATURE_EXTRACTION_ONLY: Feature extraction only
     - FEATURE_CLUSTERING: Run feature clustering across competitors
     - INTENSITY_IDEA_GENERATION: Generate ideas from high-intensity clusters
+
+    Two-Step Competitive Analysis (New):
+    - FUNCTIONAL_AUDIT: Per-competitor functional feature audit
+    - LANDSCAPE_SYNTHESIS: Cross-competitor landscape opportunity synthesis
+
+    DEPRECATED (kept for backwards compatibility):
+    - STRATEGIC_ANALYSIS_ONLY, PRICING_ANALYSIS, POSITIONING_ANALYSIS,
+    - CHANGES_TRACKING, MOMENTUM_ANALYSIS, FINANCIALS_ANALYSIS
     """
     PRODUCT_ANALYSIS = "product_analysis"
     COMPETITOR_DISCOVERY = "competitor_discovery"
@@ -61,14 +64,21 @@ class JobType(str, enum.Enum):
     DEEP_ANALYSIS = "deep_analysis"
     SCHEDULED_DEEP_ANALYSIS = "scheduled_deep_analysis"  # Orchestrates multiple deep_analysis jobs
     FEATURE_EXTRACTION_ONLY = "feature_extraction_only"
-    STRATEGIC_ANALYSIS_ONLY = "strategic_analysis_only"
-    PRICING_ANALYSIS = "pricing_analysis"
-    POSITIONING_ANALYSIS = "positioning_analysis"
-    CHANGES_TRACKING = "changes_tracking"
-    MOMENTUM_ANALYSIS = "momentum_analysis"
-    FINANCIALS_ANALYSIS = "financials_analysis"
     FEATURE_CLUSTERING = "feature_clustering"
     INTENSITY_IDEA_GENERATION = "intensity_idea_generation"
+
+    # New Competitive Reports job types (two-step analysis)
+    FUNCTIONAL_AUDIT = "functional_audit"  # Per-competitor functional audit
+    LANDSCAPE_SYNTHESIS = "landscape_synthesis"  # Cross-competitor landscape synthesis
+
+    # DEPRECATED: These job types are no longer used in the new two-step analysis system
+    # Kept for backwards compatibility with existing job records
+    STRATEGIC_ANALYSIS_ONLY = "strategic_analysis_only"  # DEPRECATED
+    PRICING_ANALYSIS = "pricing_analysis"  # DEPRECATED
+    POSITIONING_ANALYSIS = "positioning_analysis"  # DEPRECATED
+    CHANGES_TRACKING = "changes_tracking"  # DEPRECATED
+    MOMENTUM_ANALYSIS = "momentum_analysis"  # DEPRECATED
+    FINANCIALS_ANALYSIS = "financials_analysis"  # DEPRECATED
 
 
 class JobStatus(str, enum.Enum):

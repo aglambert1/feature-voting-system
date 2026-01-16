@@ -22,9 +22,10 @@ from app.models.user import User
 from app.models.queue import JobType, JobStatus
 from app.models.competitor_intelligence import CIProduct, ProductCompetitor, ProductCompetitorFeature
 from app.models.competitive_agent import (
-    CompetitiveAgentConfig, AgentMode, FeatureCluster, FeatureClusterMember,
-    CompetitorPricingAnalysis, CompetitorPositioningAnalysis,
-    CompetitorChangeEvent, CompetitorMomentumAnalysis, CompetitorFinancialsAnalysis
+    CompetitiveAgentConfig, AgentMode, FeatureCluster, FeatureClusterMember
+)
+from app.models.competitive_reports import (
+    CompetitorFunctionalReport, LandscapeOpportunityReport
 )
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.services.queue_service import QueueService
@@ -58,17 +59,10 @@ class AgentConfigResponse(BaseModel):
     alert_on_new_competitors: bool
     alert_on_disappeared_competitors: bool
 
-    # Deep Analysis
+    # Deep Analysis (V2: Functional Audit + Landscape Synthesis)
     deep_analysis_mode: str
     deep_analysis_schedule: Optional[str]
     deep_analysis_last_run: Optional[datetime]
-
-    # Strategic Analysis Toggles
-    enable_pricing_analysis: bool
-    enable_positioning_analysis: bool
-    enable_changes_tracking: bool
-    enable_momentum_analysis: bool
-    enable_financials_analysis: bool
 
     # Intensity Settings
     intensity_similarity_threshold: float
@@ -92,12 +86,6 @@ class AgentConfigUpdateRequest(BaseModel):
 
     deep_analysis_mode: Optional[str] = Field(None, pattern="^(manual|scheduled)$")
     deep_analysis_schedule: Optional[str] = Field(None, pattern="^(daily|weekly|monthly)$")
-
-    enable_pricing_analysis: Optional[bool] = None
-    enable_positioning_analysis: Optional[bool] = None
-    enable_changes_tracking: Optional[bool] = None
-    enable_momentum_analysis: Optional[bool] = None
-    enable_financials_analysis: Optional[bool] = None
 
     intensity_similarity_threshold: Optional[float] = Field(None, ge=0.5, le=0.95)
     intensity_idea_threshold: Optional[int] = Field(None, ge=2, le=10)
@@ -270,6 +258,95 @@ class JobResponse(BaseModel):
 
 
 # ============================================================================
+# V2 Report Response Schemas (Functional Audit + Landscape Synthesis)
+# ============================================================================
+
+class FunctionalReportSummary(BaseModel):
+    """Summary response for a competitor functional report."""
+    id: int
+    product_competitor_id: int
+    product_id: int
+    competitor_name: Optional[str] = None
+    competitor_url: Optional[str] = None
+    report_version: int
+    features_compared: int = 0
+    gaps_identified: int = 0
+    generated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class FunctionalReportDetail(BaseModel):
+    """Detailed response for a competitor functional report."""
+    id: int
+    product_competitor_id: int
+    product_id: int
+    competitor_name: Optional[str] = None
+    report_version: int
+    report_content_md: Optional[str] = None
+    competitor_context: Optional[dict] = None
+    functional_comparison: Optional[List[dict]] = None
+    gaps_deep_dive: Optional[List[dict]] = None
+    technical_constraints: Optional[dict] = None
+    generated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class LandscapeReportSummary(BaseModel):
+    """Summary response for a landscape opportunity report."""
+    id: int
+    product_id: int
+    report_version: int
+    feature_clusters_count: int = 0
+    feature_opportunities_count: int = 0
+    high_impact_gaps_count: int = 0
+    source_competitor_report_ids: Optional[List[int]] = None
+    generated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class LandscapeReportDetail(BaseModel):
+    """Detailed response for a landscape opportunity report."""
+    id: int
+    product_id: int
+    report_version: int
+    report_content_md: Optional[str] = None
+    feature_cluster_matrix: Optional[List[dict]] = None
+    feature_opportunities: Optional[List[dict]] = None
+    high_impact_gaps: Optional[List[dict]] = None
+    source_competitor_report_ids: Optional[List[int]] = None
+    generated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class FeatureOpportunitiesExportResponse(BaseModel):
+    """Response for portable feature opportunities JSON export."""
+    version: str = "1.0"
+    generated_at: str
+    product_id: int
+    product_name: Optional[str] = None
+    feature_ideas: List[dict]
+    metadata: dict
+
+
+class CreateIdeasFromOpportunitiesRequest(BaseModel):
+    """Request to create ideas from selected feature opportunities."""
+    opportunity_indices: List[int] = Field(
+        ...,
+        min_length=1,
+        max_length=20,
+        description="Indices of feature opportunities to create ideas from (0-indexed)"
+    )
+
+
+# ============================================================================
 # Helper Functions
 # ============================================================================
 
@@ -344,11 +421,6 @@ def get_agent_config(
         deep_analysis_mode=config.deep_analysis_mode.value if config.deep_analysis_mode else "manual",
         deep_analysis_schedule=config.deep_analysis_schedule,
         deep_analysis_last_run=config.deep_analysis_last_run,
-        enable_pricing_analysis=config.enable_pricing_analysis,
-        enable_positioning_analysis=config.enable_positioning_analysis,
-        enable_changes_tracking=config.enable_changes_tracking,
-        enable_momentum_analysis=config.enable_momentum_analysis,
-        enable_financials_analysis=config.enable_financials_analysis,
         intensity_similarity_threshold=config.intensity_similarity_threshold,
         intensity_idea_threshold=config.intensity_idea_threshold,
         enabled=config.enabled
@@ -383,16 +455,6 @@ def update_agent_config(
         config.deep_analysis_mode = AgentMode(request.deep_analysis_mode)
     if request.deep_analysis_schedule is not None:
         config.deep_analysis_schedule = request.deep_analysis_schedule
-    if request.enable_pricing_analysis is not None:
-        config.enable_pricing_analysis = request.enable_pricing_analysis
-    if request.enable_positioning_analysis is not None:
-        config.enable_positioning_analysis = request.enable_positioning_analysis
-    if request.enable_changes_tracking is not None:
-        config.enable_changes_tracking = request.enable_changes_tracking
-    if request.enable_momentum_analysis is not None:
-        config.enable_momentum_analysis = request.enable_momentum_analysis
-    if request.enable_financials_analysis is not None:
-        config.enable_financials_analysis = request.enable_financials_analysis
     if request.intensity_similarity_threshold is not None:
         config.intensity_similarity_threshold = request.intensity_similarity_threshold
     if request.intensity_idea_threshold is not None:
@@ -1151,73 +1213,40 @@ def create_idea_from_cluster(
 
 
 # ============================================================================
-# Strategic Analysis Results
+# Strategic Analysis Results (DEPRECATED - V2 uses Functional Audit instead)
+# These endpoints are deprecated and return 410 Gone.
+# Use the V2 endpoints: /functional-reports, /landscape-report
 # ============================================================================
 
-@router.get("/{product_id}/competitors/{competitor_id}/pricing", response_model=Optional[PricingAnalysisResponse])
+@router.get("/{product_id}/competitors/{competitor_id}/pricing")
 def get_pricing_analysis(
     product_id: int,
     competitor_id: int,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get pricing analysis for a competitor."""
-    verify_competitor_access(db, product_id, competitor_id, current_user)
-
-    analysis = db.query(CompetitorPricingAnalysis).filter(
-        CompetitorPricingAnalysis.product_competitor_id == competitor_id
-    ).order_by(CompetitorPricingAnalysis.analyzed_at.desc()).first()
-
-    if not analysis:
-        return None
-
-    return PricingAnalysisResponse(
-        id=analysis.id,
-        product_competitor_id=analysis.product_competitor_id,
-        pricing_model=analysis.pricing_model,
-        has_free_tier=analysis.has_free_tier,
-        has_trial=analysis.has_trial,
-        trial_days=analysis.trial_days,
-        pricing_tiers=analysis.pricing_tiers,
-        has_enterprise=analysis.has_enterprise,
-        source_url=analysis.source_url,
-        confidence=analysis.confidence,
-        analyzed_at=analysis.analyzed_at
+    """DEPRECATED: Pricing analysis is no longer available. Use V2 functional audit instead."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="This endpoint is deprecated. Use GET /{product_id}/competitors/{competitor_id}/functional-report instead."
     )
 
 
-@router.get("/{product_id}/competitors/{competitor_id}/positioning", response_model=Optional[PositioningAnalysisResponse])
+@router.get("/{product_id}/competitors/{competitor_id}/positioning")
 def get_positioning_analysis(
     product_id: int,
     competitor_id: int,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get positioning analysis for a competitor."""
-    verify_competitor_access(db, product_id, competitor_id, current_user)
-
-    analysis = db.query(CompetitorPositioningAnalysis).filter(
-        CompetitorPositioningAnalysis.product_competitor_id == competitor_id
-    ).order_by(CompetitorPositioningAnalysis.analyzed_at.desc()).first()
-
-    if not analysis:
-        return None
-
-    return PositioningAnalysisResponse(
-        id=analysis.id,
-        product_competitor_id=analysis.product_competitor_id,
-        tagline=analysis.tagline,
-        value_propositions=analysis.value_propositions,
-        target_audience=analysis.target_audience,
-        key_differentiators=analysis.key_differentiators,
-        positioning_statement=analysis.positioning_statement,
-        market_segment=analysis.market_segment,
-        confidence=analysis.confidence,
-        analyzed_at=analysis.analyzed_at
+    """DEPRECATED: Positioning analysis is no longer available. Use V2 functional audit instead."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="This endpoint is deprecated. Use GET /{product_id}/competitors/{competitor_id}/functional-report instead."
     )
 
 
-@router.get("/{product_id}/competitors/{competitor_id}/changes", response_model=List[ChangeEventResponse])
+@router.get("/{product_id}/competitors/{competitor_id}/changes")
 def get_change_events(
     product_id: int,
     competitor_id: int,
@@ -1225,86 +1254,1075 @@ def get_change_events(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get recent change events for a competitor."""
-    verify_competitor_access(db, product_id, competitor_id, current_user)
-
-    events = db.query(CompetitorChangeEvent).filter(
-        CompetitorChangeEvent.product_competitor_id == competitor_id
-    ).order_by(CompetitorChangeEvent.detected_at.desc()).limit(limit).all()
-
-    return [ChangeEventResponse(
-        id=e.id,
-        product_competitor_id=e.product_competitor_id,
-        event_type=e.event_type,
-        event_title=e.event_title,
-        event_description=e.event_description,
-        event_date=e.event_date,
-        source_url=e.source_url,
-        source_type=e.source_type,
-        impact_level=e.impact_level,
-        detected_at=e.detected_at
-    ) for e in events]
+    """DEPRECATED: Change events tracking is no longer available. Use V2 functional audit instead."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="This endpoint is deprecated. Use GET /{product_id}/competitors/{competitor_id}/functional-report instead."
+    )
 
 
-@router.get("/{product_id}/competitors/{competitor_id}/momentum", response_model=Optional[MomentumAnalysisResponse])
+@router.get("/{product_id}/competitors/{competitor_id}/momentum")
 def get_momentum_analysis(
     product_id: int,
     competitor_id: int,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get momentum analysis for a competitor."""
-    verify_competitor_access(db, product_id, competitor_id, current_user)
-
-    analysis = db.query(CompetitorMomentumAnalysis).filter(
-        CompetitorMomentumAnalysis.product_competitor_id == competitor_id
-    ).order_by(CompetitorMomentumAnalysis.analyzed_at.desc()).first()
-
-    if not analysis:
-        return None
-
-    return MomentumAnalysisResponse(
-        id=analysis.id,
-        product_competitor_id=analysis.product_competitor_id,
-        momentum_score=analysis.momentum_score,
-        momentum_trend=analysis.momentum_trend,
-        customer_growth_trend=analysis.customer_growth_trend,
-        release_velocity=analysis.release_velocity,
-        notable_customers=analysis.notable_customers,
-        analysis_summary=analysis.analysis_summary,
-        confidence=analysis.confidence,
-        analyzed_at=analysis.analyzed_at
+    """DEPRECATED: Momentum analysis is no longer available. Use V2 functional audit instead."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="This endpoint is deprecated. Use GET /{product_id}/competitors/{competitor_id}/functional-report instead."
     )
 
 
-@router.get("/{product_id}/competitors/{competitor_id}/financials", response_model=Optional[FinancialsAnalysisResponse])
+@router.get("/{product_id}/competitors/{competitor_id}/financials")
 def get_financials_analysis(
     product_id: int,
     competitor_id: int,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get financials analysis for a competitor."""
+    """DEPRECATED: Financials analysis is no longer available. Use V2 functional audit instead."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="This endpoint is deprecated. Use GET /{product_id}/competitors/{competitor_id}/functional-report instead."
+    )
+
+
+# ============================================================================
+# V2 Competitive Analysis Endpoints (Functional Audit + Landscape Synthesis)
+# ============================================================================
+
+@router.post("/{product_id}/run-competitive-analysis-v2", response_model=JobResponse)
+def trigger_competitive_analysis_v2(
+    product_id: int,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Trigger V2 competitive analysis workflow.
+
+    This runs the new two-step analysis pipeline:
+    1. Functional audit for all active competitors (in parallel)
+    2. Landscape opportunity synthesis (automatically after audits complete)
+    3. Auto-export of all reports to filesystem
+
+    Use this endpoint for comprehensive competitive analysis with
+    feature comparison and opportunity identification.
+    """
+    verify_product_access(db, product_id, current_user)
+
+    queue_service = QueueService(db)
+
+    # Check for existing active V2 analysis job
+    active_jobs = queue_service.get_active_jobs(product_id=product_id)
+    existing_v2 = next(
+        (j for j in active_jobs if j.job_type in [
+            JobType.FUNCTIONAL_AUDIT,
+            JobType.LANDSCAPE_SYNTHESIS
+        ]),
+        None
+    )
+    if existing_v2:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"V2 competitive analysis already in progress (job {existing_v2.job_uuid})"
+        )
+
+    # Check for active competitors
+    active_competitors = db.query(ProductCompetitor).filter(
+        ProductCompetitor.product_id == product_id,
+        ProductCompetitor.status == 'active'
+    ).count()
+
+    if active_competitors == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active competitors found. Add at least one competitor first."
+        )
+
+    # Create the orchestration job
+    from app.models.queue import QueueJob
+    job = QueueJob(
+        job_type=JobType.SCHEDULED_DEEP_ANALYSIS,  # Reuse existing type for orchestration
+        status=JobStatus.PENDING,
+        product_id=product_id,
+        user_id=current_user.id,
+        input_data={
+            'triggered_by': 'manual_v2',
+            'competitors_count': active_competitors,
+            'workflow': 'functional_audit_then_landscape_synthesis'
+        }
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    # Queue the V2 orchestration task
+    try:
+        from app.queue.tasks import run_competitive_analysis_v2
+        result = run_competitive_analysis_v2.delay(job.id)
+        job.celery_task_id = result.id
+        job.status = JobStatus.QUEUED
+        job.queued_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
+        )
+
+    return JobResponse(
+        job_id=job.id,
+        job_uuid=job.job_uuid,
+        job_type=job.job_type.value,
+        status=job.status.value,
+        message=f"V2 competitive analysis started for {active_competitors} competitors"
+    )
+
+
+@router.post("/{product_id}/competitors/{competitor_id}/functional-audit", response_model=JobResponse)
+def trigger_functional_audit(
+    product_id: int,
+    competitor_id: int,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """Trigger a functional audit for a single competitor."""
     verify_competitor_access(db, product_id, competitor_id, current_user)
 
-    analysis = db.query(CompetitorFinancialsAnalysis).filter(
-        CompetitorFinancialsAnalysis.product_competitor_id == competitor_id
-    ).order_by(CompetitorFinancialsAnalysis.analyzed_at.desc()).first()
+    queue_service = QueueService(db)
 
-    if not analysis:
+    # Check for existing active audit for this competitor
+    active_jobs = queue_service.get_active_jobs(product_id=product_id)
+    existing_audit = next(
+        (j for j in active_jobs
+         if j.job_type == JobType.FUNCTIONAL_AUDIT
+         and j.input_data.get('competitor_id') == competitor_id),
+        None
+    )
+    if existing_audit:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Functional audit already in progress for this competitor (job {existing_audit.job_uuid})"
+        )
+
+    # Create the job
+    from app.models.queue import QueueJob
+    job = QueueJob(
+        job_type=JobType.FUNCTIONAL_AUDIT,
+        status=JobStatus.PENDING,
+        product_id=product_id,
+        user_id=current_user.id,
+        input_data={'competitor_id': competitor_id}
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    # Queue the task
+    try:
+        from app.queue.tasks import functional_audit_task
+        result = functional_audit_task.delay(job.id)
+        job.celery_task_id = result.id
+        job.status = JobStatus.QUEUED
+        job.queued_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
+        )
+
+    return JobResponse(
+        job_id=job.id,
+        job_uuid=job.job_uuid,
+        job_type=job.job_type.value,
+        status=job.status.value,
+        message=f"Functional audit queued for competitor {competitor_id}"
+    )
+
+
+@router.get("/{product_id}/competitors/{competitor_id}/functional-report", response_model=Optional[FunctionalReportDetail])
+def get_functional_report(
+    product_id: int,
+    competitor_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get the functional audit report for a competitor."""
+    competitor = verify_competitor_access(db, product_id, competitor_id, current_user)
+
+    report = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_competitor_id == competitor_id,
+        CompetitorFunctionalReport.product_id == product_id
+    ).first()
+
+    if not report:
         return None
 
-    return FinancialsAnalysisResponse(
-        id=analysis.id,
-        product_competitor_id=analysis.product_competitor_id,
-        company_type=analysis.company_type,
-        total_funding=analysis.total_funding,
-        funding_stage=analysis.funding_stage,
-        market_cap=analysis.market_cap,
-        revenue_ttm=analysis.revenue_ttm,
-        employee_count=analysis.employee_count,
-        financial_health=analysis.financial_health,
-        analysis_summary=analysis.analysis_summary,
-        confidence=analysis.confidence,
-        analyzed_at=analysis.analyzed_at
+    return FunctionalReportDetail(
+        id=report.id,
+        product_competitor_id=report.product_competitor_id,
+        product_id=report.product_id,
+        competitor_name=competitor.competitor_name,
+        report_version=report.report_version,
+        report_content_md=report.report_content_md,
+        competitor_context=report.competitor_context,
+        functional_comparison=report.functional_comparison,
+        gaps_deep_dive=report.gaps_deep_dive,
+        technical_constraints=report.technical_constraints,
+        generated_at=report.generated_at
+    )
+
+
+@router.get("/{product_id}/competitors/{competitor_id}/functional-report/export")
+def export_functional_report(
+    product_id: int,
+    competitor_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Export the functional audit report as markdown."""
+    from fastapi.responses import PlainTextResponse
+
+    competitor = verify_competitor_access(db, product_id, competitor_id, current_user)
+
+    report = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_competitor_id == competitor_id,
+        CompetitorFunctionalReport.product_id == product_id
+    ).first()
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No functional report found for competitor {competitor_id}"
+        )
+
+    # Return markdown content
+    return PlainTextResponse(
+        content=report.report_content_md or "# No report content available",
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": f"attachment; filename={competitor.competitor_name.replace(' ', '_')}_functional_audit.md"
+        }
+    )
+
+
+@router.get("/{product_id}/functional-reports", response_model=List[FunctionalReportSummary])
+def list_functional_reports(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """List all functional reports for a product."""
+    verify_product_access(db, product_id, current_user)
+
+    reports = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_id == product_id
+    ).all()
+
+    result = []
+    for report in reports:
+        # Get competitor name
+        competitor = db.query(ProductCompetitor).filter(
+            ProductCompetitor.id == report.product_competitor_id
+        ).first()
+
+        features_compared = len(report.functional_comparison) if report.functional_comparison else 0
+        gaps_identified = len(report.gaps_deep_dive) if report.gaps_deep_dive else 0
+
+        result.append(FunctionalReportSummary(
+            id=report.id,
+            product_competitor_id=report.product_competitor_id,
+            product_id=report.product_id,
+            competitor_name=competitor.competitor_name if competitor else None,
+            competitor_url=competitor.competitor_url if competitor else None,
+            report_version=report.report_version,
+            features_compared=features_compared,
+            gaps_identified=gaps_identified,
+            generated_at=report.generated_at
+        ))
+
+    return result
+
+
+class CreateGapIdeasRequest(BaseModel):
+    """Request to create ideas from selected competitor gaps."""
+    gap_indices: List[int] = Field(
+        ...,
+        min_length=1,
+        max_length=20,
+        description="Indices of gaps to create ideas from (0-indexed)"
+    )
+
+
+@router.post("/{product_id}/competitors/{competitor_id}/gaps/create-ideas", response_model=List[JobResponse])
+def create_ideas_from_gaps(
+    product_id: int,
+    competitor_id: int,
+    request: CreateGapIdeasRequest,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Create ideas from selected competitor gaps.
+
+    Creates ideas in the idea queue and triggers triage for each.
+    Gaps that already have ideas created will be skipped.
+    """
+    verify_product_access(db, product_id, current_user)
+
+    # Get the functional report
+    report = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_competitor_id == competitor_id,
+        CompetitorFunctionalReport.product_id == product_id
+    ).first()
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No functional report found for this competitor. Run functional audit first."
+        )
+
+    if not report.gaps_deep_dive:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No gaps in the functional report."
+        )
+
+    # Get competitor name
+    competitor = db.query(ProductCompetitor).filter(
+        ProductCompetitor.id == competitor_id
+    ).first()
+    competitor_name = competitor.competitor_name if competitor else 'Unknown Competitor'
+
+    # Validate indices
+    max_index = len(report.gaps_deep_dive) - 1
+    invalid_indices = [i for i in request.gap_indices if i < 0 or i > max_index]
+    if invalid_indices:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid gap indices: {invalid_indices}. Valid range: 0-{max_index}"
+        )
+
+    # Check which gaps already have ideas (via source_metadata lookup)
+    # Filter in Python since SQLite doesn't support JSON path operators
+    all_ideas = db.query(Idea).filter(
+        Idea.product_id == product_id,
+        Idea.source_type == SourceType.COMPETITOR_AUTOMATED
+    ).all()
+
+    existing_gap_indices = set()
+    for idea in all_ideas:
+        metadata = idea.source_metadata or {}
+        if (metadata.get('source') == 'competitor_gap' and
+            str(metadata.get('competitor_id')) == str(competitor_id)):
+            gap_idx = metadata.get('gap_index')
+            if gap_idx is not None:
+                existing_gap_indices.add(gap_idx)
+
+    # Create ideas from selected gaps (skipping already-created ones)
+    results = []
+    skipped = []
+    queue_service = QueueService(db)
+
+    for idx in request.gap_indices:
+        if idx in existing_gap_indices:
+            skipped.append(idx)
+            continue
+
+        gap = report.gaps_deep_dive[idx]
+        feature_name = gap.get('feature_name', 'Unknown Feature')
+        user_problem = gap.get('user_problem', '')
+        evidence = gap.get('evidence', '')
+
+        # Create idea
+        idea = Idea(
+            product_id=product_id,
+            title=f"Add: {feature_name}",
+            what_description=f"Implement {feature_name} similar to {competitor_name}'s offering.",
+            why_description=user_problem,
+            use_case_description=f"Based on competitive analysis of {competitor_name}: {evidence}",
+            status=IdeaStatus.PENDING,
+            source_type=SourceType.COMPETITOR_AUTOMATED,
+            source_metadata={
+                'source': 'competitor_gap',
+                'competitor_id': competitor_id,
+                'competitor_name': competitor_name,
+                'gap_index': idx,
+                'feature_name': feature_name,
+                'functional_report_id': report.id
+            },
+            submitter_id=current_user.id
+        )
+        db.add(idea)
+        db.flush()
+
+        # Create triage job
+        job = queue_service.create_job(
+            job_type=JobType.IDEA_TRIAGE,
+            input_data={'idea_id': idea.id},
+            product_id=product_id,
+            user_id=current_user.id
+        )
+
+        results.append(JobResponse(
+            job_id=job.id,
+            job_uuid=job.job_uuid,
+            job_type=job.job_type.value,
+            status=job.status.value,
+            message=f"Idea created for gap: {feature_name}"
+        ))
+
+    db.commit()
+
+    # Queue triage tasks
+    from app.queue.tasks import triage_idea_task
+    for resp in results:
+        triage_idea_task.delay(resp.job_id)
+
+    # Add note about skipped gaps to last result
+    if skipped and results:
+        results[-1].message += f" (Skipped {len(skipped)} gap(s) with existing ideas)"
+    elif skipped and not results:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"All selected gaps already have ideas created. Skipped indices: {skipped}"
+        )
+
+    return results
+
+
+@router.get("/{product_id}/competitors/{competitor_id}/gaps/{gap_index}/idea-status")
+def get_gap_idea_status(
+    product_id: int,
+    competitor_id: int,
+    gap_index: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Check if an idea has been created from a specific competitor gap.
+
+    Returns idea_created: true/false and idea_id if exists.
+    """
+    verify_product_access(db, product_id, current_user)
+
+    # Look for existing idea - filter in Python since SQLite doesn't support JSON path operators
+    all_ideas = db.query(Idea).filter(
+        Idea.product_id == product_id,
+        Idea.source_type == SourceType.COMPETITOR_AUTOMATED
+    ).all()
+
+    existing_idea = None
+    for idea in all_ideas:
+        metadata = idea.source_metadata or {}
+        if (metadata.get('source') == 'competitor_gap' and
+            str(metadata.get('competitor_id')) == str(competitor_id) and
+            str(metadata.get('gap_index')) == str(gap_index)):
+            existing_idea = idea
+            break
+
+    return {
+        'idea_created': existing_idea is not None,
+        'idea_id': existing_idea.id if existing_idea else None
+    }
+
+
+@router.get("/{product_id}/competitors/{competitor_id}/gaps/idea-statuses")
+def get_all_gap_idea_statuses(
+    product_id: int,
+    competitor_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get idea status for all gaps in a competitor's functional report.
+
+    Returns a dictionary mapping gap indices to their idea status.
+    Useful for batch loading the UI with idea badges.
+    """
+    verify_product_access(db, product_id, current_user)
+
+    # Get all competitor automated ideas for this product
+    # Filter in Python since SQLite doesn't support JSON path operators
+    all_ideas = db.query(Idea).filter(
+        Idea.product_id == product_id,
+        Idea.source_type == SourceType.COMPETITOR_AUTOMATED
+    ).all()
+
+    # Build status map by filtering for competitor gap ideas
+    status_map = {}
+    for idea in all_ideas:
+        metadata = idea.source_metadata or {}
+        if (metadata.get('source') == 'competitor_gap' and
+            str(metadata.get('competitor_id')) == str(competitor_id)):
+            gap_idx = metadata.get('gap_index')
+            if gap_idx is not None:
+                status_map[gap_idx] = {
+                    'idea_created': True,
+                    'idea_id': idea.id
+                }
+
+    return {
+        'statuses': status_map,
+        'total_ideas_created': len(status_map)
+    }
+
+
+class ExportGapsRequest(BaseModel):
+    """Request to export selected competitor gaps as JSON."""
+    gap_indices: List[int] = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="Indices of gaps to export (0-indexed)"
+    )
+
+
+@router.post("/{product_id}/competitors/{competitor_id}/gaps/export-json")
+def export_gaps_json(
+    product_id: int,
+    competitor_id: int,
+    request: ExportGapsRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Export selected competitor gaps as JSON.
+
+    Returns a portable JSON format suitable for import into
+    external roadmap or backlog management tools.
+    """
+    from fastapi.responses import JSONResponse
+
+    verify_product_access(db, product_id, current_user)
+
+    # Get product name
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+
+    # Get competitor name
+    competitor = db.query(ProductCompetitor).filter(
+        ProductCompetitor.id == competitor_id
+    ).first()
+    if not competitor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Competitor not found"
+        )
+
+    # Get the functional report
+    report = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_competitor_id == competitor_id,
+        CompetitorFunctionalReport.product_id == product_id
+    ).first()
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No functional report found for this competitor."
+        )
+
+    if not report.gaps_deep_dive:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No gaps in the functional report."
+        )
+
+    # Validate indices
+    max_index = len(report.gaps_deep_dive) - 1
+    invalid_indices = [i for i in request.gap_indices if i < 0 or i > max_index]
+    if invalid_indices:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid gap indices: {invalid_indices}. Valid range: 0-{max_index}"
+        )
+
+    # Build export data for selected gaps
+    selected_gaps = [
+        report.gaps_deep_dive[idx]
+        for idx in request.gap_indices
+    ]
+
+    export_data = {
+        "version": "1.0",
+        "generated_at": report.generated_at.isoformat() if report.generated_at else None,
+        "product_id": product_id,
+        "product_name": product.product_name,
+        "competitor_id": competitor_id,
+        "competitor_name": competitor.competitor_name,
+        "gaps": selected_gaps,
+        "metadata": {
+            "total_gaps_in_report": len(report.gaps_deep_dive),
+            "exported_count": len(selected_gaps),
+            "report_version": report.report_version,
+        }
+    }
+
+    return JSONResponse(
+        content=export_data,
+        headers={
+            "Content-Disposition": f"attachment; filename={competitor.competitor_name.replace(' ', '_')}_gaps_v{report.report_version}.json"
+        }
+    )
+
+
+@router.post("/{product_id}/run-landscape-synthesis", response_model=JobResponse)
+def trigger_landscape_synthesis(
+    product_id: int,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Trigger landscape opportunity synthesis.
+
+    This synthesizes all existing functional audit reports into
+    a comprehensive landscape analysis with feature opportunities.
+
+    Requires at least one functional report to exist.
+    """
+    verify_product_access(db, product_id, current_user)
+
+    # Check for existing functional reports
+    report_count = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_id == product_id
+    ).count()
+
+    if report_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No functional reports found. Run functional audits first."
+        )
+
+    queue_service = QueueService(db)
+
+    # Check for existing active synthesis job
+    active_jobs = queue_service.get_active_jobs(product_id=product_id)
+    existing_synthesis = next(
+        (j for j in active_jobs if j.job_type == JobType.LANDSCAPE_SYNTHESIS),
+        None
+    )
+    if existing_synthesis:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Landscape synthesis already in progress (job {existing_synthesis.job_uuid})"
+        )
+
+    # Create the job
+    from app.models.queue import QueueJob
+    job = QueueJob(
+        job_type=JobType.LANDSCAPE_SYNTHESIS,
+        status=JobStatus.PENDING,
+        product_id=product_id,
+        user_id=current_user.id,
+        input_data={'functional_report_count': report_count}
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    # Queue the task
+    try:
+        from app.queue.tasks import landscape_synthesis_task
+        result = landscape_synthesis_task.delay(job.id)
+        job.celery_task_id = result.id
+        job.status = JobStatus.QUEUED
+        job.queued_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
+        )
+
+    return JobResponse(
+        job_id=job.id,
+        job_uuid=job.job_uuid,
+        job_type=job.job_type.value,
+        status=job.status.value,
+        message=f"Landscape synthesis queued for {report_count} competitor reports"
+    )
+
+
+@router.get("/{product_id}/landscape-report", response_model=Optional[LandscapeReportDetail])
+def get_landscape_report(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get the landscape opportunity report for a product."""
+    verify_product_access(db, product_id, current_user)
+
+    report = db.query(LandscapeOpportunityReport).filter(
+        LandscapeOpportunityReport.product_id == product_id
+    ).first()
+
+    if not report:
+        return None
+
+    return LandscapeReportDetail(
+        id=report.id,
+        product_id=report.product_id,
+        report_version=report.report_version,
+        report_content_md=report.report_content_md,
+        feature_cluster_matrix=report.feature_cluster_matrix,
+        feature_opportunities=report.feature_opportunities,
+        high_impact_gaps=report.high_impact_gaps,
+        source_competitor_report_ids=report.source_competitor_report_ids,
+        generated_at=report.generated_at
+    )
+
+
+@router.get("/{product_id}/landscape-report/feature-opportunities", response_model=Optional[FeatureOpportunitiesExportResponse])
+def get_feature_opportunities_export(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get portable JSON export of feature opportunities."""
+    product = verify_product_access(db, product_id, current_user)
+
+    report = db.query(LandscapeOpportunityReport).filter(
+        LandscapeOpportunityReport.product_id == product_id
+    ).first()
+
+    if not report:
+        return None
+
+    return FeatureOpportunitiesExportResponse(
+        version="1.0",
+        generated_at=report.generated_at.isoformat() if report.generated_at else datetime.utcnow().isoformat(),
+        product_id=product_id,
+        product_name=product.product_name,
+        feature_ideas=report.feature_opportunities or [],
+        metadata={
+            'report_version': report.report_version,
+            'source_report_ids': report.source_competitor_report_ids,
+            'total_opportunities': len(report.feature_opportunities) if report.feature_opportunities else 0
+        }
+    )
+
+
+@router.post("/{product_id}/landscape-report/create-ideas", response_model=List[JobResponse])
+def create_ideas_from_opportunities(
+    product_id: int,
+    request: CreateIdeasFromOpportunitiesRequest,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Create ideas from selected feature opportunities.
+
+    Creates ideas in the idea queue and triggers triage for each.
+    Opportunities that already have ideas created will be skipped.
+    """
+    verify_product_access(db, product_id, current_user)
+
+    # Get the landscape report
+    report = db.query(LandscapeOpportunityReport).filter(
+        LandscapeOpportunityReport.product_id == product_id
+    ).first()
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No landscape report found. Run landscape synthesis first."
+        )
+
+    if not report.feature_opportunities:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No feature opportunities in the landscape report."
+        )
+
+    # Validate indices
+    max_index = len(report.feature_opportunities) - 1
+    invalid_indices = [i for i in request.opportunity_indices if i < 0 or i > max_index]
+    if invalid_indices:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid opportunity indices: {invalid_indices}. Valid range: 0-{max_index}"
+        )
+
+    # Check which opportunities already have ideas (via source_metadata lookup)
+    # Filter in Python since SQLite doesn't support JSON path operators
+    all_ideas = db.query(Idea).filter(
+        Idea.product_id == product_id,
+        Idea.source_type == SourceType.COMPETITOR_AUTOMATED
+    ).all()
+
+    existing_opp_indices = set()
+    for idea in all_ideas:
+        metadata = idea.source_metadata or {}
+        if metadata.get('source') == 'landscape_synthesis':
+            opp_idx = metadata.get('opportunity_index')
+            if opp_idx is not None:
+                existing_opp_indices.add(opp_idx)
+
+    # Create ideas from selected opportunities (skipping already-created ones)
+    results = []
+    skipped = []
+    queue_service = QueueService(db)
+
+    for idx in request.opportunity_indices:
+        if idx in existing_opp_indices:
+            skipped.append(idx)
+            continue
+
+        opportunity = report.feature_opportunities[idx]
+
+        # Create idea
+        idea = Idea(
+            product_id=product_id,
+            title=f"Add: {opportunity.get('feature_name', 'Unknown Feature')}",
+            what_description=opportunity.get('summary', ''),
+            why_description=opportunity.get('user_value', ''),
+            use_case_description=opportunity.get('market_context', ''),
+            status=IdeaStatus.PENDING,
+            source_type=SourceType.COMPETITOR_AUTOMATED,
+            source_metadata={
+                'source': 'landscape_synthesis',
+                'opportunity_index': idx,
+                'feature_name': opportunity.get('feature_name'),
+                'priority_score': opportunity.get('priority_score'),
+                'competitors_with_feature': opportunity.get('competitors_with_feature', [])
+            },
+            submitter_id=current_user.id
+        )
+        db.add(idea)
+        db.flush()
+
+        # Create triage job
+        job = queue_service.create_job(
+            job_type=JobType.IDEA_TRIAGE,
+            input_data={'idea_id': idea.id},
+            product_id=product_id,
+            user_id=current_user.id
+        )
+
+        results.append(JobResponse(
+            job_id=job.id,
+            job_uuid=job.job_uuid,
+            job_type=job.job_type.value,
+            status=job.status.value,
+            message=f"Idea created for opportunity: {opportunity.get('feature_name', 'Unknown')}"
+        ))
+
+    db.commit()
+
+    # Queue triage tasks
+    from app.queue.tasks import triage_idea_task
+    for resp in results:
+        triage_idea_task.delay(resp.job_id)
+
+    # Add note about skipped opportunities to last result
+    if skipped and results:
+        results[-1].message += f" (Skipped {len(skipped)} opportunity/ies with existing ideas)"
+    elif skipped and not results:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"All selected opportunities already have ideas created. Skipped indices: {skipped}"
+        )
+
+    return results
+
+
+class ExportOpportunitiesRequest(BaseModel):
+    """Request to export selected feature opportunities as JSON."""
+    opportunity_indices: List[int] = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="Indices of feature opportunities to export (0-indexed)"
+    )
+
+
+@router.post("/{product_id}/landscape-report/export-json")
+def export_opportunities_json(
+    product_id: int,
+    request: ExportOpportunitiesRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Export selected feature opportunities as JSON.
+
+    Returns a portable JSON format suitable for import into
+    external roadmap or backlog management tools.
+    """
+    from fastapi.responses import JSONResponse
+
+    verify_product_access(db, product_id, current_user)
+
+    # Get product name
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+
+    # Get the landscape report
+    report = db.query(LandscapeOpportunityReport).filter(
+        LandscapeOpportunityReport.product_id == product_id
+    ).first()
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No landscape report found. Run landscape synthesis first."
+        )
+
+    if not report.feature_opportunities:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No feature opportunities in the landscape report."
+        )
+
+    # Validate indices
+    max_index = len(report.feature_opportunities) - 1
+    invalid_indices = [i for i in request.opportunity_indices if i < 0 or i > max_index]
+    if invalid_indices:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid opportunity indices: {invalid_indices}. Valid range: 0-{max_index}"
+        )
+
+    # Build export data for selected opportunities
+    selected_opportunities = [
+        report.feature_opportunities[idx]
+        for idx in request.opportunity_indices
+    ]
+
+    export_data = {
+        "version": "1.0",
+        "generated_at": report.generated_at.isoformat() if report.generated_at else None,
+        "product_id": product_id,
+        "product_name": product.product_name,
+        "feature_ideas": selected_opportunities,
+        "metadata": {
+            "total_opportunities_in_report": len(report.feature_opportunities),
+            "exported_count": len(selected_opportunities),
+            "report_version": report.report_version,
+            "source_report_ids": report.source_competitor_report_ids,
+        }
+    }
+
+    return JSONResponse(
+        content=export_data,
+        headers={
+            "Content-Disposition": f"attachment; filename=feature_opportunities_v{report.report_version}.json"
+        }
+    )
+
+
+@router.get("/{product_id}/landscape-report/opportunity/{opp_index}/idea-status")
+def get_opportunity_idea_status(
+    product_id: int,
+    opp_index: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Check if an idea has been created from a specific landscape opportunity.
+
+    Returns idea_created: true/false and idea_id if exists.
+    """
+    verify_product_access(db, product_id, current_user)
+
+    # Look for existing idea - filter in Python since SQLite doesn't support JSON path operators
+    all_ideas = db.query(Idea).filter(
+        Idea.product_id == product_id,
+        Idea.source_type == SourceType.COMPETITOR_AUTOMATED
+    ).all()
+
+    existing_idea = None
+    for idea in all_ideas:
+        metadata = idea.source_metadata or {}
+        if (metadata.get('source') == 'landscape_synthesis' and
+            str(metadata.get('opportunity_index')) == str(opp_index)):
+            existing_idea = idea
+            break
+
+    return {
+        'idea_created': existing_idea is not None,
+        'idea_id': existing_idea.id if existing_idea else None
+    }
+
+
+@router.get("/{product_id}/landscape-report/idea-statuses")
+def get_all_opportunity_idea_statuses(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get idea status for all opportunities in the landscape report.
+
+    Returns a dictionary mapping opportunity indices to their idea status.
+    Useful for batch loading the UI with idea badges.
+    """
+    verify_product_access(db, product_id, current_user)
+
+    # Get all landscape synthesis ideas for this product
+    # Filter in Python since SQLite doesn't support JSON path operators
+    all_ideas = db.query(Idea).filter(
+        Idea.product_id == product_id,
+        Idea.source_type == SourceType.COMPETITOR_AUTOMATED
+    ).all()
+
+    # Build status map
+    status_map = {}
+    for idea in all_ideas:
+        metadata = idea.source_metadata or {}
+        if metadata.get('source') == 'landscape_synthesis':
+            opp_idx = metadata.get('opportunity_index')
+            if opp_idx is not None:
+                status_map[opp_idx] = {
+                    'idea_created': True,
+                    'idea_id': idea.id
+                }
+
+    return {
+        'statuses': status_map,
+        'total_ideas_created': len(status_map)
+    }
+
+
+@router.get("/{product_id}/landscape-report/export")
+def export_landscape_report(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Export the landscape report as markdown."""
+    from fastapi.responses import PlainTextResponse
+
+    verify_product_access(db, product_id, current_user)
+
+    report = db.query(LandscapeOpportunityReport).filter(
+        LandscapeOpportunityReport.product_id == product_id
+    ).first()
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No landscape report found for this product"
+        )
+
+    return PlainTextResponse(
+        content=report.report_content_md or "# No report content available",
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": f"attachment; filename=landscape_synthesis_v{report.report_version}.md"
+        }
     )
