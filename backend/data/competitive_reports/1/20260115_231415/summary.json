@@ -1,0 +1,11 @@
+{
+  "product_name": "Concur Invoice",
+  "timestamp": "20260115_231415",
+  "exported_at": "2026-01-15T23:14:15.572635Z",
+  "files": {
+    "functional_reports": 3,
+    "landscape_report": 1,
+    "feature_opportunities": 1
+  },
+  "total_files": 5
+}

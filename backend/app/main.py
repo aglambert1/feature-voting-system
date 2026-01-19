@@ -15,7 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
 from app.database import init_db, create_initial_admin
-from app.api import auth, ideas, votes, submissions, products, sessions, pm_review, monitoring, competitive_agents
+from app.api import auth, ideas, votes, submissions, products, sessions, pm_review, monitoring, competitive_agents, internal_feedback, synthesis
 from app.utils.security import create_access_token
 
 # Token refresh threshold: refresh token if it's older than this many minutes
@@ -165,6 +165,8 @@ app.include_router(sessions.router)
 app.include_router(pm_review.router)  # Phase 4: PM Review Queue
 app.include_router(monitoring.router)  # Phase 4: Competitive Monitoring
 app.include_router(competitive_agents.router)  # Agent-centric competitive intelligence
+app.include_router(internal_feedback.router)  # Internal feedback import and themes
+app.include_router(synthesis.router)  # Opportunity synthesis
 
 
 @app.get("/")

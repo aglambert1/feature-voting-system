@@ -2780,3 +2780,453 @@ def run_competitive_analysis_v2(self, job_id: int):
     finally:
         if db:
             db.close()
+
+
+# =============================================================================
+# Internal Discovery Task (Three-Source Synthesis)
+# =============================================================================
+
+@shared_task(bind=True, name='app.queue.tasks.internal_discovery_task', max_retries=2, default_retry_delay=60)
+def internal_discovery_task(self, job_id: int):
+    """
+    Process uploaded internal feedback data to extract themes.
+
+    This task:
+    1. Retrieves the imported data from the database
+    2. Runs the InternalDiscoveryAgent to extract themes
+    3. Stores WinLossTheme and SupportTheme records
+    4. Updates the import status
+
+    Args:
+        job_id: The QueueJob ID for this task
+    """
+    from app.agents.internal_discovery_agent import InternalDiscoveryAgent
+    from app.models.internal_feedback import (
+        InternalFeedbackImport,
+        WinLossTheme,
+        SupportTheme
+    )
+    from app.schemas.internal_feedback import InternalDiscoveryOutput
+    from app.services.llm_service import LLMService
+    from datetime import datetime
+
+    db = None
+    try:
+        db = SessionLocal()
+        queue_service = QueueService(db)
+
+        # Get job details
+        job = queue_service.get_job(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        queue_service.mark_running(job_id)
+
+        # Extract job parameters
+        input_data = job.input_data or {}
+        import_id = input_data.get('import_id')
+        deals = input_data.get('deals', [])
+        support_tickets = input_data.get('support_tickets', [])
+
+        if not import_id:
+            raise ValueError("import_id is required in input_data")
+
+        # Get import record
+        import_record = db.query(InternalFeedbackImport).filter(
+            InternalFeedbackImport.id == import_id
+        ).first()
+
+        if not import_record:
+            raise ValueError(f"Import {import_id} not found")
+
+        # Initialize LLM service and agent
+        llm_service = LLMService()
+        agent = InternalDiscoveryAgent(
+            db=db,
+            llm_service=llm_service,
+            product_id=import_record.product_id
+        )
+
+        # Run the agent
+        result = agent.execute({
+            'deals': deals,
+            'support_tickets': support_tickets
+        })
+
+        # Parse output
+        if isinstance(result, InternalDiscoveryOutput):
+            output = result
+        else:
+            output = InternalDiscoveryOutput(**result)
+
+        # Store win/loss themes
+        for theme in output.winloss_themes:
+            db_theme = WinLossTheme(
+                import_id=import_id,
+                product_id=import_record.product_id,
+                theme_name=theme.theme_name,
+                outcome=theme.outcome,
+                competitor_name=theme.competitor_correlation,
+                deal_count=theme.deal_count,
+                total_value=theme.total_value,
+                sample_reasons=theme.sample_reasons,
+                feature_keywords=theme.feature_keywords
+            )
+            db.add(db_theme)
+
+        # Store support themes
+        for theme in output.support_themes:
+            db_theme = SupportTheme(
+                import_id=import_id,
+                product_id=import_record.product_id,
+                theme_name=theme.theme_name,
+                category=theme.category,
+                ticket_count=theme.ticket_count,
+                sample_subjects=theme.sample_subjects,
+                feature_keywords=theme.feature_keywords,
+                urgency_indicator=theme.urgency_indicator
+            )
+            db.add(db_theme)
+
+        # Update import record
+        import_record.status = "completed"
+        import_record.themes_extracted = True
+        import_record.analysis_summary = output.analysis_summary
+        import_record.processed_at = datetime.utcnow()
+
+        db.commit()
+
+        # Mark job success
+        queue_service.mark_success(job_id, {
+            'import_id': import_id,
+            'winloss_themes_count': len(output.winloss_themes),
+            'support_themes_count': len(output.support_themes),
+            'deals_analyzed': output.deals_analyzed,
+            'tickets_analyzed': output.tickets_analyzed
+        })
+
+        return {
+            'status': 'completed',
+            'import_id': import_id,
+            'winloss_themes': len(output.winloss_themes),
+            'support_themes': len(output.support_themes)
+        }
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[internal_discovery_task] Error for job {job_id}: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
+
+                # Update import record status
+                input_data = queue_service.get_job(job_id).input_data or {}
+                import_id = input_data.get('import_id')
+                if import_id:
+                    import_record = db.query(InternalFeedbackImport).filter(
+                        InternalFeedbackImport.id == import_id
+                    ).first()
+                    if import_record:
+                        import_record.status = "failed"
+                        import_record.error_message = error_msg
+                        db.commit()
+            except Exception:
+                pass
+
+        raise
+
+    finally:
+        if db:
+            db.close()
+
+
+@shared_task(bind=True, name='app.queue.tasks.opportunity_synthesis_task')
+def opportunity_synthesis_task(self, job_id: int):
+    """
+    Synthesize opportunities from competitive, customer, and internal sources.
+
+    This task:
+    1. Gathers data from all available sources
+    2. Runs the OpportunitySynthesisAgent
+    3. Stores SynthesizedOpportunity records
+    4. Updates the SynthesisRun status
+
+    Args:
+        job_id: The QueueJob ID for this task
+    """
+    from app.agents.synthesis_agent import OpportunitySynthesisAgent
+    from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
+    from app.models.competitive_reports import LandscapeOpportunityReport
+    from app.models.internal_feedback import (
+        InternalFeedbackImport,
+        WinLossTheme,
+        SupportTheme
+    )
+    from app.models.idea import Idea, IdeaStatus
+    from app.schemas.synthesis import OpportunitySynthesisOutput
+    from app.services.llm_service import LLMService
+    from datetime import datetime
+    from sqlalchemy import desc
+
+    db = None
+    try:
+        db = SessionLocal()
+        queue_service = QueueService(db)
+
+        # Get job details
+        job = queue_service.get_job(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        queue_service.mark_running(job_id)
+
+        # Extract job parameters
+        input_data = job.input_data or {}
+        synthesis_run_id = input_data.get('synthesis_run_id')
+        product_id = job.product_id
+
+        if not synthesis_run_id:
+            raise ValueError("synthesis_run_id is required in input_data")
+
+        if not product_id:
+            raise ValueError("product_id is required")
+
+        # Get synthesis run record
+        synthesis_run = db.query(SynthesisRun).filter(
+            SynthesisRun.id == synthesis_run_id
+        ).first()
+
+        if not synthesis_run:
+            raise ValueError(f"SynthesisRun {synthesis_run_id} not found")
+
+        # Gather data from all sources
+        queue_service.update_progress(job_id, 10.0, "Gathering competitive data...")
+
+        # 1. Competitive opportunities from landscape report
+        competitive_opportunities = []
+        landscape_report = db.query(LandscapeOpportunityReport).filter(
+            LandscapeOpportunityReport.product_id == product_id
+        ).first()
+
+        if landscape_report and landscape_report.feature_opportunities:
+            competitive_opportunities = landscape_report.feature_opportunities
+
+        queue_service.update_progress(job_id, 25.0, "Gathering customer ideas...")
+
+        # 2. Customer ideas (top voted)
+        # Vote count is computed via relationship, not a stored column
+        from app.models.vote import Vote
+        from sqlalchemy import func as sql_func
+
+        customer_ideas = []
+        # Subquery to count votes per idea
+        vote_counts = db.query(
+            Vote.idea_id,
+            sql_func.sum(Vote.vote_value).label('vote_count')
+        ).group_by(Vote.idea_id).subquery()
+
+        # Query ideas with their vote counts, ordered by votes descending
+        # Only include ACCEPTED ideas (those open for voting)
+        ideas_with_votes = db.query(
+            Idea,
+            sql_func.coalesce(vote_counts.c.vote_count, 0).label('vote_count')
+        ).outerjoin(
+            vote_counts, Idea.id == vote_counts.c.idea_id
+        ).filter(
+            Idea.product_id == product_id,
+            Idea.status == IdeaStatus.ACCEPTED
+        ).order_by(desc('vote_count')).limit(50).all()
+
+        for idea, vote_count in ideas_with_votes:
+            customer_ideas.append({
+                'id': idea.id,
+                'title': idea.title,
+                'description': idea.what_description,  # Use what_description as the description
+                'vote_count': int(vote_count) if vote_count else 0,
+                'status': idea.status.value if idea.status else 'submitted'
+            })
+
+        queue_service.update_progress(job_id, 40.0, "Gathering internal feedback...")
+
+        # 3. Internal feedback themes (from most recent completed import)
+        winloss_themes = []
+        support_themes = []
+
+        latest_import = db.query(InternalFeedbackImport).filter(
+            InternalFeedbackImport.product_id == product_id,
+            InternalFeedbackImport.themes_extracted == True
+        ).order_by(desc(InternalFeedbackImport.imported_at)).first()
+
+        if latest_import:
+            # Get win/loss themes
+            wl_themes = db.query(WinLossTheme).filter(
+                WinLossTheme.import_id == latest_import.id
+            ).all()
+            for theme in wl_themes:
+                winloss_themes.append({
+                    'id': theme.id,
+                    'theme_name': theme.theme_name,
+                    'outcome': theme.outcome,
+                    'competitor_name': theme.competitor_name,
+                    'deal_count': theme.deal_count,
+                    'total_value': theme.total_value,
+                    'sample_reasons': theme.sample_reasons or [],
+                    'feature_keywords': theme.feature_keywords or []
+                })
+
+            # Get support themes
+            sup_themes = db.query(SupportTheme).filter(
+                SupportTheme.import_id == latest_import.id
+            ).all()
+            for theme in sup_themes:
+                support_themes.append({
+                    'id': theme.id,
+                    'theme_name': theme.theme_name,
+                    'category': theme.category,
+                    'ticket_count': theme.ticket_count,
+                    'sample_subjects': theme.sample_subjects or [],
+                    'feature_keywords': theme.feature_keywords or [],
+                    'urgency_indicator': theme.urgency_indicator
+                })
+
+        # Update source snapshot
+        sources_used = []
+        if competitive_opportunities:
+            sources_used.append("competitive")
+        if customer_ideas:
+            sources_used.append("customer")
+        if winloss_themes or support_themes:
+            sources_used.append("internal")
+
+        source_snapshot = {
+            'landscape_report_id': landscape_report.id if landscape_report else None,
+            'competitive_opportunities_count': len(competitive_opportunities),
+            'ideas_count': len(customer_ideas),
+            'ideas_total_votes': sum(i.get('vote_count', 0) for i in customer_ideas),
+            'internal_import_id': latest_import.id if latest_import else None,
+            'winloss_themes_count': len(winloss_themes),
+            'support_themes_count': len(support_themes)
+        }
+
+        synthesis_run.source_snapshot = source_snapshot
+        synthesis_run.sources_used = sources_used
+        db.commit()
+
+        queue_service.update_progress(job_id, 50.0, "Running synthesis agent...")
+
+        # Initialize LLM service and agent
+        llm_service = LLMService()
+        agent = OpportunitySynthesisAgent(
+            db=db,
+            llm_service=llm_service,
+            product_id=product_id
+        )
+
+        # Run the agent with higher max_tokens for complex JSON output
+        # Synthesis generates detailed evidence for up to 15 opportunities
+        result = agent.execute(
+            {
+                'competitive_opportunities': competitive_opportunities,
+                'customer_ideas': customer_ideas,
+                'winloss_themes': winloss_themes,
+                'support_themes': support_themes
+            },
+            max_tokens=8000  # Higher limit for complex synthesis output
+        )
+
+        queue_service.update_progress(job_id, 80.0, "Storing synthesis results...")
+
+        # Parse output
+        if isinstance(result, OpportunitySynthesisOutput):
+            output = result
+        else:
+            output = OpportunitySynthesisOutput(**result)
+
+        # Store synthesized opportunities
+        three_way = 0
+        two_way = 0
+        single_source = 0
+
+        for opp in output.opportunities:
+            db_opp = SynthesizedOpportunity(
+                synthesis_run_id=synthesis_run_id,
+                product_id=product_id,
+                opportunity_name=opp.opportunity_name,
+                opportunity_summary=opp.opportunity_summary,
+                priority_score=opp.priority_score,
+                source_count=opp.source_count,
+                sources=opp.sources,
+                competitive_evidence=opp.competitive_evidence.model_dump() if opp.competitive_evidence else None,
+                customer_evidence=opp.customer_evidence.model_dump() if opp.customer_evidence else None,
+                internal_evidence=opp.internal_evidence.model_dump() if opp.internal_evidence else None,
+                recommended_action=opp.recommended_action,
+                feature_keywords=opp.feature_keywords
+            )
+            db.add(db_opp)
+
+            if opp.source_count >= 3:
+                three_way += 1
+            elif opp.source_count == 2:
+                two_way += 1
+            else:
+                single_source += 1
+
+        # Update synthesis run
+        synthesis_run.status = 'completed'
+        synthesis_run.analysis_summary = output.analysis_summary
+        synthesis_run.summary_stats = {
+            'three_way_matches': three_way,
+            'two_way_matches': two_way,
+            'single_source': single_source,
+            'total_opportunities': len(output.opportunities)
+        }
+        synthesis_run.completed_at = datetime.utcnow()
+
+        db.commit()
+
+        # Mark job success
+        queue_service.mark_success(job_id, {
+            'synthesis_run_id': synthesis_run_id,
+            'opportunities_count': len(output.opportunities),
+            'three_way_matches': three_way,
+            'two_way_matches': two_way,
+            'single_source': single_source
+        })
+
+        return {
+            'status': 'completed',
+            'synthesis_run_id': synthesis_run_id,
+            'opportunities': len(output.opportunities)
+        }
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[opportunity_synthesis_task] Error for job {job_id}: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
+
+                # Update synthesis run status
+                synthesis_run_id = (job.input_data or {}).get('synthesis_run_id') if 'job' in dir() else None
+                if synthesis_run_id:
+                    synthesis_run = db.query(SynthesisRun).filter(
+                        SynthesisRun.id == synthesis_run_id
+                    ).first()
+                    if synthesis_run:
+                        synthesis_run.status = 'failed'
+                        synthesis_run.error_message = error_msg
+                        db.commit()
+            except Exception:
+                pass
+
+        raise
+
+    finally:
+        if db:
+            db.close()

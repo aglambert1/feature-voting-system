@@ -71,6 +71,10 @@ class JobType(str, enum.Enum):
     FUNCTIONAL_AUDIT = "functional_audit"  # Per-competitor functional audit
     LANDSCAPE_SYNTHESIS = "landscape_synthesis"  # Cross-competitor landscape synthesis
 
+    # Internal Discovery job types (three-source synthesis)
+    INTERNAL_DISCOVERY = "internal_discovery"  # Process uploaded internal feedback
+    OPPORTUNITY_SYNTHESIS = "opportunity_synthesis"  # Three-source synthesis
+
     # DEPRECATED: These job types are no longer used in the new two-step analysis system
     # Kept for backwards compatibility with existing job records
     STRATEGIC_ANALYSIS_ONLY = "strategic_analysis_only"  # DEPRECATED

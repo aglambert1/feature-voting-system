@@ -19,6 +19,10 @@ import api, {
   getTriageSettings,
   triggerCompetitorDiscovery,
   triggerCompetitiveAnalysisV2,
+  getInternalFeedbackImports,
+  getInternalFeedbackThemes,
+  getSynthesisStatus,
+  getLatestSynthesis,
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
 import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, FeatureCluster, TriageSettings, JobType } from '../../types';
@@ -83,6 +87,33 @@ export default function ProductDetailPage() {
   const [clusters, setClusters] = useState<FeatureCluster[]>([]);
   const [triageSettings, setTriageSettings] = useState<TriageSettings | null>(null);
 
+  // Internal feedback state
+  const [internalFeedbackStats, setInternalFeedbackStats] = useState<{
+    importCount: number;
+    winlossThemeCount: number;
+    supportThemeCount: number;
+    lastImportDate: string | null;
+  }>({ importCount: 0, winlossThemeCount: 0, supportThemeCount: 0, lastImportDate: null });
+
+  // Synthesis state
+  const [synthesisStats, setSynthesisStats] = useState<{
+    hasRun: boolean;
+    status: string;
+    opportunityCount: number;
+    threeWayMatches: number;
+    twoWayMatches: number;
+    lastRunDate: string | null;
+    sourcesAvailable: number;
+  }>({
+    hasRun: false,
+    status: 'none',
+    opportunityCount: 0,
+    threeWayMatches: 0,
+    twoWayMatches: 0,
+    lastRunDate: null,
+    sourcesAvailable: 0
+  });
+
   // UI state
   const [expandedVersions, setExpandedVersions] = useState<Set<number>>(new Set());
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
@@ -95,6 +126,49 @@ export default function ProductDetailPage() {
   // Action state
   const [runningAction, setRunningAction] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Fetch synthesis stats (can be called independently when synthesis job completes)
+  const fetchSynthesisStats = useCallback(async () => {
+    if (!productId) return;
+    const numProductId = parseInt(productId);
+
+    try {
+      const [synthesisStatusRes, synthesisResultsRes] = await Promise.all([
+        getSynthesisStatus(numProductId).catch(() => null),
+        getLatestSynthesis(numProductId).catch(() => null)
+      ]);
+
+      const sourcesAvailable = [
+        synthesisStatusRes?.sources_available?.competitive,
+        synthesisStatusRes?.sources_available?.customer,
+        synthesisStatusRes?.sources_available?.internal
+      ].filter(Boolean).length;
+
+      if (synthesisResultsRes && synthesisResultsRes.run && synthesisResultsRes.run.status !== 'none') {
+        setSynthesisStats({
+          hasRun: true,
+          status: synthesisResultsRes.run.status,
+          opportunityCount: synthesisResultsRes.opportunities?.length || 0,
+          threeWayMatches: synthesisResultsRes.run.summary_stats?.three_way_matches || 0,
+          twoWayMatches: synthesisResultsRes.run.summary_stats?.two_way_matches || 0,
+          lastRunDate: synthesisResultsRes.run.completed_at || synthesisResultsRes.run.created_at,
+          sourcesAvailable
+        });
+      } else {
+        setSynthesisStats({
+          hasRun: false,
+          status: 'none',
+          opportunityCount: 0,
+          threeWayMatches: 0,
+          twoWayMatches: 0,
+          lastRunDate: null,
+          sourcesAvailable
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch synthesis stats:', err);
+    }
+  }, [productId]);
 
   // Fetch all data
   const fetchAllData = useCallback(async () => {
@@ -119,7 +193,11 @@ export default function ProductDetailPage() {
         competitorsRes,
         clustersRes,
         triageRes,
-        historyRes
+        historyRes,
+        internalImportsRes,
+        internalThemesRes,
+        synthesisStatusRes,
+        synthesisResultsRes
       ] = await Promise.all([
         getProductPendingCounts(numProductId).catch(() => null),
         getAgentConfig(numProductId).catch(() => null),
@@ -128,7 +206,11 @@ export default function ProductDetailPage() {
         getTriageSettings(numProductId).catch(() => null),
         productResponse.data.analysis_version > 0
           ? api.get<AnalysisHistory[]>(`/product-intelligence/products/${productId}/analysis-history`).then(r => r.data)
-          : Promise.resolve([])
+          : Promise.resolve([]),
+        getInternalFeedbackImports(numProductId).catch(() => []),
+        getInternalFeedbackThemes(numProductId).catch(() => ({ import_id: 0, winloss_themes: [], support_themes: [], analysis_summary: null })),
+        getSynthesisStatus(numProductId).catch(() => null),
+        getLatestSynthesis(numProductId).catch(() => null)
       ]);
 
       setPendingCounts(pendingCountsRes);
@@ -137,6 +219,43 @@ export default function ProductDetailPage() {
       setClusters(clustersRes);
       setTriageSettings(triageRes);
       setAnalysisHistory(historyRes);
+
+      // Set internal feedback stats
+      setInternalFeedbackStats({
+        importCount: internalImportsRes.length,
+        winlossThemeCount: internalThemesRes.winloss_themes.length,
+        supportThemeCount: internalThemesRes.support_themes.length,
+        lastImportDate: internalImportsRes.length > 0 ? internalImportsRes[0].imported_at : null
+      });
+
+      // Set synthesis stats
+      const sourcesAvailable = [
+        synthesisStatusRes?.sources_available?.competitive,
+        synthesisStatusRes?.sources_available?.customer,
+        synthesisStatusRes?.sources_available?.internal
+      ].filter(Boolean).length;
+
+      if (synthesisResultsRes && synthesisResultsRes.run && synthesisResultsRes.run.status !== 'none') {
+        setSynthesisStats({
+          hasRun: true,
+          status: synthesisResultsRes.run.status,
+          opportunityCount: synthesisResultsRes.opportunities?.length || 0,
+          threeWayMatches: synthesisResultsRes.run.summary_stats?.three_way_matches || 0,
+          twoWayMatches: synthesisResultsRes.run.summary_stats?.two_way_matches || 0,
+          lastRunDate: synthesisResultsRes.run.completed_at || synthesisResultsRes.run.created_at,
+          sourcesAvailable
+        });
+      } else {
+        setSynthesisStats({
+          hasRun: false,
+          status: 'none',
+          opportunityCount: 0,
+          threeWayMatches: 0,
+          twoWayMatches: 0,
+          lastRunDate: null,
+          sourcesAvailable
+        });
+      }
 
     } catch (err: any) {
       setError(err.message || err.data?.detail || 'Failed to load product');
@@ -419,10 +538,10 @@ export default function ProductDetailPage() {
             </div>
           </div>
 
-          {/* Competitive Analysis Agent Tile */}
+          {/* Competitive Discovery Agent Tile */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-gray-900">Competitive Analysis Agent</h3>
+              <h3 className="font-semibold text-gray-900">Competitive Discovery Agent</h3>
               <span className={`px-2 py-1 text-xs font-medium rounded-full ${
                 agentConfig?.deep_analysis_mode === 'scheduled' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
               }`}>
@@ -478,6 +597,123 @@ export default function ProductDetailPage() {
                 >
                   Setup
                 </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Internal Discovery Agent Tile */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900">Internal Discovery Agent</h3>
+              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                internalFeedbackStats.importCount > 0 ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+              }`}>
+                {internalFeedbackStats.importCount > 0 ? 'Data Imported' : 'No Data'}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              <div className="text-sm text-gray-600">
+                {internalFeedbackStats.importCount > 0 ? (
+                  <Link
+                    to={`/product-intelligence/products/${productId}/internal-feedback`}
+                    className="text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    {internalFeedbackStats.winlossThemeCount + internalFeedbackStats.supportThemeCount} themes extracted →
+                  </Link>
+                ) : (
+                  <span className="text-gray-500">Import sales win/loss and support data</span>
+                )}
+              </div>
+
+              <div className="text-sm text-gray-500">
+                {internalFeedbackStats.winlossThemeCount} win/loss themes; {internalFeedbackStats.supportThemeCount} support themes
+              </div>
+
+              {internalFeedbackStats.lastImportDate && (
+                <div className="text-sm text-gray-500">
+                  Last import: {format(new Date(internalFeedbackStats.lastImportDate), 'MMM d, yyyy')}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Link
+                  to={`/product-intelligence/products/${productId}/internal-feedback`}
+                  className="flex-1 px-3 py-2 text-sm text-center bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                >
+                  {internalFeedbackStats.importCount > 0 ? 'View Themes' : 'Import Data'}
+                </Link>
+              </div>
+            </div>
+          </div>
+
+          {/* Opportunity Synthesis Agent Tile */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900">Opportunity Synthesis Agent</h3>
+              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                synthesisStats.hasRun && synthesisStats.status === 'completed'
+                  ? 'bg-green-100 text-green-800'
+                  : synthesisStats.sourcesAvailable > 0
+                    ? 'bg-blue-100 text-blue-800'
+                    : 'bg-gray-100 text-gray-600'
+              }`}>
+                {synthesisStats.hasRun && synthesisStats.status === 'completed'
+                  ? `${synthesisStats.opportunityCount} Opportunities`
+                  : synthesisStats.sourcesAvailable > 0
+                    ? `${synthesisStats.sourcesAvailable}/3 Sources`
+                    : 'No Sources'}
+              </span>
+            </div>
+
+            {/* Job Status - shows running progress */}
+            <AgentJobStatus
+              productId={parseInt(productId!, 10)}
+              jobTypes={[JobType.OPPORTUNITY_SYNTHESIS]}
+              onJobComplete={() => {
+                // Refresh synthesis stats when job completes
+                fetchSynthesisStats();
+              }}
+              className="mb-3"
+            />
+
+            <div className="space-y-3">
+              <div className="text-sm text-gray-600">
+                {synthesisStats.hasRun && synthesisStats.status === 'completed' ? (
+                  <Link
+                    to={`/product-intelligence/products/${productId}/synthesis`}
+                    className="text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    {synthesisStats.threeWayMatches} three-way, {synthesisStats.twoWayMatches} two-way matches →
+                  </Link>
+                ) : (
+                  <span className="text-gray-500">
+                    Combines competitive, customer, and internal signals
+                  </span>
+                )}
+              </div>
+
+              <div className="text-sm text-gray-500">
+                {synthesisStats.sourcesAvailable}/3 sources available for synthesis
+              </div>
+
+              {synthesisStats.lastRunDate && (
+                <div className="text-sm text-gray-500">
+                  Last run: {format(new Date(synthesisStats.lastRunDate), 'MMM d, yyyy')}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Link
+                  to={`/product-intelligence/products/${productId}/synthesis`}
+                  className={`flex-1 px-3 py-2 text-sm text-center rounded-lg font-medium transition-colors ${
+                    synthesisStats.sourcesAvailable > 0
+                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                      : 'bg-gray-200 text-gray-500 cursor-not-allowed pointer-events-none'
+                  }`}
+                >
+                  {synthesisStats.hasRun ? 'View Synthesis' : 'Run Synthesis'}
+                </Link>
               </div>
             </div>
           </div>

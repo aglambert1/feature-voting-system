@@ -31,6 +31,8 @@ import CompetitorsPage from './pages/CompetitorIntelligence/CompetitorsPage';
 import SessionWorkflowPage from './pages/CompetitorIntelligence/SessionWorkflowPage';
 import ProductDashboardPage from './pages/ProductDashboardPage';
 import IntelligenceHubPage from './pages/CompetitorIntelligence/IntelligenceHubPage';
+import InternalFeedbackPage from './pages/CompetitorIntelligence/InternalFeedbackPage';
+import SynthesisHubPage from './pages/CompetitorIntelligence/SynthesisHubPage';
 
 // Redirect from old /report route to new V2 IntelligenceHub
 function ReportRedirect() {
@@ -188,6 +190,26 @@ function App() {
               <ProtectedRoute>
                 <ProductOwnerRoute>
                   <IntelligenceHubPage />
+                </ProductOwnerRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/product-intelligence/products/:productId/internal-feedback"
+            element={
+              <ProtectedRoute>
+                <ProductOwnerRoute>
+                  <InternalFeedbackPage />
+                </ProductOwnerRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/product-intelligence/products/:productId/synthesis"
+            element={
+              <ProtectedRoute>
+                <ProductOwnerRoute>
+                  <SynthesisHubPage />
                 </ProductOwnerRoute>
               </ProtectedRoute>
             }

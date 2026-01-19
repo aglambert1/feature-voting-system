@@ -1274,5 +1274,262 @@ export const exportOpportunitiesJson = async (
   return response.data;
 };
 
+// ============================================================================
+// INTERNAL FEEDBACK API METHODS (Phase 2 - Internal Discovery Agent)
+// ============================================================================
+
+import type {
+  InternalFeedbackImport,
+  InternalFeedbackThemes,
+  ImportStatusResponse,
+} from '../types';
+
+/**
+ * Upload internal feedback JSON file
+ */
+export const uploadInternalFeedback = async (
+  productId: number,
+  file: File
+): Promise<InternalFeedbackImport> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await api.post<InternalFeedbackImport>(
+    `/internal-feedback/${productId}/import`,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+  return response.data;
+};
+
+/**
+ * Get all imports for a product
+ */
+export const getInternalFeedbackImports = async (
+  productId: number
+): Promise<InternalFeedbackImport[]> => {
+  const response = await api.get<{ imports: InternalFeedbackImport[]; total: number }>(
+    `/internal-feedback/${productId}/imports`
+  );
+  return response.data.imports;
+};
+
+/**
+ * Get a single import by ID
+ */
+export const getInternalFeedbackImport = async (
+  productId: number,
+  importId: number
+): Promise<InternalFeedbackImport> => {
+  const response = await api.get<InternalFeedbackImport>(
+    `/internal-feedback/${productId}/imports/${importId}`
+  );
+  return response.data;
+};
+
+/**
+ * Get import status (for polling during processing)
+ */
+export const getInternalFeedbackImportStatus = async (
+  productId: number,
+  importId: number
+): Promise<ImportStatusResponse> => {
+  const response = await api.get<ImportStatusResponse>(
+    `/internal-feedback/${productId}/imports/${importId}/status`
+  );
+  return response.data;
+};
+
+/**
+ * Get all extracted themes for a product
+ */
+export const getInternalFeedbackThemes = async (
+  productId: number
+): Promise<InternalFeedbackThemes> => {
+  const response = await api.get<InternalFeedbackThemes>(
+    `/internal-feedback/${productId}/themes`
+  );
+  return response.data;
+};
+
+/**
+ * Delete an import and its themes
+ */
+export const deleteInternalFeedbackImport = async (
+  productId: number,
+  importId: number
+): Promise<void> => {
+  await api.delete(`/internal-feedback/${productId}/imports/${importId}`);
+};
+
+/**
+ * Reprocess an import (re-run theme extraction)
+ */
+export const reprocessInternalFeedback = async (
+  productId: number,
+  importId: number
+): Promise<InternalFeedbackImport> => {
+  const response = await api.post<InternalFeedbackImport>(
+    `/internal-feedback/${productId}/imports/${importId}/reprocess`
+  );
+  return response.data;
+};
+
+// ============================================================================
+// SYNTHESIS API
+// ============================================================================
+
+import type {
+  SynthesisStatusResponse,
+  SynthesisRun,
+  SynthesisResultsResponse,
+} from '../types';
+
+/**
+ * Get synthesis status and available sources
+ */
+export const getSynthesisStatus = async (
+  productId: number
+): Promise<SynthesisStatusResponse> => {
+  const response = await api.get<SynthesisStatusResponse>(
+    `/synthesis/${productId}/status`
+  );
+  return response.data;
+};
+
+/**
+ * Trigger a new synthesis run
+ */
+export const triggerSynthesis = async (
+  productId: number
+): Promise<SynthesisRun> => {
+  const response = await api.post<SynthesisRun>(
+    `/synthesis/${productId}/run`
+  );
+  return response.data;
+};
+
+/**
+ * Get all synthesis runs for a product
+ */
+export const getSynthesisRuns = async (
+  productId: number
+): Promise<{ runs: SynthesisRun[]; total: number }> => {
+  const response = await api.get<{ runs: SynthesisRun[]; total: number }>(
+    `/synthesis/${productId}/runs`
+  );
+  return response.data;
+};
+
+/**
+ * Get full synthesis results including opportunities
+ */
+export const getSynthesisResults = async (
+  productId: number,
+  runId: number
+): Promise<SynthesisResultsResponse> => {
+  const response = await api.get<SynthesisResultsResponse>(
+    `/synthesis/${productId}/runs/${runId}`
+  );
+  return response.data;
+};
+
+/**
+ * Get the latest completed synthesis results
+ */
+export const getLatestSynthesis = async (
+  productId: number
+): Promise<SynthesisResultsResponse> => {
+  const response = await api.get<SynthesisResultsResponse>(
+    `/synthesis/${productId}/latest`
+  );
+  return response.data;
+};
+
+/**
+ * Helper to trigger file download from blob
+ */
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
+
+/**
+ * Export synthesis results as JSON
+ * Makes authenticated request and triggers download
+ */
+export const exportSynthesisJson = async (
+  productId: number,
+  runId: number,
+  productName?: string
+): Promise<void> => {
+  try {
+    const response = await api.get(
+      `/synthesis/${productId}/runs/${runId}/export/json`,
+      { responseType: 'blob' }
+    );
+
+    const filename = productName
+      ? `synthesis_${productName.replace(/\s+/g, '_')}_${runId}.json`
+      : `synthesis_${productId}_${runId}.json`;
+
+    downloadBlob(response.data, filename);
+  } catch (error) {
+    console.error('Export JSON failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Export synthesis results as CSV
+ * Makes authenticated request and triggers download
+ */
+export const exportSynthesisCsv = async (
+  productId: number,
+  runId: number,
+  productName?: string
+): Promise<void> => {
+  try {
+    const response = await api.get(
+      `/synthesis/${productId}/runs/${runId}/export/csv`,
+      { responseType: 'blob' }
+    );
+
+    const filename = productName
+      ? `synthesis_${productName.replace(/\s+/g, '_')}_${runId}.csv`
+      : `synthesis_${productId}_${runId}.csv`;
+
+    downloadBlob(response.data, filename);
+  } catch (error) {
+    console.error('Export CSV failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Create an idea from a synthesized opportunity
+ */
+export const createIdeaFromOpportunity = async (
+  productId: number,
+  opportunityId: number,
+  additionalDescription?: string
+): Promise<{ idea_id: number; title: string; status: string }> => {
+  const response = await api.post(
+    `/synthesis/${productId}/opportunities/${opportunityId}/create-idea`,
+    { additional_description: additionalDescription }
+  );
+  return response.data;
+};
+
 // Export the axios instance for custom requests
 export default api;

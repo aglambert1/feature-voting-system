@@ -44,6 +44,18 @@ from app.models.competitive_reports import (
     CompetitorFunctionalReport,
     LandscapeOpportunityReport,
 )
+from app.models.internal_feedback import (
+    InternalFeedbackImport,
+    WinLossTheme,
+    SupportTheme,
+    ImportStatus,
+)
+from app.models.synthesis import (
+    SynthesisRun,
+    SynthesizedOpportunity,
+    SynthesisStatus,
+    SourceType as SynthesisSourceType,
+)
 
 __all__ = [
     "User", "UserRole", "ProductAccessMode",
@@ -57,4 +69,6 @@ __all__ = [
     "ReviewQueueType", "ReviewQueueStatus", "ReviewQueuePriority", "AlertType",
     "AgentMode", "CompetitiveAgentConfig", "FeatureCluster", "FeatureClusterMember",
     "CompetitorFunctionalReport", "LandscapeOpportunityReport",
+    "InternalFeedbackImport", "WinLossTheme", "SupportTheme", "ImportStatus",
+    "SynthesisRun", "SynthesizedOpportunity", "SynthesisStatus", "SynthesisSourceType",
 ]

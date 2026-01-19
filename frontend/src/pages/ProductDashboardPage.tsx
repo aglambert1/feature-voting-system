@@ -291,13 +291,13 @@ const ProductDashboardPage = () => {
                 </button>
               </div>
 
-              {/* Monitoring Status Card */}
+              {/* Competitive Discovery Agent Card */}
               <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
                     <span className={`inline-block w-3 h-3 rounded-full ${getMonitoringStatusColor()}`}></span>
                     <div>
-                      <div className="font-medium text-gray-900">Competitive Monitor</div>
+                      <div className="font-medium text-gray-900">Competitive Discovery Agent</div>
                       <div className="text-sm text-gray-500">
                         {getMonitoringStatusText()}
                         {monitoringConfig?.last_monitored_at && (
@@ -312,6 +312,27 @@ const ProductDashboardPage = () => {
                     className="px-3 py-1.5 text-sm text-blue-600 border border-blue-600 rounded hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {triggeringMonitoring ? 'Starting...' : 'Run Now'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Opportunity Synthesis Agent Card */}
+              <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <span className="inline-block w-3 h-3 rounded-full bg-gray-400"></span>
+                    <div>
+                      <div className="font-medium text-gray-900">Opportunity Synthesis Agent</div>
+                      <div className="text-sm text-gray-500">
+                        Coming soon · Combines competitive, customer, and internal signals
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    disabled={true}
+                    className="px-3 py-1.5 text-sm text-gray-400 border border-gray-300 rounded cursor-not-allowed"
+                  >
+                    Run Synthesis
                   </button>
                 </div>
               </div>

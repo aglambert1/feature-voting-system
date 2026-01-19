@@ -1,0 +1,305 @@
+{
+  "source": "file_import",
+  "imported_at": "2025-01-17T10:00:00Z",
+  "deals": [
+    {
+      "id": "deal_001",
+      "outcome": "lost",
+      "competitor_name": "Competitor A",
+      "reason": "Missing time tracking feature",
+      "deal_value": 85000,
+      "close_date": "2025-01-10",
+      "notes": "Customer specifically mentioned needing built-in time tracking for client billing. They went with Competitor A which has this feature."
+    },
+    {
+      "id": "deal_002",
+      "outcome": "lost",
+      "competitor_name": "Competitor B",
+      "reason": "No PDF export for reports",
+      "deal_value": 42000,
+      "close_date": "2025-01-08",
+      "notes": "Deal lost because we couldn't provide PDF exports for their compliance team. Competitor B offered this out of the box."
+    },
+    {
+      "id": "deal_003",
+      "outcome": "lost",
+      "competitor_name": "Competitor A",
+      "reason": "Needed time tracking with approvals",
+      "deal_value": 65000,
+      "close_date": "2025-01-05",
+      "notes": "They wanted time tracking with manager approval workflow. We don't have this capability."
+    },
+    {
+      "id": "deal_004",
+      "outcome": "lost",
+      "competitor_name": null,
+      "reason": "Budget constraints - price too high",
+      "deal_value": 28000,
+      "close_date": "2025-01-03",
+      "notes": "Customer loved the product but couldn't justify the price. They went with a cheaper alternative."
+    },
+    {
+      "id": "deal_005",
+      "outcome": "lost",
+      "competitor_name": "Competitor C",
+      "reason": "Missing Salesforce integration",
+      "deal_value": 120000,
+      "close_date": "2024-12-28",
+      "notes": "Big enterprise deal lost because they required native Salesforce integration. Competitor C had this."
+    },
+    {
+      "id": "deal_006",
+      "outcome": "lost",
+      "competitor_name": "Competitor A",
+      "reason": "Wanted billable time tracking",
+      "deal_value": 55000,
+      "close_date": "2024-12-22",
+      "notes": "Agency needed billable hour tracking per client. We don't support this."
+    },
+    {
+      "id": "deal_007",
+      "outcome": "lost",
+      "competitor_name": "Competitor B",
+      "reason": "No custom report builder",
+      "deal_value": 78000,
+      "close_date": "2024-12-18",
+      "notes": "Customer wanted to build custom reports. Our reporting is too rigid."
+    },
+    {
+      "id": "deal_008",
+      "outcome": "lost",
+      "competitor_name": null,
+      "reason": "Mobile app not robust enough",
+      "deal_value": 35000,
+      "close_date": "2024-12-15",
+      "notes": "Field team needs better mobile experience. Our mobile app is lacking."
+    },
+    {
+      "id": "deal_009",
+      "outcome": "won",
+      "competitor_name": "Competitor A",
+      "reason": "Better UI/UX",
+      "deal_value": 92000,
+      "close_date": "2025-01-12",
+      "notes": "Won because customer found our interface much more intuitive than Competitor A."
+    },
+    {
+      "id": "deal_010",
+      "outcome": "won",
+      "competitor_name": "Competitor B",
+      "reason": "Superior API capabilities",
+      "deal_value": 145000,
+      "close_date": "2025-01-09",
+      "notes": "Enterprise customer chose us for our comprehensive API. They needed deep integrations."
+    },
+    {
+      "id": "deal_011",
+      "outcome": "won",
+      "competitor_name": null,
+      "reason": "Fast implementation",
+      "deal_value": 38000,
+      "close_date": "2025-01-06",
+      "notes": "Customer had tight timeline. Our quick setup was the deciding factor."
+    },
+    {
+      "id": "deal_012",
+      "outcome": "won",
+      "competitor_name": "Competitor C",
+      "reason": "Better customer support",
+      "deal_value": 67000,
+      "close_date": "2024-12-30",
+      "notes": "Customer had bad experience with Competitor C support. Our responsive team won them over."
+    },
+    {
+      "id": "deal_013",
+      "outcome": "lost",
+      "competitor_name": "Competitor A",
+      "reason": "No resource scheduling",
+      "deal_value": 95000,
+      "close_date": "2024-12-12",
+      "notes": "Professional services firm needed resource allocation and scheduling. We don't have this."
+    },
+    {
+      "id": "deal_014",
+      "outcome": "lost",
+      "competitor_name": "Competitor B",
+      "reason": "Needed advanced export options",
+      "deal_value": 52000,
+      "close_date": "2024-12-08",
+      "notes": "They needed Excel and PDF exports with custom formatting. Our exports are basic."
+    },
+    {
+      "id": "deal_015",
+      "outcome": "won",
+      "competitor_name": "Competitor A",
+      "reason": "Pricing flexibility",
+      "deal_value": 48000,
+      "close_date": "2024-12-05",
+      "notes": "We offered a flexible pricing model that fit their budget better than Competitor A."
+    },
+    {
+      "id": "deal_016",
+      "outcome": "lost",
+      "competitor_name": null,
+      "reason": "Missing approval workflows",
+      "deal_value": 72000,
+      "close_date": "2024-12-01",
+      "notes": "Needed multi-level approval workflows for compliance. We don't support this."
+    },
+    {
+      "id": "deal_017",
+      "outcome": "lost",
+      "competitor_name": "Competitor C",
+      "reason": "No HubSpot integration",
+      "deal_value": 44000,
+      "close_date": "2024-11-28",
+      "notes": "Marketing team required HubSpot integration. Competitor C offers this natively."
+    },
+    {
+      "id": "deal_018",
+      "outcome": "won",
+      "competitor_name": "Competitor B",
+      "reason": "Better collaboration features",
+      "deal_value": 83000,
+      "close_date": "2024-11-25",
+      "notes": "Team loved our real-time collaboration. Competitor B felt clunky in comparison."
+    }
+  ],
+  "support_tickets": [
+    {
+      "id": "ticket_001",
+      "category": "feature_request",
+      "subject": "Need PDF export for reports",
+      "description": "Multiple customers have requested the ability to export reports as PDF files for sharing with stakeholders who don't have system access.",
+      "tags": ["export", "pdf", "reporting"],
+      "ticket_count": 47,
+      "created_at": "2025-01-10"
+    },
+    {
+      "id": "ticket_002",
+      "category": "feature_request",
+      "subject": "Time tracking feature request",
+      "description": "Customers want built-in time tracking to log hours spent on projects and tasks.",
+      "tags": ["time-tracking", "productivity", "billing"],
+      "ticket_count": 38,
+      "created_at": "2025-01-08"
+    },
+    {
+      "id": "ticket_003",
+      "category": "feature_request",
+      "subject": "Salesforce integration needed",
+      "description": "Enterprise customers requesting native Salesforce integration for syncing contacts and opportunities.",
+      "tags": ["integration", "salesforce", "crm"],
+      "ticket_count": 31,
+      "created_at": "2025-01-05"
+    },
+    {
+      "id": "ticket_004",
+      "category": "bug",
+      "subject": "Mobile app crashes on upload",
+      "description": "Users report the mobile app crashes when trying to upload files larger than 10MB.",
+      "tags": ["mobile", "crash", "upload"],
+      "ticket_count": 23,
+      "created_at": "2025-01-12"
+    },
+    {
+      "id": "ticket_005",
+      "category": "feature_request",
+      "subject": "Custom report builder",
+      "description": "Users want to create their own reports with custom fields and filters.",
+      "tags": ["reporting", "customization", "analytics"],
+      "ticket_count": 29,
+      "created_at": "2024-12-28"
+    },
+    {
+      "id": "ticket_006",
+      "category": "feature_request",
+      "subject": "Approval workflow support",
+      "description": "Organizations need multi-level approval workflows for expenses, time off, and document reviews.",
+      "tags": ["workflow", "approval", "compliance"],
+      "ticket_count": 25,
+      "created_at": "2024-12-20"
+    },
+    {
+      "id": "ticket_007",
+      "category": "support",
+      "subject": "Help setting up API integration",
+      "description": "Customers need assistance with API setup and documentation.",
+      "tags": ["api", "integration", "documentation"],
+      "ticket_count": 18,
+      "created_at": "2025-01-11"
+    },
+    {
+      "id": "ticket_008",
+      "category": "feature_request",
+      "subject": "Excel export with formatting",
+      "description": "Users want Excel exports that preserve formatting and include charts.",
+      "tags": ["export", "excel", "formatting"],
+      "ticket_count": 22,
+      "created_at": "2024-12-15"
+    },
+    {
+      "id": "ticket_009",
+      "category": "feature_request",
+      "subject": "HubSpot integration",
+      "description": "Marketing teams requesting HubSpot integration for campaign tracking.",
+      "tags": ["integration", "hubspot", "marketing"],
+      "ticket_count": 19,
+      "created_at": "2024-12-10"
+    },
+    {
+      "id": "ticket_010",
+      "category": "bug",
+      "subject": "Dashboard slow to load",
+      "description": "Users report the main dashboard takes 10+ seconds to load with large datasets.",
+      "tags": ["performance", "dashboard", "slow"],
+      "ticket_count": 34,
+      "created_at": "2025-01-09"
+    },
+    {
+      "id": "ticket_011",
+      "category": "feature_request",
+      "subject": "Resource scheduling feature",
+      "description": "Professional services firms need resource allocation and capacity planning.",
+      "tags": ["scheduling", "resources", "planning"],
+      "ticket_count": 16,
+      "created_at": "2024-12-05"
+    },
+    {
+      "id": "ticket_012",
+      "category": "feature_request",
+      "subject": "Billable hours tracking",
+      "description": "Agencies need to track billable vs non-billable time per client/project.",
+      "tags": ["billing", "time-tracking", "agency"],
+      "ticket_count": 21,
+      "created_at": "2024-12-01"
+    },
+    {
+      "id": "ticket_013",
+      "category": "support",
+      "subject": "SSO setup assistance",
+      "description": "Enterprise customers need help configuring SAML SSO.",
+      "tags": ["sso", "security", "enterprise"],
+      "ticket_count": 12,
+      "created_at": "2025-01-07"
+    },
+    {
+      "id": "ticket_014",
+      "category": "feature_request",
+      "subject": "Mobile app improvements",
+      "description": "Users want better mobile experience with offline support.",
+      "tags": ["mobile", "offline", "ux"],
+      "ticket_count": 27,
+      "created_at": "2024-12-18"
+    },
+    {
+      "id": "ticket_015",
+      "category": "bug",
+      "subject": "Notification emails not sending",
+      "description": "Some users not receiving notification emails for important updates.",
+      "tags": ["notifications", "email", "bug"],
+      "ticket_count": 15,
+      "created_at": "2025-01-06"
+    }
+  ]
+}
