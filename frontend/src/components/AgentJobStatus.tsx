@@ -46,9 +46,10 @@ export default function AgentJobStatus({
 
   const fetchJobs = useCallback(async () => {
     try {
-      const jobs = await getProductJobs(productId, 20);
+      // Fetch jobs filtered by job type to ensure we get relevant results
+      const jobs = await getProductJobs(productId, 10, jobTypes);
 
-      // Filter to relevant job types
+      // Jobs are already filtered by the API, but double-check
       const relevantJobs = jobs.filter(j =>
         jobTypes.includes(j.job_type as JobType)
       );

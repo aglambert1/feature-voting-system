@@ -30,6 +30,14 @@ from app.services.document_parsing_service import DocumentParsingService
 from app.services.vector_service import VectorService
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
 
+# Import Celery tasks at module level to ensure broker connection is initialized
+from app.queue.tasks import (
+    analyze_product_task,
+    discover_competitors_task,
+    extract_features_parallel,
+    extract_features_task,
+)
+
 
 # Create router with /product-intelligence/products prefix
 router = APIRouter(

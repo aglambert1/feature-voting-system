@@ -151,26 +151,6 @@ export default function OverviewTab({ productId, refreshKey }: Props) {
           </div>
         </div>
 
-        {/* Strategic Analysis Toggles */}
-        {config && (
-          <div className="mt-4 flex flex-wrap gap-2">
-            {config.enable_pricing_analysis && (
-              <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">Pricing</span>
-            )}
-            {config.enable_positioning_analysis && (
-              <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">Positioning</span>
-            )}
-            {config.enable_changes_tracking && (
-              <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">Changes</span>
-            )}
-            {config.enable_momentum_analysis && (
-              <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">Momentum</span>
-            )}
-            {config.enable_financials_analysis && (
-              <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">Financials</span>
-            )}
-          </div>
-        )}
       </section>
 
       {/* Quick Stats */}

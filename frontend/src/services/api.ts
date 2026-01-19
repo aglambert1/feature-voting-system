@@ -50,11 +50,6 @@ import type {
   CompetitorFeature,
   FeatureCluster,
   FeatureClusterDetail,
-  PricingAnalysis,
-  PositioningAnalysis,
-  MomentumAnalysis,
-  ChangeEvent,
-  FinancialsAnalysis,
   AgentJobResponse,
   CreateIdeasRequest,
   FeatureQueryResponse,
@@ -487,8 +482,40 @@ export const getJob = async (jobUuid: string): Promise<QueueJob> => {
 
 /**
  * Get jobs for a product
+ * @param productId - Product ID
+ * @param limit - Maximum number of jobs to return (default 10, max 100)
+ * @param jobTypes - Optional array of job types to filter by
  */
-export const getProductJobs = async (productId: number, limit: number = 10): Promise<QueueJob[]> => {
+export const getProductJobs = async (
+  productId: number,
+  limit: number = 10,
+  jobTypes?: string[]
+): Promise<QueueJob[]> => {
+  // If job types provided, make multiple requests and combine
+  // (API only supports single job_type filter)
+  if (jobTypes && jobTypes.length > 0) {
+    const allJobs: QueueJob[] = [];
+    for (const jobType of jobTypes) {
+      try {
+        const response = await api.get<QueueJob[]>(`/product-intelligence/products/${productId}/jobs`, {
+          params: { limit, job_type: jobType },
+        });
+        allJobs.push(...response.data);
+      } catch {
+        // Ignore errors for individual job types
+      }
+    }
+    // Sort by created_at descending and dedupe
+    const seen = new Set<number>();
+    return allJobs
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .filter(job => {
+        if (seen.has(job.id)) return false;
+        seen.add(job.id);
+        return true;
+      });
+  }
+
   const response = await api.get<QueueJob[]>(`/product-intelligence/products/${productId}/jobs`, {
     params: { limit },
   });
@@ -1016,75 +1043,6 @@ export const createIdeaFromCluster = async (
 ): Promise<AgentJobResponse> => {
   const response = await api.post<AgentJobResponse>(
     `/product-intelligence/agents/${productId}/feature-clusters/${clusterId}/create-idea`
-  );
-  return response.data;
-};
-
-// --- Strategic Analysis Results ---
-
-/**
- * Get pricing analysis for a competitor
- */
-export const getPricingAnalysis = async (
-  productId: number,
-  competitorId: number
-): Promise<PricingAnalysis | null> => {
-  const response = await api.get<PricingAnalysis | null>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/pricing`
-  );
-  return response.data;
-};
-
-/**
- * Get positioning analysis for a competitor
- */
-export const getPositioningAnalysis = async (
-  productId: number,
-  competitorId: number
-): Promise<PositioningAnalysis | null> => {
-  const response = await api.get<PositioningAnalysis | null>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/positioning`
-  );
-  return response.data;
-};
-
-/**
- * Get change events for a competitor
- */
-export const getChangeEvents = async (
-  productId: number,
-  competitorId: number,
-  limit: number = 20
-): Promise<ChangeEvent[]> => {
-  const response = await api.get<ChangeEvent[]>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/changes`,
-    { params: { limit } }
-  );
-  return response.data;
-};
-
-/**
- * Get momentum analysis for a competitor
- */
-export const getMomentumAnalysis = async (
-  productId: number,
-  competitorId: number
-): Promise<MomentumAnalysis | null> => {
-  const response = await api.get<MomentumAnalysis | null>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/momentum`
-  );
-  return response.data;
-};
-
-/**
- * Get financials analysis for a competitor
- */
-export const getFinancialsAnalysis = async (
-  productId: number,
-  competitorId: number
-): Promise<FinancialsAnalysis | null> => {
-  const response = await api.get<FinancialsAnalysis | null>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/financials`
   );
   return response.data;
 };

@@ -709,17 +709,10 @@ export interface CompetitiveAgentConfig {
   alert_on_new_competitors: boolean;
   alert_on_disappeared_competitors: boolean;
 
-  // Deep Analysis
+  // Deep Analysis (V2: Functional Audit + Landscape Synthesis)
   deep_analysis_mode: AgentMode | string;
   deep_analysis_schedule: ScheduleFrequency | null;
   deep_analysis_last_run: string | null;
-
-  // Strategic Analysis Toggles
-  enable_pricing_analysis: boolean;
-  enable_positioning_analysis: boolean;
-  enable_changes_tracking: boolean;
-  enable_momentum_analysis: boolean;
-  enable_financials_analysis: boolean;
 
   // Intensity Settings
   intensity_similarity_threshold: number;
@@ -742,12 +735,6 @@ export interface CompetitiveAgentConfigUpdate {
 
   deep_analysis_mode?: AgentMode | string;
   deep_analysis_schedule?: ScheduleFrequency;
-
-  enable_pricing_analysis?: boolean;
-  enable_positioning_analysis?: boolean;
-  enable_changes_tracking?: boolean;
-  enable_momentum_analysis?: boolean;
-  enable_financials_analysis?: boolean;
 
   intensity_similarity_threshold?: number;
   intensity_idea_threshold?: number;
@@ -815,97 +802,6 @@ export interface FeatureClusterMember {
  */
 export interface FeatureClusterDetail extends FeatureCluster {
   members: FeatureClusterMember[];
-}
-
-/**
- * Pricing analysis for a competitor.
- */
-export interface PricingAnalysis {
-  id: number;
-  product_competitor_id: number;
-  pricing_model: string | null;
-  has_free_tier: boolean;
-  has_trial: boolean;
-  trial_days: number | null;
-  pricing_tiers: PricingTier[] | null;
-  has_enterprise: boolean;
-  source_url: string | null;
-  confidence: number;
-  analyzed_at: string;
-}
-
-export interface PricingTier {
-  name: string;
-  price: number | string;
-  billing: string;
-  features: string[];
-  limits?: Record<string, unknown>;
-}
-
-/**
- * Positioning analysis for a competitor.
- */
-export interface PositioningAnalysis {
-  id: number;
-  product_competitor_id: number;
-  tagline: string | null;
-  value_propositions: string[] | null;
-  target_audience: string | null;
-  key_differentiators: string[] | null;
-  positioning_statement: string | null;
-  market_segment: string | null;
-  confidence: number;
-  analyzed_at: string;
-}
-
-/**
- * Momentum analysis for a competitor.
- */
-export interface MomentumAnalysis {
-  id: number;
-  product_competitor_id: number;
-  momentum_score: number;
-  momentum_trend: 'rising' | 'stable' | 'declining' | string;
-  customer_growth_trend: string | null;
-  release_velocity: string | null;
-  notable_customers: string[] | null;
-  analysis_summary: string | null;
-  confidence: number;
-  analyzed_at: string;
-}
-
-/**
- * Change event for a competitor.
- */
-export interface ChangeEvent {
-  id: number;
-  product_competitor_id: number;
-  event_type: string;
-  event_title: string;
-  event_description: string | null;
-  event_date: string | null;
-  source_url: string | null;
-  source_type: string;
-  impact_level: 'major' | 'minor' | 'patch' | string;
-  detected_at: string;
-}
-
-/**
- * Financials analysis for a competitor.
- */
-export interface FinancialsAnalysis {
-  id: number;
-  product_competitor_id: number;
-  company_type: 'public' | 'private' | 'startup' | string;
-  total_funding: number | null;
-  funding_stage: string | null;
-  market_cap: number | null;
-  revenue_ttm: number | null;
-  employee_count: number | null;
-  financial_health: 'strong' | 'moderate' | 'weak' | string;
-  analysis_summary: string | null;
-  confidence: number;
-  analyzed_at: string;
 }
 
 /**

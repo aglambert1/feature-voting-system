@@ -2582,6 +2582,18 @@ def landscape_synthesis_task(self, job_id: int):
         }
 
         queue_service.mark_success(job_id, output_data)
+
+        # If this was triggered as part of V2 workflow, mark parent job complete
+        if job.parent_job_id:
+            parent_job = queue_service.get_job(job.parent_job_id)
+            if parent_job and parent_job.status == JobStatus.RUNNING:
+                parent_output = parent_job.output_data or {}
+                parent_output['landscape_synthesis_job_id'] = job_id
+                parent_output['landscape_report_id'] = landscape_report.id
+                parent_output['status'] = 'completed'
+                queue_service.mark_success(job.parent_job_id, parent_output)
+                print(f"[landscape_synthesis_task] Marked parent job {job.parent_job_id} as success")
+
         return output_data
 
     except Exception as e:

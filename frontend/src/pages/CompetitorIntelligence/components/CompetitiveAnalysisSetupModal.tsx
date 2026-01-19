@@ -4,9 +4,11 @@
  * Modal for configuring the Competitive Analysis Agent settings:
  * - Analysis mode: Manual vs Scheduled
  * - Schedule options when scheduled
- * - Strategic analysis component checkboxes (Pricing, Positioning, Changes, Momentum, Financials)
  * - Feature similarity threshold slider
  * - Idea generation threshold slider
+ *
+ * Note: Strategic analysis components (Pricing, Positioning, Changes, Momentum, Financials)
+ * have been deprecated and replaced by the two-step Functional Audit + Landscape Synthesis workflow.
  */
 
 import { useState } from 'react';
@@ -28,13 +30,6 @@ export default function CompetitiveAnalysisSetupModal({ productId, currentConfig
     (currentConfig?.deep_analysis_schedule as 'daily' | 'weekly' | 'monthly') || 'weekly'
   );
 
-  // Strategic analysis toggles
-  const [pricingEnabled, setPricingEnabled] = useState(currentConfig?.enable_pricing_analysis ?? true);
-  const [positioningEnabled, setPositioningEnabled] = useState(currentConfig?.enable_positioning_analysis ?? true);
-  const [changesEnabled, setChangesEnabled] = useState(currentConfig?.enable_changes_tracking ?? true);
-  const [momentumEnabled, setMomentumEnabled] = useState(currentConfig?.enable_momentum_analysis ?? true);
-  const [financialsEnabled, setFinancialsEnabled] = useState(currentConfig?.enable_financials_analysis ?? false);
-
   // Thresholds
   const [similarityThreshold, setSimilarityThreshold] = useState(
     Math.round((currentConfig?.intensity_similarity_threshold || 0.7) * 100)
@@ -54,11 +49,6 @@ export default function CompetitiveAnalysisSetupModal({ productId, currentConfig
       const updatedConfig = await updateAgentConfig(productId, {
         deep_analysis_mode: analysisMode,
         deep_analysis_schedule: schedule,
-        enable_pricing_analysis: pricingEnabled,
-        enable_positioning_analysis: positioningEnabled,
-        enable_changes_tracking: changesEnabled,
-        enable_momentum_analysis: momentumEnabled,
-        enable_financials_analysis: financialsEnabled,
         intensity_similarity_threshold: similarityThreshold / 100,
         intensity_idea_threshold: ideaThreshold,
       });
@@ -138,79 +128,6 @@ export default function CompetitiveAnalysisSetupModal({ productId, currentConfig
               </select>
             </div>
           )}
-
-          {/* Strategic Analysis Components */}
-          <div>
-            <label className="block text-sm font-medium text-gray-900 mb-3">
-              Strategic Analysis Components
-            </label>
-            <div className="space-y-3">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={pricingEnabled}
-                  onChange={(e) => setPricingEnabled(e.target.checked)}
-                  className="h-4 w-4 text-blue-600 rounded"
-                />
-                <div>
-                  <span className="text-sm text-gray-900">Pricing Analysis</span>
-                  <p className="text-xs text-gray-500">Track competitor pricing models, tiers, and trials</p>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={positioningEnabled}
-                  onChange={(e) => setPositioningEnabled(e.target.checked)}
-                  className="h-4 w-4 text-blue-600 rounded"
-                />
-                <div>
-                  <span className="text-sm text-gray-900">Positioning Analysis</span>
-                  <p className="text-xs text-gray-500">Analyze messaging, value props, and target audience</p>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={changesEnabled}
-                  onChange={(e) => setChangesEnabled(e.target.checked)}
-                  className="h-4 w-4 text-blue-600 rounded"
-                />
-                <div>
-                  <span className="text-sm text-gray-900">Changes Tracking</span>
-                  <p className="text-xs text-gray-500">Monitor release notes and feature launches</p>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={momentumEnabled}
-                  onChange={(e) => setMomentumEnabled(e.target.checked)}
-                  className="h-4 w-4 text-blue-600 rounded"
-                />
-                <div>
-                  <span className="text-sm text-gray-900">Momentum Analysis</span>
-                  <p className="text-xs text-gray-500">Track growth signals and customer wins</p>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={financialsEnabled}
-                  onChange={(e) => setFinancialsEnabled(e.target.checked)}
-                  className="h-4 w-4 text-blue-600 rounded"
-                />
-                <div>
-                  <span className="text-sm text-gray-900">Financials Analysis</span>
-                  <p className="text-xs text-gray-500">Track funding, revenue (when available)</p>
-                </div>
-              </label>
-            </div>
-          </div>
 
           {/* Feature Similarity Threshold */}
           <div>

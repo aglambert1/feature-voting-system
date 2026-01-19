@@ -254,38 +254,25 @@ class TestEndToEndWorkflow:
         return MagicMock()
 
     def test_complete_workflow_components_exist(self):
-        """Verify all components of the new architecture exist and are importable."""
-        # Models
+        """Verify all components of the V2 architecture exist and are importable."""
+        # Models (V2 - strategic analysis models removed)
         from app.models.competitive_agent import (
             CompetitiveAgentConfig,
             AgentMode,
             FeatureCluster,
-            FeatureClusterMember,
-            CompetitorPricingAnalysis,
-            CompetitorPositioningAnalysis,
-            CompetitorChangeEvent,
-            CompetitorMomentumAnalysis,
-            CompetitorFinancialsAnalysis
+            FeatureClusterMember
         )
 
         # Services
         from app.services.feature_clustering_service import FeatureClusteringService
 
-        # Agents
-        from app.agents.pricing_analyzer import PricingAnalyzerAgent
-        from app.agents.positioning_analyzer import PositioningAnalyzerAgent
-        from app.agents.changes_tracker import ChangesTrackerAgent
-        from app.agents.momentum_analyzer import MomentumAnalyzerAgent
-        from app.agents.financials_analyzer import FinancialsAnalyzerAgent
+        # Agents (V2 - strategic analysis agents removed)
         from app.agents.intensity_idea_generator import IntensityIdeaGeneratorAgent
 
         # Tasks
         from app.queue.tasks import (
-            deep_analysis_task,
             feature_clustering_task,
             intensity_idea_generation_task,
-            scheduled_deep_analysis_task,
-            aggregate_deep_analysis_results,
             check_scheduled_tasks
         )
 
@@ -299,16 +286,11 @@ class TestEndToEndWorkflow:
         """Verify all new job types are defined."""
         from app.models.queue import JobType
 
+        # Only test for active (non-deprecated) job types
         new_job_types = [
             'DEEP_ANALYSIS',
             'SCHEDULED_DEEP_ANALYSIS',
             'FEATURE_EXTRACTION_ONLY',
-            'STRATEGIC_ANALYSIS_ONLY',
-            'PRICING_ANALYSIS',
-            'POSITIONING_ANALYSIS',
-            'CHANGES_TRACKING',
-            'MOMENTUM_ANALYSIS',
-            'FINANCIALS_ANALYSIS',
             'FEATURE_CLUSTERING',
             'INTENSITY_IDEA_GENERATION'
         ]

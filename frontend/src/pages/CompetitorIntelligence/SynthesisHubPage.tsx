@@ -200,13 +200,13 @@ export default function SynthesisHubPage() {
     if (sourceCount >= 3) {
       return (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-          Three-Way Match
+          Three Sources
         </span>
       );
     } else if (sourceCount === 2) {
       return (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-          Two-Way Match
+          Two Sources
         </span>
       );
     }
@@ -445,11 +445,11 @@ export default function SynthesisHubPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="text-center">
                 <p className="text-3xl font-bold text-red-600">{currentRun.summary_stats.three_way_matches}</p>
-                <p className="text-sm text-gray-500">Three-Way Matches</p>
+                <p className="text-sm text-gray-500">Three Sources</p>
               </div>
               <div className="text-center">
                 <p className="text-3xl font-bold text-yellow-600">{currentRun.summary_stats.two_way_matches}</p>
-                <p className="text-sm text-gray-500">Two-Way Matches</p>
+                <p className="text-sm text-gray-500">Two Sources</p>
               </div>
               <div className="text-center">
                 <p className="text-3xl font-bold text-gray-600">{currentRun.summary_stats.single_source}</p>

@@ -46,10 +46,12 @@ celery_app.conf.update(
     result_expires=3600,  # Results expire after 1 hour
     result_extended=True,  # Store task name and args in result
 
-    # Broker connection settings - prevent stale connections
+    # Broker connection settings
     broker_connection_retry_on_startup=True,  # Retry connection on startup
     broker_connection_max_retries=10,  # Max retries for broker connection
-    broker_pool_limit=None,  # Disable connection pooling (new connection per task)
+    broker_pool_limit=None,  # Disable connection pooling (each connection is new)
+    broker_connection_retry=True,  # Retry failed connections
+    broker_connection_timeout=10,  # Connection timeout in seconds
 
     # Worker settings
     worker_prefetch_multiplier=1,  # One task at a time per worker for fairness

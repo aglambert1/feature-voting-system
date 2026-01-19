@@ -31,6 +31,20 @@ from app.models.idea import Idea, IdeaStatus, SourceType
 from app.services.queue_service import QueueService
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
 
+# Import Celery tasks at module level to ensure broker connection is initialized
+from app.queue.tasks import (
+    discover_competitors_task,
+    analyze_product_task,
+    feature_clustering_task,
+    intensity_idea_generation_task,
+    run_competitive_analysis_v2,
+    functional_audit_task,
+    scheduled_deep_analysis_task,
+    deep_analysis_task,
+    triage_idea_task,
+    landscape_synthesis_task,
+)
+
 
 router = APIRouter(
     prefix="/product-intelligence/agents",
@@ -473,7 +487,7 @@ def update_agent_config(
 # ============================================================================
 
 @router.post("/{product_id}/discover-competitors", response_model=JobResponse)
-def trigger_competitor_discovery(
+async def trigger_competitor_discovery(
     product_id: int,
     current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
@@ -505,7 +519,7 @@ def trigger_competitor_discovery(
 
     # Queue the task - if this fails, rollback the job creation
     try:
-        from app.queue.tasks import discover_competitors_task
+        # Use .delay() - same pattern as working internal_feedback.py
         result = discover_competitors_task.delay(job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
@@ -513,6 +527,9 @@ def trigger_competitor_discovery(
         db.commit()
     except Exception as e:
         db.rollback()
+        import traceback
+        print(f"[discover_competitors] Failed to queue task: {e}")
+        print(f"[discover_competitors] Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
@@ -564,7 +581,6 @@ def trigger_product_reanalysis(
 
     # Queue the task - if this fails, rollback the job creation
     try:
-        from app.queue.tasks import analyze_product_task
         result = analyze_product_task.delay(job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
@@ -624,7 +640,6 @@ def trigger_feature_clustering(
 
     # Queue the task - if this fails, rollback the job creation
     try:
-        from app.queue.tasks import feature_clustering_task
         result = feature_clustering_task.delay(job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
@@ -709,7 +724,6 @@ def trigger_competitive_analysis(
 
     # Queue the task - if this fails, rollback the job creation
     try:
-        from app.queue.tasks import scheduled_deep_analysis_task
         result = scheduled_deep_analysis_task.delay(job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
@@ -849,7 +863,6 @@ def trigger_deep_analysis(
 
     # Queue the task - if this fails, rollback the job creation
     try:
-        from app.queue.tasks import deep_analysis_task
         result = deep_analysis_task.delay(job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
@@ -978,7 +991,6 @@ def create_idea_from_feature(
     )
     db.commit()
 
-    from app.queue.tasks import triage_idea_task
     result = triage_idea_task.delay(job.id)
     job.celery_task_id = result.id
     db.commit()
@@ -1057,7 +1069,6 @@ def create_ideas_from_features(
     db.commit()
 
     # Queue triage tasks
-    from app.queue.tasks import triage_idea_task
     for resp in results:
         triage_idea_task.delay(resp.job_id)
 
@@ -1198,7 +1209,6 @@ def create_idea_from_cluster(
     )
     db.commit()
 
-    from app.queue.tasks import intensity_idea_generation_task
     result = intensity_idea_generation_task.delay(job.id)
     job.celery_task_id = result.id
     db.commit()
@@ -1294,7 +1304,7 @@ def get_financials_analysis(
 # ============================================================================
 
 @router.post("/{product_id}/run-competitive-analysis-v2", response_model=JobResponse)
-def trigger_competitive_analysis_v2(
+async def trigger_competitive_analysis_v2(
     product_id: int,
     current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
@@ -1360,7 +1370,7 @@ def trigger_competitive_analysis_v2(
 
     # Queue the V2 orchestration task
     try:
-        from app.queue.tasks import run_competitive_analysis_v2
+        # Use .delay() - same pattern as working internal_feedback.py
         result = run_competitive_analysis_v2.delay(job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
@@ -1368,6 +1378,9 @@ def trigger_competitive_analysis_v2(
         db.commit()
     except Exception as e:
         db.rollback()
+        import traceback
+        print(f"[run_competitive_analysis_v2] Failed to queue task: {e}")
+        print(f"[run_competitive_analysis_v2] Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
@@ -1423,7 +1436,6 @@ def trigger_functional_audit(
 
     # Queue the task
     try:
-        from app.queue.tasks import functional_audit_task
         result = functional_audit_task.delay(job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
@@ -1680,7 +1692,6 @@ def create_ideas_from_gaps(
     db.commit()
 
     # Queue triage tasks
-    from app.queue.tasks import triage_idea_task
     for resp in results:
         triage_idea_task.delay(resp.job_id)
 
@@ -1931,7 +1942,6 @@ def trigger_landscape_synthesis(
 
     # Queue the task
     try:
-        from app.queue.tasks import landscape_synthesis_task
         result = landscape_synthesis_task.delay(job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
@@ -2120,7 +2130,6 @@ def create_ideas_from_opportunities(
     db.commit()
 
     # Queue triage tasks
-    from app.queue.tasks import triage_idea_task
     for resp in results:
         triage_idea_task.delay(resp.job_id)
 
