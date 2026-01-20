@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../../services/api';
 import Navigation from '../../components/Navigation';
 import { MultiSourceInput } from '../../components/MultiSourceInput';
@@ -24,12 +24,17 @@ interface ProductData {
 export default function AnalyzeProductPage() {
   const { productId } = useParams<{ productId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [product, setProduct] = useState<ProductData | null>(null);
   const [sources, setSources] = useState<ProductSource[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const initialSourcesLoaded = useRef<boolean>(false);
+  const autoAnalyzeTriggered = useRef<boolean>(false);
+
+  // Check if we should auto-analyze (navigated from CreateProductPage)
+  const autoAnalyze = (location.state as { autoAnalyze?: boolean })?.autoAnalyze ?? false;
 
   useEffect(() => {
     if (productId) {
@@ -156,6 +161,14 @@ export default function AnalyzeProductPage() {
       setAnalyzing(false);
     }
   };
+
+  // Auto-trigger analysis if navigated from CreateProductPage
+  useEffect(() => {
+    if (autoAnalyze && sources.length > 0 && !autoAnalyzeTriggered.current && !analyzing) {
+      autoAnalyzeTriggered.current = true;
+      handleAnalyze();
+    }
+  }, [autoAnalyze, sources, analyzing]);
 
   const handleSourcesChange = (newSources: ProductSource[]): void => {
     setSources(newSources);

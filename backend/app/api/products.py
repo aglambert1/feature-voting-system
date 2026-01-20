@@ -282,6 +282,15 @@ def analyze_product(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e)
         )
+    except Exception as e:
+        # Catch all other exceptions to prevent 500 errors with CORS issues
+        import traceback
+        print(f"[API] Error analyzing product {product_id}: {e}")
+        print(f"[API] Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Analysis failed: {str(e)}"
+        )
 
 
 @router.get("", response_model=List[ProductResponse])
