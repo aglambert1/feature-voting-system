@@ -1,12 +1,16 @@
 /**
  * CompetitorReportsTab
  *
- * V2 Competitive Analysis: Displays functional audit reports for each competitor.
- * Includes per-gap idea creation and JSON export functionality.
+ * Unified tab for competitive intelligence:
+ * - Market Discovery section at top for running competitor discovery
+ * - Competitor management section showing ALL competitors with status badges
+ * - Functional audit reports for competitors with reports
+ * - Add Competitor manually option
+ * - Competitor alerts display
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { format } from 'date-fns';
 import {
   getFunctionalReports,
   getFunctionalReport,
@@ -15,12 +19,25 @@ import {
   getGapIdeaStatuses,
   createIdeasFromGaps,
   exportGapsJson,
+  getAgentCompetitors,
+  getAgentConfig,
+  triggerCompetitorDiscovery,
+  updateCompetitorSelection,
+  getCompetitorAlerts,
+  markAlertRead,
+  markAllAlertsRead,
+  CompetitorAlert,
 } from '../../../services/api';
 import type {
   FunctionalReportSummary,
   FunctionalReportDetail,
   BatchIdeaStatusesResponse,
+  AgentCompetitor,
+  CompetitiveAgentConfig,
 } from '../../../types';
+import { JobType } from '../../../types';
+import AgentJobStatus from '../../../components/AgentJobStatus';
+import AddCompetitorModal from './AddCompetitorModal';
 
 interface Props {
   productId: number;
@@ -28,7 +45,13 @@ interface Props {
 }
 
 export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
+  // Competitor data
+  const [competitors, setCompetitors] = useState<AgentCompetitor[]>([]);
   const [reports, setReports] = useState<FunctionalReportSummary[]>([]);
+  const [agentConfig, setAgentConfig] = useState<CompetitiveAgentConfig | null>(null);
+  const [alerts, setAlerts] = useState<CompetitorAlert[]>([]);
+
+  // Loading states
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,26 +63,37 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
   // Gap selection state
   const [selectedGaps, setSelectedGaps] = useState<Set<number>>(new Set());
 
+  // Modal state
+  const [showAddCompetitorModal, setShowAddCompetitorModal] = useState(false);
+
   // Action states
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const fetchReports = useCallback(async () => {
+  const fetchAllData = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await getFunctionalReports(productId);
-      setReports(data);
+      const [competitorsData, reportsData, configData, alertsData] = await Promise.all([
+        getAgentCompetitors(productId),
+        getFunctionalReports(productId),
+        getAgentConfig(productId).catch(() => null),
+        getCompetitorAlerts(productId, true).catch(() => []),
+      ]);
+      setCompetitors(competitorsData);
+      setReports(reportsData);
+      setAgentConfig(configData);
+      setAlerts(alertsData);
       setError(null);
     } catch (err: any) {
-      setError(err.message || 'Failed to load reports');
+      setError(err.message || 'Failed to load data');
     } finally {
       setLoading(false);
     }
   }, [productId]);
 
   useEffect(() => {
-    fetchReports();
-  }, [fetchReports, refreshKey]);
+    fetchAllData();
+  }, [fetchAllData, refreshKey]);
 
   // Clear success message after timeout
   useEffect(() => {
@@ -69,6 +103,63 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     }
   }, [successMessage]);
 
+  // Helper to find report for a competitor
+  const getReportForCompetitor = (competitorId: number): FunctionalReportSummary | undefined => {
+    return reports.find(r => r.product_competitor_id === competitorId);
+  };
+
+  // Discovery handlers
+  const handleRunDiscovery = async () => {
+    try {
+      setActionLoading('discovery');
+      await triggerCompetitorDiscovery(productId);
+      setSuccessMessage('Market Discovery started. Check back shortly for results.');
+      setTimeout(fetchAllData, 2000);
+    } catch (err: any) {
+      setError(err.message || 'Failed to start Market Discovery');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Competitor selection toggle (for deep analysis)
+  const handleToggleDeepAnalysis = async (competitorId: number, currentEnabled: boolean) => {
+    try {
+      setActionLoading(`toggle-${competitorId}`);
+      await updateCompetitorSelection(productId, competitorId, !currentEnabled);
+      // Update local state
+      setCompetitors(prev =>
+        prev.map(c =>
+          c.id === competitorId ? { ...c, deep_analysis_enabled: !currentEnabled } : c
+        )
+      );
+    } catch (err: any) {
+      setError(err.message || 'Failed to update competitor');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Alert handlers
+  const handleDismissAlert = async (alertId: number) => {
+    try {
+      await markAlertRead(productId, alertId);
+      setAlerts(prev => prev.filter(a => a.id !== alertId));
+    } catch (err: any) {
+      setError(err.message || 'Failed to dismiss alert');
+    }
+  };
+
+  const handleDismissAllAlerts = async () => {
+    try {
+      await markAllAlertsRead(productId);
+      setAlerts([]);
+    } catch (err: any) {
+      setError(err.message || 'Failed to dismiss alerts');
+    }
+  };
+
+  // Report handlers
   const handleViewReport = async (competitorId: number) => {
     try {
       setDetailLoading(true);
@@ -97,9 +188,31 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
       setActionLoading(`audit-${competitorId}`);
       await triggerFunctionalAudit(productId, competitorId);
       setSuccessMessage(`Functional audit started for ${competitorName}`);
-      fetchReports();
+      fetchAllData();
     } catch (err: any) {
       setError(err.message || 'Failed to start audit');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRunAuditsForSelected = async () => {
+    const selectedForAnalysis = competitors.filter(c => c.deep_analysis_enabled);
+    if (selectedForAnalysis.length === 0) {
+      setError('No competitors selected for deep analysis');
+      return;
+    }
+
+    try {
+      setActionLoading('batch-audit');
+      // Run audits for all selected competitors
+      await Promise.all(
+        selectedForAnalysis.map(c => triggerFunctionalAudit(productId, c.id))
+      );
+      setSuccessMessage(`Functional audits started for ${selectedForAnalysis.length} competitors`);
+      fetchAllData();
+    } catch (err: any) {
+      setError(err.message || 'Failed to start audits');
     } finally {
       setActionLoading(null);
     }
@@ -204,6 +317,11 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     return Array.from(selectedGaps).filter(idx => gapIdeaStatuses.statuses[idx]?.idea_created).length;
   };
 
+  // Stats
+  const totalCompetitors = competitors.length;
+  const selectedForAnalysis = competitors.filter(c => c.deep_analysis_enabled).length;
+  const competitorsWithReports = reports.length;
+
   if (loading) {
     return (
       <div className="p-6 flex justify-center">
@@ -212,7 +330,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     );
   }
 
-  // Detail View
+  // Detail View (viewing a specific report)
   if (selectedReport) {
     return (
       <div className="p-6">
@@ -223,7 +341,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
               onClick={handleCloseDetail}
               className="text-blue-600 hover:text-blue-800 mb-2 font-medium text-sm"
             >
-              &larr; Back to Reports
+              &larr; Back to Competitors
             </button>
             <h2 className="text-lg font-semibold text-gray-900">
               Functional Audit: {selectedReport.competitor_name}
@@ -434,116 +552,262 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     );
   }
 
-  // List View
+  // Main List View
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h2 className="text-lg font-semibold text-gray-900">Competitor Reports</h2>
-        <p className="text-sm text-gray-500 mt-1">
-          Functional audits compare each competitor's features against your product.
-        </p>
-        <Link
-          to={`/product-intelligence/products/${productId}/competitors`}
-          className="text-sm text-blue-600 hover:text-blue-800 mt-2 inline-block"
-        >
-          Manage competitors in Market Discovery &rarr;
-        </Link>
+    <div className="p-6 space-y-6">
+      {/* Alerts Section */}
+      {alerts.length > 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-medium text-yellow-800 flex items-center gap-2">
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              Alerts
+            </h3>
+            <button
+              onClick={handleDismissAllAlerts}
+              className="text-sm text-yellow-700 hover:text-yellow-900"
+            >
+              Dismiss All
+            </button>
+          </div>
+          <div className="space-y-2">
+            {alerts.map(alert => (
+              <div key={alert.id} className="flex items-center justify-between bg-white rounded p-3 border border-yellow-100">
+                <div>
+                  <span className="text-sm font-medium text-gray-900">{alert.message}</span>
+                  <span className="text-xs text-gray-500 ml-2">
+                    {format(new Date(alert.created_at), 'MMM d, h:mm a')}
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleDismissAlert(alert.id)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Market Discovery Section */}
+      <div className="bg-gray-50 rounded-lg p-4">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-semibold text-gray-900">Market Discovery</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Discover competitors in your market space using AI.
+            </p>
+          </div>
+          <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+            agentConfig?.competitor_discovery_mode === 'scheduled' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+          }`}>
+            {agentConfig?.competitor_discovery_mode === 'scheduled'
+              ? `Scheduled (${agentConfig.competitor_discovery_schedule})`
+              : 'Manual'}
+          </span>
+        </div>
+
+        {/* Job Status */}
+        <AgentJobStatus
+          productId={productId}
+          jobTypes={[JobType.COMPETITOR_DISCOVERY]}
+          onJobComplete={fetchAllData}
+          className="mb-4"
+        />
+
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-gray-600">
+            {totalCompetitors > 0 ? (
+              <span>Found: {totalCompetitors} competitors</span>
+            ) : (
+              <span>No competitors discovered yet</span>
+            )}
+          </div>
+          <button
+            onClick={handleRunDiscovery}
+            disabled={actionLoading === 'discovery'}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm disabled:opacity-50"
+          >
+            {actionLoading === 'discovery' ? 'Starting...' : 'Discover Competitors'}
+          </button>
+        </div>
       </div>
 
+      {/* Error/Success Messages */}
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
           {error}
+          <button onClick={() => setError(null)} className="ml-2 text-red-600 hover:text-red-800">×</button>
         </div>
       )}
 
       {successMessage && (
-        <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
+        <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
           {successMessage}
         </div>
       )}
 
-      {reports.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="text-4xl mb-4">📊</div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No Competitor Reports Available</h3>
-          <p className="text-gray-500 mb-4">
-            Run competitive analysis to generate functional audit reports for each of your tracked competitors.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {reports.map((report) => (
-            <div
-              key={report.id}
-              className="bg-gray-50 border border-gray-200 rounded-lg p-4"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <h3 className="font-medium text-gray-900">{report.competitor_name}</h3>
-                  {report.competitor_url && (
-                    <a
-                      href={report.competitor_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-blue-600 hover:text-blue-800"
-                    >
-                      {report.competitor_url}
-                    </a>
-                  )}
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-center">
-                    <div className="text-lg font-semibold text-gray-900">{report.features_compared}</div>
-                    <div className="text-xs text-gray-500">Features</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-lg font-semibold text-gray-900">{report.gaps_identified}</div>
-                    <div className="text-xs text-gray-500">Gaps</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-sm text-gray-500">
-                      {new Date(report.generated_at).toLocaleDateString()}
-                    </div>
-                    <div className="text-xs text-gray-500">Updated</div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-2 mt-4 justify-end">
-                <button
-                  onClick={() => handleViewReport(report.product_competitor_id)}
-                  disabled={detailLoading}
-                  className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-                >
-                  View Report
-                </button>
-                <button
-                  onClick={() => handleRunAudit(report.product_competitor_id, report.competitor_name)}
-                  disabled={actionLoading === `audit-${report.product_competitor_id}`}
-                  className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
-                >
-                  {actionLoading === `audit-${report.product_competitor_id}` ? 'Running...' : 'Run Audit'}
-                </button>
-                <button
-                  onClick={() => handleExportMd(report.product_competitor_id, report.competitor_name)}
-                  disabled={actionLoading === `export-${report.product_competitor_id}`}
-                  className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
-                >
-                  Export .md
-                </button>
-              </div>
+      {/* Competitor Reports Section */}
+      <div className="bg-white border border-gray-200 rounded-lg">
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-gray-900">Competitor Reports</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Manage competitors and run functional audits.
+              </p>
             </div>
-          ))}
-        </div>
-      )}
+            <div className="text-sm text-gray-500">
+              {totalCompetitors} total | {competitorsWithReports} with reports | {selectedForAnalysis} selected
+            </div>
+          </div>
 
-      {/* Info Box */}
-      <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <p className="text-sm text-blue-800">
-          <span className="font-medium">Tip:</span> Full competitive analysis (all competitors + landscape synthesis)
-          is triggered from the Competitive Analysis Agent card on the Product Dashboard.
-        </p>
+          {/* Actions bar */}
+          <div className="flex gap-3 mt-4">
+            <button
+              onClick={() => setShowAddCompetitorModal(true)}
+              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium text-sm"
+            >
+              Add Competitor
+            </button>
+            <button
+              onClick={handleRunAuditsForSelected}
+              disabled={actionLoading === 'batch-audit' || selectedForAnalysis === 0}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm disabled:opacity-50"
+            >
+              {actionLoading === 'batch-audit' ? 'Starting...' : `Run Audits for Selected (${selectedForAnalysis})`}
+            </button>
+          </div>
+        </div>
+
+        {/* Competitor List */}
+        {competitors.length === 0 ? (
+          <div className="p-8 text-center">
+            <div className="text-4xl mb-4">🔍</div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No Competitors Yet</h3>
+            <p className="text-gray-500 mb-4">
+              Run market discovery above to find competitors, or add one manually.
+            </p>
+            <button
+              onClick={() => setShowAddCompetitorModal(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm"
+            >
+              Add Competitor
+            </button>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-200">
+            {competitors.map((competitor) => {
+              const report = getReportForCompetitor(competitor.id);
+              const hasReport = !!report;
+
+              return (
+                <div key={competitor.id} className="p-4 hover:bg-gray-50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      {/* Selection for deep analysis */}
+                      <input
+                        type="checkbox"
+                        checked={competitor.deep_analysis_enabled}
+                        onChange={() => handleToggleDeepAnalysis(competitor.id, competitor.deep_analysis_enabled)}
+                        disabled={actionLoading === `toggle-${competitor.id}`}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        title="Enable for deep analysis"
+                      />
+
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-medium text-gray-900">{competitor.competitor_name}</h4>
+                          {/* Status badges */}
+                          {hasReport && (
+                            <span className="px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded">
+                              Report Available
+                            </span>
+                          )}
+                          {competitor.deep_analysis_enabled && !hasReport && (
+                            <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded">
+                              Selected for Analysis
+                            </span>
+                          )}
+                          {!competitor.deep_analysis_enabled && (
+                            <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 rounded">
+                              Not Selected
+                            </span>
+                          )}
+                        </div>
+                        {competitor.competitor_url && (
+                          <a
+                            href={competitor.competitor_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-600 hover:text-blue-800"
+                          >
+                            {competitor.competitor_url}
+                          </a>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Stats and Actions */}
+                    <div className="flex items-center gap-4">
+                      {hasReport && (
+                        <>
+                          <div className="text-center">
+                            <div className="text-lg font-semibold text-gray-900">{report.features_compared}</div>
+                            <div className="text-xs text-gray-500">Features</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-lg font-semibold text-gray-900">{report.gaps_identified}</div>
+                            <div className="text-xs text-gray-500">Gaps</div>
+                          </div>
+                        </>
+                      )}
+
+                      <div className="flex gap-2">
+                        {hasReport && (
+                          <button
+                            onClick={() => handleViewReport(competitor.id)}
+                            disabled={detailLoading}
+                            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                          >
+                            View
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleRunAudit(competitor.id, competitor.competitor_name)}
+                          disabled={actionLoading === `audit-${competitor.id}`}
+                          className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
+                        >
+                          {actionLoading === `audit-${competitor.id}` ? 'Running...' : 'Audit'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
+
+      {/* Add Competitor Modal */}
+      {showAddCompetitorModal && (
+        <AddCompetitorModal
+          productId={productId}
+          onAdd={() => {
+            setShowAddCompetitorModal(false);
+            fetchAllData();
+            setSuccessMessage('Competitor added successfully');
+          }}
+          onClose={() => setShowAddCompetitorModal(false)}
+        />
+      )}
     </div>
   );
 }

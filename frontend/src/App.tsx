@@ -26,7 +26,6 @@ import ProductListPage from './pages/CompetitorIntelligence/ProductListPage';
 import CreateProductPage from './pages/CompetitorIntelligence/CreateProductPage';
 import AnalyzeProductPage from './pages/CompetitorIntelligence/AnalyzeProductPage';
 import ProductDetailPage from './pages/CompetitorIntelligence/ProductDetailPage';
-import CompetitorsPage from './pages/CompetitorIntelligence/CompetitorsPage';
 // Legacy pages - kept for hidden route access
 import SessionWorkflowPage from './pages/CompetitorIntelligence/SessionWorkflowPage';
 import ProductDashboardPage from './pages/ProductDashboardPage';
@@ -134,16 +133,6 @@ function App() {
               <ProtectedRoute>
                 <ProductOwnerRoute>
                   <AnalyzeProductPage />
-                </ProductOwnerRoute>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/product-intelligence/products/:productId/competitors"
-            element={
-              <ProtectedRoute>
-                <ProductOwnerRoute>
-                  <CompetitorsPage />
                 </ProductOwnerRoute>
               </ProtectedRoute>
             }

@@ -20,6 +20,8 @@ from app.models.competitor_intelligence import (
     CIProduct, ProductAnalysisHistory, ProductFeature,
     ProductCompetitor, ProductCompetitorFeature, SessionCompetitor, CompetitorFeature
 )
+from app.models.competitive_reports import CompetitorAlert
+from app.models.competitive_agent import CompetitiveAgentConfig
 from app.services.queue_service import QueueService
 from app.services.llm_service import LLMService
 from app.agents.product_analyzer import ProductAnalyzerAgent
@@ -275,9 +277,16 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
         # Update progress
         queue_service.update_progress(job_id, 70.0, "Storing competitors...")
 
+        # Get agent config to check alert settings
+        agent_config = db.query(CompetitiveAgentConfig).filter(
+            CompetitiveAgentConfig.product_id == product_id
+        ).first()
+        alert_on_new = agent_config.alert_on_new_competitors if agent_config else False
+
         # Store discovered competitors
         competitors = result.get('competitors', [])
         competitor_ids = []
+        new_competitor_names = []  # Track newly discovered competitors for alerts
 
         for comp_data in competitors:
             # Check if competitor already exists for this product
@@ -303,6 +312,23 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
                 db.add(new_competitor)
                 db.flush()
                 competitor_ids.append(new_competitor.id)
+                new_competitor_names.append({
+                    'id': new_competitor.id,
+                    'name': new_competitor.competitor_name
+                })
+
+        # Create alerts for newly discovered competitors
+        if alert_on_new and new_competitor_names:
+            for comp in new_competitor_names:
+                alert = CompetitorAlert(
+                    product_id=product_id,
+                    alert_type='new_competitor',
+                    competitor_id=comp['id'],
+                    competitor_name=comp['name'],
+                    message=f"New competitor discovered: {comp['name']}",
+                    is_read=False
+                )
+                db.add(alert)
 
         db.commit()
 

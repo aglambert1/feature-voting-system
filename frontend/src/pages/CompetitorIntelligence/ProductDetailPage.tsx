@@ -23,12 +23,13 @@ import api, {
   getInternalFeedbackThemes,
   getSynthesisStatus,
   getLatestSynthesis,
+  getUnreadAlertCount,
+  getFunctionalReports,
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
 import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, FeatureCluster, TriageSettings, JobType } from '../../types';
 import IdeaTriageSetupModal from './components/IdeaTriageSetupModal';
-import MarketDiscoverySetupModal from './components/MarketDiscoverySetupModal';
-import CompetitiveAnalysisSetupModal from './components/CompetitiveAnalysisSetupModal';
+import CompetitiveIntelligenceSetupModal from './components/CompetitiveIntelligenceSetupModal';
 import AgentJobStatus from '../../components/AgentJobStatus';
 import FeatureQueryChat from './components/FeatureQueryChat';
 
@@ -120,8 +121,12 @@ export default function ProductDetailPage() {
 
   // Modal state
   const [showIdeaTriageSetup, setShowIdeaTriageSetup] = useState(false);
-  const [showMarketDiscoverySetup, setShowMarketDiscoverySetup] = useState(false);
-  const [showCompetitiveAnalysisSetup, setShowCompetitiveAnalysisSetup] = useState(false);
+  const [showCompetitiveIntelligenceSetup, setShowCompetitiveIntelligenceSetup] = useState(false);
+  const [showNoCompetitorsWarning, setShowNoCompetitorsWarning] = useState(false);
+
+  // Competitive intelligence stats
+  const [unreadAlertCount, setUnreadAlertCount] = useState(0);
+  const [functionalReportCount, setFunctionalReportCount] = useState(0);
 
   // Action state
   const [runningAction, setRunningAction] = useState<string | null>(null);
@@ -197,7 +202,9 @@ export default function ProductDetailPage() {
         internalImportsRes,
         internalThemesRes,
         synthesisStatusRes,
-        synthesisResultsRes
+        synthesisResultsRes,
+        alertCountRes,
+        functionalReportsRes
       ] = await Promise.all([
         getProductPendingCounts(numProductId).catch(() => null),
         getAgentConfig(numProductId).catch(() => null),
@@ -210,7 +217,9 @@ export default function ProductDetailPage() {
         getInternalFeedbackImports(numProductId).catch(() => []),
         getInternalFeedbackThemes(numProductId).catch(() => ({ import_id: 0, winloss_themes: [], support_themes: [], analysis_summary: null })),
         getSynthesisStatus(numProductId).catch(() => null),
-        getLatestSynthesis(numProductId).catch(() => null)
+        getLatestSynthesis(numProductId).catch(() => null),
+        getUnreadAlertCount(numProductId).catch(() => ({ count: 0 })),
+        getFunctionalReports(numProductId).catch(() => [])
       ]);
 
       setPendingCounts(pendingCountsRes);
@@ -219,6 +228,8 @@ export default function ProductDetailPage() {
       setClusters(clustersRes);
       setTriageSettings(triageRes);
       setAnalysisHistory(historyRes);
+      setUnreadAlertCount(alertCountRes?.count || 0);
+      setFunctionalReportCount(functionalReportsRes?.length || 0);
 
       // Set internal feedback stats
       setInternalFeedbackStats({
@@ -313,6 +324,7 @@ export default function ProductDetailPage() {
   const handleRunMarketDiscovery = async () => {
     if (!productId) return;
     setRunningAction('market-discovery');
+    setShowNoCompetitorsWarning(false);
     try {
       await triggerCompetitorDiscovery(parseInt(productId));
       setActionMessage({ type: 'success', text: 'Market Discovery started. Check back shortly for results.' });
@@ -325,15 +337,26 @@ export default function ProductDetailPage() {
     }
   };
 
-  const handleRunCompetitiveAnalysis = async () => {
+  const handleRunAllNow = async () => {
     if (!productId) return;
-    setRunningAction('competitive-analysis');
+
+    // Check if any competitors are selected for deep analysis
+    const selectedForAnalysis = competitors.filter(c => c.deep_analysis_enabled).length;
+    if (selectedForAnalysis === 0) {
+      setShowNoCompetitorsWarning(true);
+      return;
+    }
+
+    // Run full pipeline: discovery → analysis → synthesis
+    setRunningAction('run-all');
     try {
+      // First trigger discovery, then analysis (V2 includes synthesis)
+      await triggerCompetitorDiscovery(parseInt(productId));
       await triggerCompetitiveAnalysisV2(parseInt(productId));
-      setActionMessage({ type: 'success', text: 'V2 Competitive Analysis started. Functional audits for all competitors will run, followed by landscape synthesis.' });
+      setActionMessage({ type: 'success', text: 'Full competitive intelligence pipeline started: Discovery → Functional Audits → Landscape Synthesis' });
       setTimeout(fetchAllData, 2000);
     } catch (err: any) {
-      const errorDetail = err.response?.data?.detail || err.message || 'Failed to start Competitive Analysis';
+      const errorDetail = err.response?.data?.detail || err.message || 'Failed to start competitive intelligence pipeline';
       setActionMessage({ type: 'error', text: errorDetail });
     } finally {
       setRunningAction(null);
@@ -484,115 +507,77 @@ export default function ProductDetailPage() {
             </div>
           </div>
 
-          {/* Market Discovery Agent Tile */}
+          {/* Competitive Intelligence Agent Tile (Combined) */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-gray-900">Market Discovery Agent</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-gray-900">Competitive Intelligence Agent</h3>
+                {unreadAlertCount > 0 && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded-full">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
+                    </svg>
+                    {unreadAlertCount}
+                  </span>
+                )}
+              </div>
               <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                agentConfig?.competitor_discovery_mode === 'scheduled' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                agentConfig?.competitor_discovery_mode === 'scheduled' || agentConfig?.deep_analysis_mode === 'scheduled'
+                  ? 'bg-green-100 text-green-800'
+                  : 'bg-gray-100 text-gray-600'
               }`}>
-                {agentConfig?.competitor_discovery_mode === 'scheduled' ? 'Automatic' : 'Manual'}
+                {agentConfig?.competitor_discovery_mode === 'scheduled' || agentConfig?.deep_analysis_mode === 'scheduled'
+                  ? 'Scheduled'
+                  : 'Manual'}
               </span>
             </div>
 
             <div className="space-y-3">
-              {/* Job Status */}
+              {/* Job Status - shows all competitive intelligence jobs */}
               <AgentJobStatus
                 productId={parseInt(productId!)}
-                jobTypes={[JobType.COMPETITOR_DISCOVERY]}
+                jobTypes={[
+                  JobType.COMPETITOR_DISCOVERY,
+                  JobType.FEATURE_CLUSTERING,
+                  JobType.DEEP_ANALYSIS,
+                  JobType.SCHEDULED_DEEP_ANALYSIS
+                ]}
                 onJobComplete={fetchAllData}
               />
 
+              {/* Stats */}
               <div className="text-sm text-gray-600">
-                {totalCompetitors > 0 ? (
-                  <Link
-                    to={`/product-intelligence/products/${productId}/competitors`}
-                    className="text-blue-600 hover:text-blue-800 font-medium"
-                  >
-                    {totalCompetitors} competitors discovered{newCompetitors > 0 && `; ${newCompetitors} new`} →
-                  </Link>
-                ) : (
-                  <span className="text-gray-500">No competitors discovered</span>
-                )}
+                {totalCompetitors} competitors discovered
               </div>
 
               <div className="text-sm text-gray-500">
-                {trackingCompetitors} competitors selected for deep analysis
+                {trackingCompetitors} selected for deep analysis
+              </div>
+
+              <div className="text-sm text-gray-500">
+                {functionalReportCount} functional reports available
+              </div>
+
+              {/* Actions */}
+              <div className="pt-2 border-t border-gray-100">
+                <Link
+                  to={`/product-intelligence/products/${productId}/intelligence?tab=competitor-reports`}
+                  className="text-blue-600 hover:text-blue-800 font-medium text-sm"
+                >
+                  View Reports →
+                </Link>
               </div>
 
               <div className="flex gap-2">
                 <button
-                  onClick={handleRunMarketDiscovery}
-                  disabled={runningAction === 'market-discovery'}
+                  onClick={handleRunAllNow}
+                  disabled={runningAction === 'run-all' || runningAction === 'market-discovery'}
                   className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
                 >
-                  {runningAction === 'market-discovery' ? 'Running...' : 'Run Now'}
+                  {runningAction === 'run-all' || runningAction === 'market-discovery' ? 'Running...' : 'Run All Now'}
                 </button>
                 <button
-                  onClick={() => setShowMarketDiscoverySetup(true)}
-                  className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
-                >
-                  Setup
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Competitive Discovery Agent Tile */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-gray-900">Competitive Discovery Agent</h3>
-              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                agentConfig?.deep_analysis_mode === 'scheduled' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
-              }`}>
-                {agentConfig?.deep_analysis_mode === 'scheduled' ? 'Automatic' : 'Manual'}
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {/* Job Status */}
-              <AgentJobStatus
-                productId={parseInt(productId!)}
-                jobTypes={[JobType.FEATURE_CLUSTERING, JobType.DEEP_ANALYSIS, JobType.SCHEDULED_DEEP_ANALYSIS]}
-                onJobComplete={fetchAllData}
-              />
-
-              <div className="text-sm text-gray-600">
-                {(pendingCounts?.competitive_alerts || 0) > 0 ? (
-                  <Link
-                    to={`/product-intelligence/products/${productId}/intelligence?tab=competitor-reports`}
-                    className="text-blue-600 hover:text-blue-800 font-medium"
-                  >
-                    {pendingCounts?.competitive_alerts} new competitive alerts →
-                  </Link>
-                ) : (
-                  <Link
-                    to={`/product-intelligence/products/${productId}/intelligence?tab=competitor-reports`}
-                    className="text-blue-600 hover:text-blue-800 font-medium"
-                  >
-                    Go to Report →
-                  </Link>
-                )}
-              </div>
-
-              <div className="text-sm text-gray-500">
-                {totalFeatures} competitive features extracted
-              </div>
-
-              <div className="text-sm text-gray-500">
-                {totalClusters} feature clusters; {ideasFromClusters} ideas created
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={handleRunCompetitiveAnalysis}
-                  disabled={runningAction === 'competitive-analysis'}
-                  className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
-                >
-                  {runningAction === 'competitive-analysis' ? 'Running...' : 'Run Now'}
-                </button>
-                <button
-                  onClick={() => setShowCompetitiveAnalysisSetup(true)}
+                  onClick={() => setShowCompetitiveIntelligenceSetup(true)}
                   className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
                 >
                   Setup
@@ -1026,28 +1011,45 @@ export default function ProductDetailPage() {
         />
       )}
 
-      {showMarketDiscoverySetup && (
-        <MarketDiscoverySetupModal
+      {showCompetitiveIntelligenceSetup && (
+        <CompetitiveIntelligenceSetupModal
           productId={parseInt(productId!)}
           currentConfig={agentConfig}
-          onClose={() => setShowMarketDiscoverySetup(false)}
+          onClose={() => setShowCompetitiveIntelligenceSetup(false)}
           onSave={(config) => {
             setAgentConfig(config);
-            setShowMarketDiscoverySetup(false);
+            setShowCompetitiveIntelligenceSetup(false);
           }}
         />
       )}
 
-      {showCompetitiveAnalysisSetup && (
-        <CompetitiveAnalysisSetupModal
-          productId={parseInt(productId!)}
-          currentConfig={agentConfig}
-          onClose={() => setShowCompetitiveAnalysisSetup(false)}
-          onSave={(config) => {
-            setAgentConfig(config);
-            setShowCompetitiveAnalysisSetup(false);
-          }}
-        />
+      {/* Warning modal when no competitors selected */}
+      {showNoCompetitorsWarning && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">
+              No Competitors Selected
+            </h3>
+            <p className="text-gray-600 mb-6">
+              No competitors are currently selected for deep analysis. Would you like to run market discovery first to find competitors?
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleRunMarketDiscovery}
+                disabled={runningAction === 'market-discovery'}
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
+              >
+                {runningAction === 'market-discovery' ? 'Running...' : 'Run Discovery Only'}
+              </button>
+              <button
+                onClick={() => setShowNoCompetitorsWarning(false)}
+                className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

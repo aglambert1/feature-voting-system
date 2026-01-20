@@ -34,7 +34,8 @@ from app.schemas.internal_feedback import (
 from app.services.queue_service import QueueService
 from app.models.queue import JobType, JobStatus
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
-from app.queue.tasks import internal_discovery_task
+# Thread-safe task dispatch (see app/utils/celery_utils.py for explanation)
+from app.utils.celery_utils import send_celery_task as send_task
 
 
 router = APIRouter(
@@ -158,7 +159,7 @@ async def upload_internal_feedback(
         )
 
         # Dispatch to Celery
-        celery_result = internal_discovery_task.delay(job.id)
+        celery_result = send_task('internal_discovery_task', job.id)
         queue_service.mark_queued(job.id, celery_result.id)
 
         import_record.job_uuid = job.job_uuid
@@ -471,7 +472,7 @@ async def reprocess_import(
         )
 
         # Dispatch to Celery
-        celery_result = internal_discovery_task.delay(job.id)
+        celery_result = send_task('internal_discovery_task', job.id)
         queue_service.mark_queued(job.id, celery_result.id)
 
         import_record.job_uuid = job.job_uuid

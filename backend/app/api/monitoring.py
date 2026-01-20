@@ -462,7 +462,7 @@ def trigger_monitoring(
     check_product_permission(db, current_user, product_id, ProductPermissionLevel.EDIT)
 
     # Import here to avoid circular imports
-    from app.queue.tasks import monitor_competitors_task
+    from app.utils.celery_utils import send_celery_task as send_task
     from app.models.queue import QueueJob, JobType, JobStatus
 
     # Create queue job
@@ -483,10 +483,11 @@ def trigger_monitoring(
 
     # Queue the Celery task
     try:
-        result = monitor_competitors_task.delay(
-            job_id=job.id,
-            product_id=product_id,
-            force_full=force_full
+        result = send_task(
+            'monitor_competitors_task',
+            job.id,
+            product_id,
+            force_full
         )
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED

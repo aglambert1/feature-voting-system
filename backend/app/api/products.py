@@ -30,13 +30,8 @@ from app.services.document_parsing_service import DocumentParsingService
 from app.services.vector_service import VectorService
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
 
-# Import Celery tasks at module level to ensure broker connection is initialized
-from app.queue.tasks import (
-    analyze_product_task,
-    discover_competitors_task,
-    extract_features_parallel,
-    extract_features_task,
-)
+# Thread-safe task dispatch (see app/utils/celery_utils.py for explanation)
+from app.utils.celery_utils import send_celery_task as send_task
 
 
 # Create router with /product-intelligence/products prefix
@@ -1289,7 +1284,7 @@ def queue_product_analysis(
 
     # Queue the Celery task
     try:
-        celery_result = analyze_product_task.delay(job.id)
+        celery_result = send_task('analyze_product_task', job.id)
         queue_service.mark_queued(job.id, celery_result.id)
     except Exception as e:
         queue_service.mark_failure(job.id, f"Failed to queue task: {str(e)}")
@@ -1764,7 +1759,7 @@ def queue_competitor_discovery(
 
     # Queue the Celery task
     try:
-        celery_result = discover_competitors_task.delay(job.id)
+        celery_result = send_task('discover_competitors_task', job.id)
         queue_service.mark_queued(job.id, celery_result.id)
     except Exception as e:
         queue_service.mark_failure(job.id, f"Failed to queue task: {str(e)}")
@@ -1879,10 +1874,10 @@ def queue_feature_extraction(
     # Queue the Celery task
     try:
         if request.parallel:
-            celery_result = extract_features_parallel.delay(job.id, valid_ids)
+            celery_result = send_task('extract_features_parallel', job.id, valid_ids)
         else:
             # Sequential execution (first competitor only for single task)
-            celery_result = extract_features_task.delay(job.id, valid_ids[0])
+            celery_result = send_task('extract_features_task', job.id, valid_ids[0])
         queue_service.mark_queued(job.id, celery_result.id)
     except Exception as e:
         queue_service.mark_failure(job.id, f"Failed to queue task: {str(e)}")

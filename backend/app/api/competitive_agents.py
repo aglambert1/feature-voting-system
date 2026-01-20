@@ -25,25 +25,14 @@ from app.models.competitive_agent import (
     CompetitiveAgentConfig, AgentMode, FeatureCluster, FeatureClusterMember
 )
 from app.models.competitive_reports import (
-    CompetitorFunctionalReport, LandscapeOpportunityReport
+    CompetitorFunctionalReport, LandscapeOpportunityReport, CompetitorAlert
 )
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.services.queue_service import QueueService
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
 
-# Import Celery tasks at module level to ensure broker connection is initialized
-from app.queue.tasks import (
-    discover_competitors_task,
-    analyze_product_task,
-    feature_clustering_task,
-    intensity_idea_generation_task,
-    run_competitive_analysis_v2,
-    functional_audit_task,
-    scheduled_deep_analysis_task,
-    deep_analysis_task,
-    triage_idea_task,
-    landscape_synthesis_task,
-)
+# Thread-safe task dispatch (see app/utils/celery_utils.py for explanation)
+from app.utils.celery_utils import send_celery_task as send_task
 
 
 router = APIRouter(
@@ -141,6 +130,27 @@ class FeatureResponse(BaseModel):
 class CreateIdeasRequest(BaseModel):
     """Request to create ideas from selected features."""
     feature_ids: List[int] = Field(..., min_length=1, max_length=20)
+
+
+class AddCompetitorRequest(BaseModel):
+    """Request to manually add a competitor."""
+    competitor_name: str = Field(..., min_length=2, max_length=255)
+    competitor_url: str = Field(..., min_length=5, max_length=500)
+
+
+class CompetitorAlertResponse(BaseModel):
+    """Response schema for competitor alert."""
+    id: int
+    product_id: int
+    alert_type: str
+    competitor_id: Optional[int]
+    competitor_name: str
+    message: str
+    is_read: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class FeatureClusterResponse(BaseModel):
@@ -483,6 +493,105 @@ def update_agent_config(
 
 
 # ============================================================================
+# Competitor Alerts
+# ============================================================================
+
+@router.get("/{product_id}/alerts", response_model=List[CompetitorAlertResponse])
+def get_competitor_alerts(
+    product_id: int,
+    unread_only: bool = Query(False, description="Only return unread alerts"),
+    limit: int = Query(50, le=100, description="Max alerts to return"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get competitor alerts for a product."""
+    verify_product_access(db, product_id, current_user)
+
+    query = db.query(CompetitorAlert).filter(
+        CompetitorAlert.product_id == product_id
+    )
+
+    if unread_only:
+        query = query.filter(CompetitorAlert.is_read == False)
+
+    alerts = query.order_by(CompetitorAlert.created_at.desc()).limit(limit).all()
+
+    return [CompetitorAlertResponse(
+        id=a.id,
+        product_id=a.product_id,
+        alert_type=a.alert_type,
+        competitor_id=a.competitor_id,
+        competitor_name=a.competitor_name,
+        message=a.message,
+        is_read=a.is_read,
+        created_at=a.created_at
+    ) for a in alerts]
+
+
+@router.get("/{product_id}/alerts/count")
+def get_unread_alert_count(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get count of unread alerts for a product."""
+    verify_product_access(db, product_id, current_user)
+
+    count = db.query(func.count(CompetitorAlert.id)).filter(
+        CompetitorAlert.product_id == product_id,
+        CompetitorAlert.is_read == False
+    ).scalar()
+
+    return {"unread_count": count}
+
+
+@router.post("/{product_id}/alerts/{alert_id}/read")
+def mark_alert_read(
+    product_id: int,
+    alert_id: int,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """Mark an alert as read."""
+    verify_product_access(db, product_id, current_user)
+
+    alert = db.query(CompetitorAlert).filter(
+        CompetitorAlert.id == alert_id,
+        CompetitorAlert.product_id == product_id
+    ).first()
+
+    if not alert:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Alert {alert_id} not found"
+        )
+
+    alert.is_read = True
+    db.commit()
+
+    return {"message": f"Alert {alert_id} marked as read"}
+
+
+@router.post("/{product_id}/alerts/read-all")
+def mark_all_alerts_read(
+    product_id: int,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """Mark all alerts as read for a product."""
+    verify_product_access(db, product_id, current_user)
+
+    updated = db.query(CompetitorAlert).filter(
+        CompetitorAlert.product_id == product_id,
+        CompetitorAlert.is_read == False
+    ).update({CompetitorAlert.is_read: True})
+
+    db.commit()
+
+    return {"message": f"Marked {updated} alert(s) as read"}
+
+
+# ============================================================================
 # Product-Level Triggers
 # ============================================================================
 
@@ -519,8 +628,7 @@ async def trigger_competitor_discovery(
 
     # Queue the task - if this fails, rollback the job creation
     try:
-        # Use .delay() - same pattern as working internal_feedback.py
-        result = discover_competitors_task.delay(job.id)
+        result = send_task('discover_competitors_task', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
         job.queued_at = datetime.utcnow()
@@ -581,7 +689,7 @@ def trigger_product_reanalysis(
 
     # Queue the task - if this fails, rollback the job creation
     try:
-        result = analyze_product_task.delay(job.id)
+        result = send_task('analyze_product_task', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
         job.queued_at = datetime.utcnow()
@@ -640,7 +748,7 @@ def trigger_feature_clustering(
 
     # Queue the task - if this fails, rollback the job creation
     try:
-        result = feature_clustering_task.delay(job.id)
+        result = send_task('feature_clustering_task', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
         job.queued_at = datetime.utcnow()
@@ -724,7 +832,7 @@ def trigger_competitive_analysis(
 
     # Queue the task - if this fails, rollback the job creation
     try:
-        result = scheduled_deep_analysis_task.delay(job.id)
+        result = send_task('scheduled_deep_analysis_task', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
         job.queued_at = datetime.utcnow()
@@ -823,6 +931,66 @@ def disable_deep_analysis(
     return {"message": f"Deep analysis disabled for competitor {competitor_id}"}
 
 
+@router.post("/{product_id}/competitors/add")
+def add_competitor_manually(
+    product_id: int,
+    request: AddCompetitorRequest,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Manually add a competitor not found via market discovery.
+
+    Validates name+URL uniqueness within this product.
+    Automatically enables deep analysis for manually added competitors.
+    """
+    verify_product_access(db, product_id, current_user)
+
+    # Check uniqueness within product - name OR URL must be unique
+    existing_name = db.query(ProductCompetitor).filter(
+        ProductCompetitor.product_id == product_id,
+        ProductCompetitor.competitor_name == request.competitor_name,
+        ProductCompetitor.status == 'active'
+    ).first()
+    if existing_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A competitor named '{request.competitor_name}' already exists for this product"
+        )
+
+    existing_url = db.query(ProductCompetitor).filter(
+        ProductCompetitor.product_id == product_id,
+        ProductCompetitor.competitor_url == request.competitor_url,
+        ProductCompetitor.status == 'active'
+    ).first()
+    if existing_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A competitor with URL '{request.competitor_url}' already exists for this product"
+        )
+
+    # Create the competitor
+    competitor = ProductCompetitor(
+        product_id=product_id,
+        competitor_name=request.competitor_name,
+        competitor_url=request.competitor_url,
+        competitor_description=f"Manually added by {current_user.email}",
+        deep_analysis_enabled=True,  # Auto-enable for manually added
+        status='active'
+    )
+    db.add(competitor)
+    db.commit()
+    db.refresh(competitor)
+
+    return {
+        "id": competitor.id,
+        "competitor_name": competitor.competitor_name,
+        "competitor_url": competitor.competitor_url,
+        "deep_analysis_enabled": competitor.deep_analysis_enabled,
+        "message": f"Competitor '{competitor.competitor_name}' added successfully"
+    }
+
+
 # ============================================================================
 # Per-Competitor Deep Analysis
 # ============================================================================
@@ -863,7 +1031,7 @@ def trigger_deep_analysis(
 
     # Queue the task - if this fails, rollback the job creation
     try:
-        result = deep_analysis_task.delay(job.id)
+        result = send_task('deep_analysis_task', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
         job.queued_at = datetime.utcnow()
@@ -991,7 +1159,7 @@ def create_idea_from_feature(
     )
     db.commit()
 
-    result = triage_idea_task.delay(job.id)
+    result = send_task('triage_idea_task', job.id)
     job.celery_task_id = result.id
     db.commit()
 
@@ -1070,7 +1238,7 @@ def create_ideas_from_features(
 
     # Queue triage tasks
     for resp in results:
-        triage_idea_task.delay(resp.job_id)
+        send_task('triage_idea_task', resp.job_id)
 
     return results
 
@@ -1209,7 +1377,7 @@ def create_idea_from_cluster(
     )
     db.commit()
 
-    result = intensity_idea_generation_task.delay(job.id)
+    result = send_task('intensity_idea_generation_task', job.id)
     job.celery_task_id = result.id
     db.commit()
 
@@ -1370,8 +1538,7 @@ async def trigger_competitive_analysis_v2(
 
     # Queue the V2 orchestration task
     try:
-        # Use .delay() - same pattern as working internal_feedback.py
-        result = run_competitive_analysis_v2.delay(job.id)
+        result = send_task('run_competitive_analysis_v2', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
         job.queued_at = datetime.utcnow()
@@ -1436,7 +1603,7 @@ def trigger_functional_audit(
 
     # Queue the task
     try:
-        result = functional_audit_task.delay(job.id)
+        result = send_task('functional_audit_task', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
         job.queued_at = datetime.utcnow()
@@ -1693,7 +1860,7 @@ def create_ideas_from_gaps(
 
     # Queue triage tasks
     for resp in results:
-        triage_idea_task.delay(resp.job_id)
+        send_task('triage_idea_task', resp.job_id)
 
     # Add note about skipped gaps to last result
     if skipped and results:
@@ -1942,7 +2109,7 @@ def trigger_landscape_synthesis(
 
     # Queue the task
     try:
-        result = landscape_synthesis_task.delay(job.id)
+        result = send_task('landscape_synthesis_task', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
         job.queued_at = datetime.utcnow()
@@ -2131,7 +2298,7 @@ def create_ideas_from_opportunities(
 
     # Queue triage tasks
     for resp in results:
-        triage_idea_task.delay(resp.job_id)
+        send_task('triage_idea_task', resp.job_id)
 
     # Add note about skipped opportunities to last result
     if skipped and results:

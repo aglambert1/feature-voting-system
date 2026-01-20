@@ -250,7 +250,7 @@ async def submit_idea(
 
     # Queue triage job to run agent analysis in background
     try:
-        from app.queue.tasks import triage_idea_task
+        from app.utils.celery_utils import send_celery_task as send_task
 
         queue_service = QueueService(db)
         job = queue_service.create_job(
@@ -264,7 +264,7 @@ async def submit_idea(
         )
 
         # Queue the triage task
-        celery_result = triage_idea_task.delay(job.id)
+        celery_result = send_task('triage_idea_task', job.id)
         queue_service.mark_queued(job.id, celery_result.id)
         print(f"✓ Queued triage job {job.id} for idea {new_idea.id}")
     except Exception as e:

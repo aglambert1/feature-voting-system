@@ -783,7 +783,7 @@ def submit_idea_with_triage(
 
     Returns a job ID for tracking progress.
     """
-    from app.queue.tasks import submit_and_triage_idea_task
+    from app.utils.celery_utils import send_celery_task as send_task
 
     # Check permission (VIEW is sufficient to submit ideas)
     product = check_product_permission(db, current_user, request.product_id, ProductPermissionLevel.VIEW)
@@ -834,7 +834,7 @@ def submit_idea_with_triage(
 
     # Queue the task
     try:
-        celery_result = submit_and_triage_idea_task.delay(job.id)
+        celery_result = send_task('submit_and_triage_idea_task', job.id)
         queue_service.mark_queued(job.id, celery_result.id)
     except Exception as e:
         queue_service.mark_failure(job.id, f"Failed to queue task: {str(e)}")
@@ -867,7 +867,7 @@ def create_idea_from_feature(
 
     Requires EDIT permission on the product.
     """
-    from app.queue.tasks import submit_and_triage_idea_task
+    from app.utils.celery_utils import send_celery_task as send_task
     from app.models.competitor_intelligence import ProductCompetitorFeature, ProductCompetitor
 
     # Check permission
@@ -921,7 +921,7 @@ def create_idea_from_feature(
 
     # Queue the task
     try:
-        celery_result = submit_and_triage_idea_task.delay(job.id)
+        celery_result = send_task('submit_and_triage_idea_task', job.id)
         queue_service.mark_queued(job.id, celery_result.id)
     except Exception as e:
         queue_service.mark_failure(job.id, f"Failed to queue task: {str(e)}")

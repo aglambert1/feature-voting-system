@@ -9,16 +9,20 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   getLandscapeReport,
   triggerLandscapeSynthesis,
+  triggerCompetitiveAnalysisV2,
   exportLandscapeReportMd,
   getOpportunityIdeaStatuses,
   createIdeasFromOpportunities,
   exportOpportunitiesJson,
   getFunctionalReports,
+  getAgentCompetitors,
 } from '../../../services/api';
 import type {
   LandscapeReportDetail,
   BatchIdeaStatusesResponse,
   FeatureOpportunity,
+  AgentCompetitor,
+  FunctionalReportSummary,
 } from '../../../types';
 import FeatureOpportunityCard from './FeatureOpportunityCard';
 
@@ -42,6 +46,10 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
   const [functionalReportCount, setFunctionalReportCount] = useState<number>(0);
   const [totalFunctionalReports, setTotalFunctionalReports] = useState<number>(0);
 
+  // Competitors data for warning modal
+  const [competitors, setCompetitors] = useState<AgentCompetitor[]>([]);
+  const [functionalReports, setFunctionalReports] = useState<FunctionalReportSummary[]>([]);
+
   // Selection state
   const [selectedOpportunities, setSelectedOpportunities] = useState<Set<number>>(new Set());
 
@@ -49,19 +57,26 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Warning modal state
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [competitorsWithoutReports, setCompetitorsWithoutReports] = useState<AgentCompetitor[]>([]);
+
   // Collapsible sections
   const [showMatrix, setShowMatrix] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [reportData, reportsData] = await Promise.all([
+      const [reportData, reportsData, competitorsData] = await Promise.all([
         getLandscapeReport(productId),
         getFunctionalReports(productId),
+        getAgentCompetitors(productId),
       ]);
       setReport(reportData);
       setFunctionalReportCount(reportData?.competitor_count || 0);
       setTotalFunctionalReports(reportsData.length);
+      setFunctionalReports(reportsData);
+      setCompetitors(competitorsData);
 
       if (reportData) {
         const statuses = await getOpportunityIdeaStatuses(productId);
@@ -87,7 +102,24 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
     }
   }, [successMessage]);
 
-  const handleRunSynthesis = async () => {
+  // Check if any selected competitors are missing reports
+  const getCompetitorsWithoutReports = (): AgentCompetitor[] => {
+    const reportCompetitorIds = new Set(functionalReports.map(r => r.product_competitor_id));
+    return competitors.filter(c => c.deep_analysis_enabled && !reportCompetitorIds.has(c.id));
+  };
+
+  const handleRunSynthesisClick = () => {
+    const missing = getCompetitorsWithoutReports();
+    if (missing.length > 0) {
+      setCompetitorsWithoutReports(missing);
+      setShowWarningModal(true);
+    } else {
+      handleRunSynthesisOnly();
+    }
+  };
+
+  const handleRunSynthesisOnly = async () => {
+    setShowWarningModal(false);
     try {
       setActionLoading('synthesis');
       await triggerLandscapeSynthesis(productId);
@@ -95,6 +127,20 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
       // Note: We don't immediately refresh since it's async
     } catch (err: any) {
       setError(err.message || 'Failed to start synthesis');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRunAuditsThenSynthesize = async () => {
+    setShowWarningModal(false);
+    try {
+      setActionLoading('audits-then-synthesis');
+      // V2 analysis runs audits for all selected competitors then synthesizes
+      await triggerCompetitiveAnalysisV2(productId);
+      setSuccessMessage('Running functional audits for missing competitors, followed by landscape synthesis');
+    } catch (err: any) {
+      setError(err.message || 'Failed to start analysis');
     } finally {
       setActionLoading(null);
     }
@@ -244,16 +290,16 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
         )}
         <div className="flex gap-3 justify-center">
           <button
-            onClick={handleRunSynthesis}
-            disabled={actionLoading === 'synthesis' || totalFunctionalReports === 0}
+            onClick={handleRunSynthesisClick}
+            disabled={actionLoading === 'synthesis' || actionLoading === 'audits-then-synthesis' || totalFunctionalReports === 0}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
           >
-            {actionLoading === 'synthesis' ? 'Starting...' : 'Run Synthesis Only'}
+            {actionLoading === 'synthesis' || actionLoading === 'audits-then-synthesis' ? 'Starting...' : 'Run Landscape Analysis'}
           </button>
         </div>
         {totalFunctionalReports > 0 && (
           <p className="text-xs text-gray-500 mt-2">
-            "Run Synthesis Only" uses existing competitor reports.
+            Uses existing competitor reports for synthesis.
           </p>
         )}
       </div>
@@ -463,6 +509,70 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
             </div>
           )}
         </section>
+      )}
+
+      {/* Warning Modal for Missing Reports */}
+      {showWarningModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">
+              Some Competitors Not Yet Analyzed
+            </h3>
+            <p className="text-gray-600 mb-4">
+              {competitorsWithoutReports.length} competitor{competitorsWithoutReports.length !== 1 ? 's' : ''} selected
+              for deep analysis do not have functional audit reports yet:
+            </p>
+
+            <ul className="mb-4 space-y-1 text-sm text-gray-700">
+              {competitorsWithoutReports.slice(0, 5).map(c => (
+                <li key={c.id} className="flex items-center gap-2">
+                  <span className="text-gray-400">•</span>
+                  {c.competitor_name}
+                </li>
+              ))}
+              {competitorsWithoutReports.length > 5 && (
+                <li className="text-gray-500">
+                  ...and {competitorsWithoutReports.length - 5} more
+                </li>
+              )}
+            </ul>
+
+            <p className="text-sm text-gray-500 mb-6">
+              The landscape synthesis will not include these competitors. What would you like to do?
+            </p>
+
+            <div className="space-y-3">
+              <button
+                onClick={handleRunAuditsThenSynthesize}
+                disabled={actionLoading === 'audits-then-synthesis'}
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
+              >
+                {actionLoading === 'audits-then-synthesis' ? 'Starting...' : 'Run Audits First, Then Synthesize'}
+              </button>
+              <p className="text-xs text-gray-500 text-center">
+                Run functional audits for missing competitors, then automatically run landscape synthesis.
+              </p>
+
+              <button
+                onClick={handleRunSynthesisOnly}
+                disabled={actionLoading === 'synthesis'}
+                className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
+              >
+                {actionLoading === 'synthesis' ? 'Starting...' : `Synthesize Without Them (${functionalReports.length} reports)`}
+              </button>
+              <p className="text-xs text-gray-500 text-center">
+                Proceed using only the {functionalReports.length} available report{functionalReports.length !== 1 ? 's' : ''}.
+              </p>
+
+              <button
+                onClick={() => setShowWarningModal(false)}
+                className="w-full px-4 py-2 text-gray-500 hover:text-gray-700 font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

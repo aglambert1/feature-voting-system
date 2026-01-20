@@ -946,6 +946,109 @@ export const disableDeepAnalysis = async (
   return response.data;
 };
 
+/**
+ * Update competitor selection (enable/disable deep analysis)
+ */
+export const updateCompetitorSelection = async (
+  productId: number,
+  competitorId: number,
+  enabled: boolean
+): Promise<{ message: string }> => {
+  if (enabled) {
+    return enableDeepAnalysis(productId, competitorId);
+  } else {
+    return disableDeepAnalysis(productId, competitorId);
+  }
+};
+
+/**
+ * Add a competitor manually
+ */
+export const addCompetitorManually = async (
+  productId: number,
+  competitorName: string,
+  competitorUrl: string
+): Promise<{
+  id: number;
+  competitor_name: string;
+  competitor_url: string;
+  deep_analysis_enabled: boolean;
+  message: string;
+}> => {
+  const response = await api.post(
+    `/product-intelligence/agents/${productId}/competitors/add`,
+    {
+      competitor_name: competitorName,
+      competitor_url: competitorUrl,
+    }
+  );
+  return response.data;
+};
+
+// --- Competitor Alerts ---
+
+export interface CompetitorAlert {
+  id: number;
+  product_id: number;
+  alert_type: 'new_competitor' | 'competitor_disappeared' | 'competitor_change';
+  competitor_id: number | null;
+  competitor_name: string;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+}
+
+/**
+ * Get competitor alerts for a product
+ */
+export const getCompetitorAlerts = async (
+  productId: number,
+  unreadOnly: boolean = false
+): Promise<CompetitorAlert[]> => {
+  const response = await api.get<CompetitorAlert[]>(
+    `/product-intelligence/agents/${productId}/alerts`,
+    { params: { unread_only: unreadOnly } }
+  );
+  return response.data;
+};
+
+/**
+ * Get unread alert count
+ */
+export const getUnreadAlertCount = async (
+  productId: number
+): Promise<{ unread_count: number }> => {
+  const response = await api.get<{ unread_count: number }>(
+    `/product-intelligence/agents/${productId}/alerts/count`
+  );
+  return response.data;
+};
+
+/**
+ * Mark an alert as read
+ */
+export const markAlertRead = async (
+  productId: number,
+  alertId: number
+): Promise<{ message: string }> => {
+  const response = await api.post<{ message: string }>(
+    `/product-intelligence/agents/${productId}/alerts/${alertId}/read`
+  );
+  return response.data;
+};
+
+/**
+ * Mark all alerts as read
+ */
+export const markAllAlertsRead = async (
+  productId: number
+): Promise<{ message: string }> => {
+  const response = await api.post<{ message: string }>(
+    `/product-intelligence/agents/${productId}/alerts/read-all`
+  );
+  return response.data;
+};
+
 // --- Per-Competitor Deep Analysis ---
 
 /**
