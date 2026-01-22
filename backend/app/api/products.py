@@ -1787,122 +1787,9 @@ def queue_competitor_discovery(
     )
 
 
-@router.post("/{product_id}/features/extract/queue", response_model=JobResponse)
-def queue_feature_extraction(
-    product_id: int,
-    request: FeatureExtractionRequest,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Queue feature extraction for specified competitors (Phase 2).
-
-    Extracts features from competitor products using AI analysis.
-    Can run in parallel mode (default) for faster execution.
-
-    Requires EDIT permission on the product.
-
-    Returns:
-        Job record for tracking
-
-    Raises:
-        400: If no valid competitors provided
-        403: If user lacks EDIT permission
-        404: If product not found
-        409: If extraction job already running
-    """
-    from app.services.permission_service import PermissionService
-    from app.queue.tasks import extract_features_parallel, extract_features_task
-    from app.models.competitor_intelligence import ProductCompetitor
-
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.EDIT
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have EDIT permission for product {product_id}"
-        )
-
-    # Get product
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
-
-    # Validate competitor IDs belong to this product
-    valid_competitors = db.query(ProductCompetitor).filter(
-        ProductCompetitor.id.in_(request.competitor_ids),
-        ProductCompetitor.product_id == product_id
-    ).all()
-
-    if not valid_competitors:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No valid competitors found for the provided IDs"
-        )
-
-    valid_ids = [c.id for c in valid_competitors]
-
-    # Check for existing active job
-    queue_service = QueueService(db)
-    active_jobs = queue_service.get_active_jobs(product_id=product_id)
-    extraction_jobs = [j for j in active_jobs if j.job_type == JobType.FEATURE_EXTRACTION]
-    if extraction_jobs:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Extraction job already active for product {product_id}. "
-                   f"Job ID: {extraction_jobs[0].job_uuid}"
-        )
-
-    # Create job
-    job = queue_service.create_job(
-        job_type=JobType.FEATURE_EXTRACTION,
-        input_data={
-            'competitor_ids': valid_ids,
-            'parallel': request.parallel
-        },
-        product_id=product_id,
-        user_id=current_user.id,
-    )
-
-    # Queue the Celery task
-    try:
-        if request.parallel:
-            celery_result = send_task('extract_features_parallel', job.id, valid_ids)
-        else:
-            # Sequential execution (first competitor only for single task)
-            celery_result = send_task('extract_features_task', job.id, valid_ids[0])
-        queue_service.mark_queued(job.id, celery_result.id)
-    except Exception as e:
-        queue_service.mark_failure(job.id, f"Failed to queue task: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to queue extraction task: {str(e)}"
-        )
-
-    return JobResponse(
-        id=job.id,
-        job_uuid=job.job_uuid,
-        job_type=job.job_type.value,
-        status=job.status.value,
-        priority=job.priority.value,
-        progress_percent=job.progress_percent,
-        progress_message=job.progress_message,
-        error_message=job.error_message,
-        created_at=job.created_at,
-        queued_at=job.queued_at,
-        started_at=job.started_at,
-        completed_at=job.completed_at,
-        duration_seconds=job.duration_seconds,
-        product_id=job.product_id,
-        output_data=job.output_data,
-    )
+# DEPRECATED: queue_feature_extraction endpoint has been removed.
+# Feature extraction is now handled by the V2 functional audit workflow.
+# Use POST /{product_id}/run-competitive-analysis-v2 in competitive_agents.py
 
 
 @router.get("/{product_id}/competitors", response_model=List[dict])
@@ -2103,64 +1990,9 @@ def get_workflow_status(
         )
 
 
-# ============================================================================
-# Utility Endpoints
-# ============================================================================
-
-@router.post("/{product_id}/backfill-embeddings")
-def backfill_competitor_feature_embeddings(
-    product_id: int,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Backfill embeddings for all competitor features of a product.
-
-    This enables vector-based similarity search for competitive matching.
-    Run this after importing existing competitor data or if embeddings
-    were not generated during feature extraction.
-
-    Requires EDIT permission on the product.
-
-    Returns:
-        Count of features processed
-
-    Raises:
-        403: If user lacks EDIT permission
-        404: If product not found
-    """
-    from app.services.permission_service import PermissionService
-    from app.services.similarity_detector import SimilarityDetectorService
-
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.EDIT
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to modify this product"
-        )
-
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
-
-    # Backfill embeddings
-    similarity_service = SimilarityDetectorService(db)
-    count = similarity_service.bulk_store_competitor_feature_embeddings(product_id)
-
-    return {
-        "product_id": product_id,
-        "features_processed": count,
-        "message": f"Successfully generated embeddings for {count} competitor features"
-    }
+# DEPRECATED: backfill-embeddings endpoint has been removed.
+# Competitor feature embeddings are now handled by the V2 functional audit workflow.
+# Feature embeddings are generated on-the-fly from CompetitorFunctionalReport data.
 
 
 # ============================================================================

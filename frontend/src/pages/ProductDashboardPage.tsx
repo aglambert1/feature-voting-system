@@ -13,7 +13,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import Navigation from '../components/Navigation';
 import ReviewQueueCard from '../components/ReviewQueueCard';
-import MonitoringConfigPanel from '../components/MonitoringConfigPanel';
 import JobStatusCard from '../components/JobStatusCard';
 import {
   getReviewQueueStats,
@@ -35,7 +34,6 @@ const ProductDashboardPage = () => {
   const [recentJobs, setRecentJobs] = useState<QueueJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [showMonitoringConfig, setShowMonitoringConfig] = useState(false);
   const [triggeringMonitoring, setTriggeringMonitoring] = useState(false);
 
   // Triage automation state
@@ -283,12 +281,6 @@ const ProductDashboardPage = () => {
             <div className="mb-8">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-medium text-gray-900">Agent Status</h2>
-                <button
-                  onClick={() => setShowMonitoringConfig(!showMonitoringConfig)}
-                  className="text-sm text-blue-600 hover:text-blue-700"
-                >
-                  {showMonitoringConfig ? 'Hide Config' : 'Configure'}
-                </button>
               </div>
 
               {/* Competitive Discovery Agent Card */}
@@ -337,13 +329,6 @@ const ProductDashboardPage = () => {
                 </div>
               </div>
 
-              {/* Monitoring Config Panel */}
-              {showMonitoringConfig && (
-                <MonitoringConfigPanel
-                  productId={numProductId}
-                  onConfigChange={(config) => setMonitoringConfig(config)}
-                />
-              )}
             </div>
 
             {/* Idea Triage Automation */}

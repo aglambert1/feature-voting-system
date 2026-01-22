@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from app.database import get_db
 from app.models.user import User
 from app.models.queue import JobType, JobStatus
-from app.models.competitor_intelligence import CIProduct, ProductCompetitor, ProductCompetitorFeature
+from app.models.competitor_intelligence import CIProduct, ProductCompetitor
 from app.models.competitive_agent import (
     CompetitiveAgentConfig, AgentMode, FeatureCluster, FeatureClusterMember
 )
@@ -877,12 +877,19 @@ def list_competitors(
 
     competitors = query.all()
 
-    # Get feature counts
+    # Get feature counts from functional reports (V2)
+    from app.models.competitive_reports import CompetitorFunctionalReport
+
     result = []
     for comp in competitors:
-        feature_count = db.query(func.count(ProductCompetitorFeature.id)).filter(
-            ProductCompetitorFeature.product_competitor_id == comp.id
-        ).scalar() or 0
+        # Count features from functional_comparison in latest report
+        report = db.query(CompetitorFunctionalReport).filter(
+            CompetitorFunctionalReport.product_competitor_id == comp.id
+        ).order_by(CompetitorFunctionalReport.report_version.desc()).first()
+
+        feature_count = 0
+        if report and report.functional_comparison:
+            feature_count = len(report.functional_comparison)
 
         result.append(CompetitorResponse(
             id=comp.id,
@@ -1063,65 +1070,101 @@ def list_competitor_features(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """List extracted features for a competitor."""
+    """
+    List features for a competitor from functional reports (V2).
+
+    V2 Architecture: Reads from CompetitorFunctionalReport.functional_comparison
+    instead of ProductCompetitorFeature table.
+    """
+    from app.models.competitive_reports import CompetitorFunctionalReport
+    import hashlib
+
     verify_competitor_access(db, product_id, competitor_id, current_user)
 
-    features = db.query(ProductCompetitorFeature).filter(
-        ProductCompetitorFeature.product_competitor_id == competitor_id
-    ).all()
+    # Get the latest functional report for this competitor
+    report = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_competitor_id == competitor_id
+    ).order_by(CompetitorFunctionalReport.report_version.desc()).first()
 
     result = []
-    for feat in features:
-        # Check if feature is in a cluster
-        member = db.query(FeatureClusterMember).filter(
-            FeatureClusterMember.feature_id == feat.id
-        ).first()
+    if report and report.functional_comparison:
+        for idx, feature_data in enumerate(report.functional_comparison):
+            feature_name = feature_data.get('competitor_feature_name', '')
+            if not feature_name:
+                continue
 
-        cluster_id = None
-        cluster_name = None
-        if member:
-            cluster = db.query(FeatureCluster).filter(
-                FeatureCluster.id == member.cluster_id
+            # Generate feature key for cluster lookup
+            feature_key = f"{competitor_id}_{hashlib.md5(feature_name.encode()).hexdigest()[:8]}"
+
+            # Check if feature is in a cluster
+            member = db.query(FeatureClusterMember).filter(
+                FeatureClusterMember.feature_key == feature_key
             ).first()
-            if cluster:
-                cluster_id = cluster.id
-                cluster_name = cluster.cluster_name
 
-        result.append(FeatureResponse(
-            id=feat.id,
-            product_competitor_id=feat.product_competitor_id,
-            feature_name=feat.feature_name,
-            feature_description=feat.feature_description,
-            feature_category=feat.feature_category,
-            status=feat.status or 'active',
-            cluster_id=cluster_id,
-            cluster_name=cluster_name
-        ))
+            cluster_id = None
+            cluster_name = None
+            if member:
+                cluster = db.query(FeatureCluster).filter(
+                    FeatureCluster.id == member.cluster_id
+                ).first()
+                if cluster:
+                    cluster_id = cluster.id
+                    cluster_name = cluster.cluster_name
+
+            result.append(FeatureResponse(
+                id=idx + 1,  # Sequential ID since we don't have DB IDs
+                product_competitor_id=competitor_id,
+                feature_name=feature_name,
+                feature_description=feature_data.get('functional_description', ''),
+                feature_category=feature_data.get('feature_category', ''),
+                status=feature_data.get('mapping_status', 'Gap'),  # Gap, Parity, etc.
+                cluster_id=cluster_id,
+                cluster_name=cluster_name
+            ))
 
     return result
 
 
-@router.post("/{product_id}/competitors/{competitor_id}/features/{feature_id}/create-idea", response_model=JobResponse)
+@router.post("/{product_id}/competitors/{competitor_id}/features/{feature_index}/create-idea", response_model=JobResponse)
 def create_idea_from_feature(
     product_id: int,
     competitor_id: int,
-    feature_id: int,
+    feature_index: int,
     current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
-    """Create an idea from a single competitor feature."""
+    """
+    Create an idea from a single competitor feature (V2).
+
+    V2 Architecture: Uses feature_index from functional_comparison array
+    instead of ProductCompetitorFeature.id.
+    """
+    from app.models.competitive_reports import CompetitorFunctionalReport
+
     verify_competitor_access(db, product_id, competitor_id, current_user)
 
-    # Verify feature exists
-    feature = db.query(ProductCompetitorFeature).filter(
-        ProductCompetitorFeature.id == feature_id,
-        ProductCompetitorFeature.product_competitor_id == competitor_id
-    ).first()
-    if not feature:
+    # Get the latest functional report
+    report = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_competitor_id == competitor_id
+    ).order_by(CompetitorFunctionalReport.report_version.desc()).first()
+
+    if not report or not report.functional_comparison:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Feature {feature_id} not found"
+            detail="No functional report found for this competitor"
         )
+
+    # Get feature by index (1-based from API, 0-based in array)
+    feature_idx = feature_index - 1
+    if feature_idx < 0 or feature_idx >= len(report.functional_comparison):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Feature index {feature_index} not found"
+        )
+
+    feature_data = report.functional_comparison[feature_idx]
+    feature_name = feature_data.get('competitor_feature_name', '')
+    feature_description = feature_data.get('functional_description', '')
 
     # Get competitor name for context
     competitor = db.query(ProductCompetitor).filter(
@@ -1131,17 +1174,18 @@ def create_idea_from_feature(
     # Create idea directly
     idea = Idea(
         product_id=product_id,
-        title=f"Add: {feature.feature_name}",
-        what_description=feature.feature_description or f"Implement {feature.feature_name} feature",
+        title=f"Add: {feature_name}",
+        what_description=feature_description or f"Implement {feature_name} feature",
         why_description=f"Competitor '{competitor.competitor_name}' has this feature",
-        use_case_description=f"Users would benefit from {feature.feature_name}",
+        use_case_description=f"Users would benefit from {feature_name}",
         status=IdeaStatus.PENDING,
         source_type=SourceType.COMPETITOR_AUTOMATED,
         source_metadata={
             'competitor_id': competitor_id,
             'competitor_name': competitor.competitor_name,
-            'feature_id': feature_id,
-            'feature_name': feature.feature_name
+            'feature_index': feature_index,
+            'feature_name': feature_name,
+            'mapping_status': feature_data.get('mapping_status', '')
         },
         submitter_id=current_user.id
     )
@@ -1168,7 +1212,7 @@ def create_idea_from_feature(
         job_uuid=job.job_uuid,
         job_type=job.job_type.value,
         status=job.status.value,
-        message=f"Idea created and triage queued for feature {feature_id}"
+        message=f"Idea created and triage queued for feature {feature_name}"
     )
 
 
@@ -1180,37 +1224,59 @@ def create_ideas_from_features(
     current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
-    """Create ideas from selected competitor features."""
+    """
+    Create ideas from selected competitor features (V2).
+
+    V2 Architecture: Uses feature_ids as indices into functional_comparison array.
+    """
+    from app.models.competitive_reports import CompetitorFunctionalReport
+
     verify_competitor_access(db, product_id, competitor_id, current_user)
 
     competitor = db.query(ProductCompetitor).filter(
         ProductCompetitor.id == competitor_id
     ).first()
 
-    results = []
-    for feature_id in request.feature_ids:
-        feature = db.query(ProductCompetitorFeature).filter(
-            ProductCompetitorFeature.id == feature_id,
-            ProductCompetitorFeature.product_competitor_id == competitor_id
-        ).first()
+    # Get the latest functional report
+    report = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_competitor_id == competitor_id
+    ).order_by(CompetitorFunctionalReport.report_version.desc()).first()
 
-        if not feature:
+    if not report or not report.functional_comparison:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No functional report found for this competitor"
+        )
+
+    results = []
+    for feature_index in request.feature_ids:  # Now treated as indices
+        # Convert 1-based index to 0-based
+        feature_idx = feature_index - 1
+        if feature_idx < 0 or feature_idx >= len(report.functional_comparison):
+            continue
+
+        feature_data = report.functional_comparison[feature_idx]
+        feature_name = feature_data.get('competitor_feature_name', '')
+        feature_description = feature_data.get('functional_description', '')
+
+        if not feature_name:
             continue
 
         # Create idea
         idea = Idea(
             product_id=product_id,
-            title=f"Add: {feature.feature_name}",
-            what_description=feature.feature_description or f"Implement {feature.feature_name} feature",
+            title=f"Add: {feature_name}",
+            what_description=feature_description or f"Implement {feature_name} feature",
             why_description=f"Competitor '{competitor.competitor_name}' has this feature",
-            use_case_description=f"Users would benefit from {feature.feature_name}",
+            use_case_description=f"Users would benefit from {feature_name}",
             status=IdeaStatus.PENDING,
             source_type=SourceType.COMPETITOR_AUTOMATED,
             source_metadata={
                 'competitor_id': competitor_id,
                 'competitor_name': competitor.competitor_name,
-                'feature_id': feature_id,
-                'feature_name': feature.feature_name
+                'feature_index': feature_index,
+                'feature_name': feature_name,
+                'mapping_status': feature_data.get('mapping_status', '')
             },
             submitter_id=current_user.id
         )
@@ -1231,7 +1297,7 @@ def create_ideas_from_features(
             job_uuid=job.job_uuid,
             job_type=job.job_type.value,
             status=job.status.value,
-            message=f"Idea created for feature {feature_id}"
+            message=f"Idea created for feature {feature_name}"
         ))
 
     db.commit()
@@ -1299,25 +1365,24 @@ def get_feature_cluster(
             detail=f"Cluster {cluster_id} not found"
         )
 
-    # Get members with feature details
+    # Get members with feature details (V2: data stored directly on member)
     members = db.query(
-        FeatureClusterMember, ProductCompetitorFeature, ProductCompetitor
-    ).join(
-        ProductCompetitorFeature,
-        FeatureClusterMember.feature_id == ProductCompetitorFeature.id
+        FeatureClusterMember, ProductCompetitor
     ).join(
         ProductCompetitor,
-        ProductCompetitorFeature.product_competitor_id == ProductCompetitor.id
+        FeatureClusterMember.competitor_id == ProductCompetitor.id
     ).filter(
         FeatureClusterMember.cluster_id == cluster_id
     ).all()
 
     member_data = []
-    for member, feature, competitor in members:
+    for member, competitor in members:
         member_data.append({
-            'feature_id': feature.id,
-            'feature_name': feature.feature_name,
-            'feature_description': feature.feature_description,
+            'feature_key': member.feature_key,
+            'feature_name': member.feature_name,
+            'feature_description': member.feature_description,
+            'feature_category': member.feature_category,
+            'mapping_status': member.mapping_status,
             'competitor_id': competitor.id,
             'competitor_name': competitor.competitor_name,
             'similarity_score': member.similarity_score

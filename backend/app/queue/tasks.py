@@ -18,7 +18,7 @@ from app.database import SessionLocal
 from app.models.queue import JobStatus, JobType
 from app.models.competitor_intelligence import (
     CIProduct, ProductAnalysisHistory, ProductFeature,
-    ProductCompetitor, ProductCompetitorFeature, SessionCompetitor, CompetitorFeature
+    ProductCompetitor
 )
 from app.models.competitive_reports import CompetitorAlert
 from app.models.competitive_agent import CompetitiveAgentConfig
@@ -26,7 +26,7 @@ from app.services.queue_service import QueueService
 from app.services.llm_service import LLMService
 from app.agents.product_analyzer import ProductAnalyzerAgent
 from app.agents.competitor_researcher import CompetitorResearcherAgent
-from app.agents.feature_extractor import FeatureExtractorAgent
+# DEPRECATED: FeatureExtractorAgent import removed - using V2 functional audit workflow
 
 
 def get_db():
@@ -368,344 +368,9 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
             db.close()
 
 
-@shared_task(bind=True, name='app.queue.tasks.extract_features_task')
-def extract_features_task(self, job_id: int) -> Dict[str, Any]:
-    """
-    Background task to extract features from a single competitor.
-
-    This task:
-    1. Gets competitor info
-    2. Runs FeatureExtractorAgent
-    3. Stores features in ProductCompetitorFeature table
-
-    Args:
-        job_id: QueueJob ID to process
-
-    Returns:
-        Dictionary with extraction results
-    """
-    db = None
-    try:
-        db = get_db()
-        queue_service = QueueService(db)
-
-        # Mark job as running
-        job = queue_service.mark_running(job_id)
-        if not job:
-            raise ValueError(f"Job {job_id} not found")
-
-        input_data = job.input_data or {}
-        competitor_id = input_data.get('competitor_id')
-        product_id = job.product_id
-
-        if not competitor_id:
-            raise ValueError("Competitor ID is required")
-
-        # Update progress
-        queue_service.update_progress(job_id, 10.0, "Loading competitor data...")
-
-        # Get competitor
-        competitor = db.query(ProductCompetitor).filter(
-            ProductCompetitor.id == competitor_id
-        ).first()
-
-        if not competitor:
-            raise ValueError(f"Competitor {competitor_id} not found")
-
-        # Check for previous features (for comparative analysis)
-        previous_features = []
-        existing_features = db.query(ProductCompetitorFeature).filter(
-            ProductCompetitorFeature.product_competitor_id == competitor_id,
-            ProductCompetitorFeature.status == 'active'
-        ).all()
-
-        if existing_features:
-            previous_features = [
-                {
-                    'id': str(f.id),
-                    'name': f.feature_name,
-                    'description': f.feature_description,
-                    'category': f.feature_category,
-                }
-                for f in existing_features
-            ]
-
-        # Update progress
-        queue_service.update_progress(job_id, 20.0, "Initializing feature extractor...")
-
-        # Create LLM service and agent
-        llm_service = LLMService()
-        agent = FeatureExtractorAgent(
-            db=db,
-            llm_service=llm_service,
-            product_id=product_id
-        )
-
-        # Build input
-        agent_input = {
-            'competitor_name': competitor.competitor_name,
-            'competitor_url': competitor.competitor_url,
-        }
-
-        if previous_features:
-            agent_input['previous_features'] = previous_features
-
-        # Update progress
-        queue_service.update_progress(job_id, 30.0, f"Extracting features from {competitor.competitor_name}...")
-
-        # Execute agent
-        result = agent.execute(agent_input)
-
-        # Update progress
-        queue_service.update_progress(job_id, 70.0, "Storing features...")
-
-        # Store extracted features
-        features = result.get('features', [])
-        feature_count = 0
-        new_features = []  # Track newly created features for embedding
-
-        for feat_data in features:
-            change_type = feat_data.get('change_type', 'new')
-
-            if change_type == 'removed':
-                # Mark as inactive
-                prev_id = feat_data.get('previous_feature_id')
-                if prev_id:
-                    try:
-                        prev_feature = db.query(ProductCompetitorFeature).filter(
-                            ProductCompetitorFeature.id == int(prev_id)
-                        ).first()
-                        if prev_feature:
-                            prev_feature.status = 'removed'
-                    except (ValueError, TypeError):
-                        pass
-            else:
-                # Create or update feature
-                feature = ProductCompetitorFeature(
-                    product_competitor_id=competitor_id,
-                    feature_name=feat_data.get('name', ''),
-                    feature_description=feat_data.get('description', ''),
-                    feature_category=feat_data.get('category', ''),
-                    first_discovered_session_id=None,  # Queue-based
-                    status='active'
-                )
-                db.add(feature)
-                db.flush()  # Get feature.id
-                new_features.append(feature)
-                feature_count += 1
-
-        db.commit()
-
-        # Store embeddings for new features (for vector similarity search)
-        try:
-            from app.services.similarity_detector import SimilarityDetectorService
-            similarity_service = SimilarityDetectorService(db)
-            for feature in new_features:
-                feature_text = f"{feature.feature_name}\n{feature.feature_description or ''}"
-                similarity_service.store_competitor_feature_embedding(feature.id, feature_text)
-            db.commit()
-            print(f"[extract_features_task] Stored embeddings for {len(new_features)} features")
-        except Exception as embed_error:
-            print(f"[extract_features_task] Warning: Failed to store embeddings: {embed_error}")
-
-        # Update progress
-        queue_service.update_progress(job_id, 90.0, "Finalizing...")
-
-        # Prepare output data
-        output_data = {
-            'competitor_id': competitor_id,
-            'competitor_name': competitor.competitor_name,
-            'features_extracted': feature_count,
-            'extraction_summary': result.get('extraction_summary', ''),
-            'analysis_mode': result.get('analysis_mode', 'fresh'),
-        }
-
-        # Add summary if comparative
-        if 'summary' in result:
-            output_data['change_summary'] = result['summary']
-
-        # Mark job as success
-        queue_service.mark_success(job_id, output_data)
-
-        return output_data
-
-    except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[extract_features_task] Error: {error_msg}")
-        print(f"[extract_features_task] Traceback: {error_tb}")
-
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception as inner_e:
-                print(f"[extract_features_task] Failed to update job status: {inner_e}")
-
-        raise
-
-    finally:
-        if db:
-            db.close()
-
-
-@shared_task(bind=True, name='app.queue.tasks.extract_features_parallel')
-def extract_features_parallel(self, job_id: int, competitor_ids: List[int]) -> Dict[str, Any]:
-    """
-    Orchestrates parallel feature extraction for multiple competitors.
-
-    Uses Celery chord to dispatch child tasks in parallel and aggregate results
-    via a callback task. This avoids the anti-pattern of calling .get() within a task.
-
-    Args:
-        job_id: Parent QueueJob ID
-        competitor_ids: List of competitor IDs to process
-
-    Returns:
-        Dictionary indicating chord was dispatched
-    """
-    from celery import chord
-
-    db = None
-    try:
-        db = get_db()
-        queue_service = QueueService(db)
-
-        # Mark parent job as running
-        job = queue_service.mark_running(job_id)
-        if not job:
-            raise ValueError(f"Job {job_id} not found")
-
-        product_id = job.product_id
-
-        # Update progress
-        queue_service.update_progress(
-            job_id, 10.0,
-            f"Creating extraction jobs for {len(competitor_ids)} competitors..."
-        )
-
-        # Create child jobs for each competitor
-        child_job_ids = []
-        for comp_id in competitor_ids:
-            child_job = queue_service.create_job(
-                job_type=JobType.FEATURE_EXTRACTION,
-                input_data={'competitor_id': comp_id},
-                product_id=product_id,
-                user_id=job.user_id,
-                parent_job_id=job_id,
-            )
-            child_job_ids.append(child_job.id)
-
-        db.commit()
-
-        # Update progress
-        queue_service.update_progress(
-            job_id, 20.0,
-            f"Dispatching {len(child_job_ids)} parallel extraction tasks..."
-        )
-
-        # Use chord: group of extraction tasks -> callback to aggregate
-        extraction_chord = chord(
-            [extract_features_task.s(child_id) for child_id in child_job_ids],
-            aggregate_extraction_results.s(job_id, child_job_ids)
-        )
-
-        # Dispatch the chord
-        chord_result = extraction_chord.apply_async()
-
-        # Mark child jobs as queued (best effort)
-        db.commit()
-
-        # Return immediately - the callback will handle completion
-        return {
-            'status': 'chord_dispatched',
-            'parent_job_id': job_id,
-            'child_job_ids': child_job_ids,
-            'chord_id': chord_result.id if chord_result else None,
-        }
-
-    except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[extract_features_parallel] Error: {error_msg}")
-
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
-
-        raise
-
-    finally:
-        if db:
-            db.close()
-
-
-@shared_task(bind=True, name='app.queue.tasks.aggregate_extraction_results')
-def aggregate_extraction_results(self, results: List[Dict], parent_job_id: int, child_job_ids: List[int]) -> Dict[str, Any]:
-    """
-    Callback task to aggregate results from parallel feature extraction.
-
-    Called automatically by Celery chord after all extraction tasks complete.
-
-    Args:
-        results: List of results from each extraction task
-        parent_job_id: Parent QueueJob ID to update
-        child_job_ids: List of child job IDs that were processed
-
-    Returns:
-        Aggregated results
-    """
-    db = None
-    try:
-        db = get_db()
-        queue_service = QueueService(db)
-
-        # Get parent job
-        job = queue_service.get_job(parent_job_id)
-        if not job:
-            raise ValueError(f"Parent job {parent_job_id} not found")
-
-        # Aggregate results
-        total_features = 0
-        successful = 0
-        for r in results:
-            if r:
-                total_features += r.get('features_extracted', 0)
-                successful += 1
-
-        output_data = {
-            'product_id': job.product_id,
-            'competitors_processed': len(child_job_ids),
-            'successful_extractions': successful,
-            'total_features_extracted': total_features,
-            'child_job_ids': child_job_ids,
-        }
-
-        # Mark parent job as success
-        queue_service.mark_success(parent_job_id, output_data)
-
-        return output_data
-
-    except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[aggregate_extraction_results] Error: {error_msg}")
-
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(parent_job_id, error_msg, error_tb)
-            except Exception:
-                pass
-
-        raise
-
-    finally:
-        if db:
-            db.close()
+# DEPRECATED: extract_features_task, extract_features_parallel, and aggregate_extraction_results
+# have been removed. Feature extraction is now handled by the V2 functional audit workflow.
+# Use functional_audit_task to extract competitor features into CompetitorFunctionalReport.
 
 
 # ============================================================================
@@ -890,12 +555,53 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         # Update progress
         queue_service.update_progress(job_id, 30.0, "Finding competitive matches...")
 
-        # Find competitive matches (returns structured dict with matches and urgency)
-        competitive_context = similarity_service.find_competitive_matches(
-            idea_text=idea_text,
-            product_id=idea.product_id,
-            limit=5
-        )
+        # Find competitive matches - use different strategies based on idea source
+        if is_competitor_idea and idea.source_metadata:
+            # For competitor-sourced ideas, use pre-computed data from landscape report
+            # This ensures consistency between landscape analysis and triage
+            from app.models.competitive_reports import CompetitorFunctionalReport
+
+            competitors_with = idea.source_metadata.get('competitors_with_feature', [])
+            tracked_count = db.query(CompetitorFunctionalReport).filter(
+                CompetitorFunctionalReport.product_id == idea.product_id
+            ).count()
+
+            # Calculate urgency based on competitor prevalence
+            if tracked_count > 0:
+                prevalence = len(competitors_with) / tracked_count
+                if prevalence >= 0.8:
+                    urgency_level = "critical"
+                    reasoning = f"Table stakes: {len(competitors_with)} of {tracked_count} tracked competitors ({prevalence*100:.0f}%) have this feature."
+                elif prevalence >= 0.5 or len(competitors_with) >= 3:
+                    urgency_level = "high"
+                    reasoning = f"High priority: {len(competitors_with)} of {tracked_count} tracked competitors have this feature."
+                elif len(competitors_with) >= 1:
+                    urgency_level = "medium"
+                    reasoning = f"Competitive parity: {len(competitors_with)} of {tracked_count} tracked competitors have this feature."
+                else:
+                    urgency_level = "low"
+                    reasoning = f"Potential differentiator: None of {tracked_count} tracked competitors have this feature."
+            else:
+                urgency_level = "low"
+                reasoning = "No competitive data available from landscape analysis."
+
+            competitive_context = {
+                "matches": [],  # No need to re-match - we have authoritative data
+                "urgency": {
+                    "urgency": urgency_level,
+                    "competitor_count": len(competitors_with),
+                    "total_competitors_analyzed": tracked_count,
+                    "competitors_with_feature": competitors_with,
+                    "reasoning": reasoning
+                }
+            }
+        else:
+            # For customer-submitted ideas, use V2 functional reports
+            competitive_context = similarity_service.find_competitive_matches_from_reports(
+                idea_text=idea_text,
+                product_id=idea.product_id,
+                limit=5
+            )
 
         # Update progress
         queue_service.update_progress(job_id, 40.0, "Checking existing product features...")
@@ -1228,9 +934,9 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             exclude_idea_id=idea.id
         )
 
-        # Step 4: Competitive matches (returns structured dict with matches and urgency)
+        # Step 4: Competitive matches using V2 functional reports
         queue_service.update_progress(job_id, 55.0, "Finding competitive matches...")
-        competitive_context = similarity_service.find_competitive_matches(
+        competitive_context = similarity_service.find_competitive_matches_from_reports(
             idea_text=idea_text,
             product_id=idea.product_id,
             limit=5
@@ -1416,157 +1122,10 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             db.close()
 
 
-# ============================================================================
-# Phase 4: Competitive Monitoring Tasks
-# ============================================================================
-
-@shared_task(bind=True, name='app.queue.tasks.monitor_competitors_task')
-def monitor_competitors_task(self, job_id: int, product_id: int, force_full: bool = False) -> Dict[str, Any]:
-    """
-    Background task to monitor competitors for changes.
-
-    This task:
-    1. Gets all competitors for the product
-    2. For each competitor:
-       - Extracts current features
-       - Creates a snapshot
-       - Compares with previous snapshot
-       - Detects changes
-    3. Generates alerts for significant changes
-    4. Updates monitoring config timestamps
-
-    Args:
-        job_id: QueueJob ID
-        product_id: Product ID to monitor
-        force_full: If True, perform full re-extraction instead of differential
-
-    Returns:
-        Dictionary with monitoring results
-    """
-    from app.services.competitive_monitor_service import CompetitiveMonitorService
-
-    db = None
-    try:
-        db = get_db()
-        queue_service = QueueService(db)
-
-        # Mark job as running
-        job = queue_service.mark_running(job_id)
-        if not job:
-            raise ValueError(f"Job {job_id} not found")
-
-        # Update progress
-        queue_service.update_progress(job_id, 10.0, "Initializing competitive monitoring...")
-
-        # Run monitoring
-        monitor_service = CompetitiveMonitorService(db)
-        result = monitor_service.run_monitoring(
-            product_id=product_id,
-            job_id=job_id,
-            force_full=force_full,
-            progress_callback=lambda pct, msg: queue_service.update_progress(job_id, pct, msg)
-        )
-
-        # Mark success
-        queue_service.mark_success(job_id, result)
-
-        return result
-
-    except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[monitor_competitors_task] Error: {error_msg}")
-
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
-
-        raise
-
-    finally:
-        if db:
-            db.close()
-
-
-@shared_task(bind=True, name='app.queue.tasks.scheduled_monitoring_task')
-def scheduled_monitoring_task(self) -> Dict[str, Any]:
-    """
-    Scheduled task that runs monitoring for all products due for monitoring.
-
-    Called by Celery Beat on a schedule (e.g., daily).
-    Checks monitoring configs and runs monitoring for products that are due.
-
-    Returns:
-        Dictionary with list of products monitored
-    """
-    db = None
-    try:
-        db = get_db()
-        queue_service = QueueService(db)
-
-        from app.services.pm_review_service import PMReviewService
-        from app.models.queue import JobType, JobStatus
-
-        pm_service = PMReviewService(db)
-
-        # Get products due for monitoring
-        configs = pm_service.get_products_due_for_monitoring()
-
-        products_monitored = []
-        jobs_created = []
-
-        for config in configs:
-            try:
-                # Create a job for each product
-                job = queue_service.create_job(
-                    job_type=JobType.COMPETITIVE_MONITORING,
-                    input_data={
-                        'product_id': config.product_id,
-                        'triggered_by': 'scheduled',
-                    },
-                    product_id=config.product_id,
-                    user_id=None,  # System-triggered
-                )
-                db.commit()
-
-                # Queue the monitoring task
-                result = monitor_competitors_task.delay(
-                    job_id=job.id,
-                    product_id=config.product_id,
-                    force_full=False
-                )
-
-                job.celery_task_id = result.id
-                job.status = JobStatus.QUEUED
-                db.commit()
-
-                products_monitored.append(config.product_id)
-                jobs_created.append(job.job_uuid)
-
-            except Exception as e:
-                print(f"[scheduled_monitoring_task] Error scheduling product {config.product_id}: {e}")
-
-        return {
-            'products_monitored': products_monitored,
-            'jobs_created': jobs_created,
-            'total': len(products_monitored),
-        }
-
-    except Exception as e:
-        error_msg = str(e)
-        print(f"[scheduled_monitoring_task] Error: {error_msg}")
-        raise
-
-    finally:
-        if db:
-            db.close()
-
-
-# Note: triage_existing_idea_task was removed as it was redundant with triage_idea_task.
-# Use triage_idea_task for triaging existing ideas.
+# DEPRECATED: Phase 4 Competitive Monitoring Tasks have been removed.
+# monitor_competitors_task and scheduled_monitoring_task are deprecated.
+# Competitive monitoring is now handled by the V2 functional audit workflow.
+# Use functional_audit_task to run competitive analysis.
 
 
 # ============================================================================
@@ -1782,58 +1341,8 @@ def deep_analysis_task(self, job_id: int) -> Dict[str, Any]:
 # See functional_audit_task and landscape_synthesis_task below.
 
 
-def _run_feature_extraction(db, competitor: ProductCompetitor, product_id: int) -> Dict[str, Any]:
-    """Run feature extraction for a competitor."""
-    llm_service = LLMService()
-    agent = FeatureExtractorAgent(
-        db=db,
-        llm_service=llm_service,
-        product_id=product_id
-    )
-
-    agent_input = {
-        'competitor_name': competitor.competitor_name,
-        'competitor_url': competitor.competitor_url,
-    }
-
-    result = agent.execute(agent_input)
-
-    # Store features
-    features = result.get('features', [])
-    feature_count = 0
-    new_features = []
-
-    for feat_data in features:
-        feature = ProductCompetitorFeature(
-            product_competitor_id=competitor.id,
-            feature_name=feat_data.get('name', ''),
-            feature_description=feat_data.get('description', ''),
-            feature_category=feat_data.get('category', ''),
-            status='active'
-        )
-        db.add(feature)
-        db.flush()
-        new_features.append(feature)
-        feature_count += 1
-
-    db.commit()
-
-    # Store embeddings
-    try:
-        from app.services.similarity_detector import SimilarityDetectorService
-        similarity_service = SimilarityDetectorService(db)
-        for feature in new_features:
-            feature_text = f"{feature.feature_name}\n{feature.feature_description or ''}"
-            similarity_service.store_competitor_feature_embedding(feature.id, feature_text)
-        db.commit()
-    except Exception as e:
-        print(f"[_run_feature_extraction] Warning: Failed to store embeddings: {e}")
-
-    return {
-        'features_extracted': feature_count,
-        'extraction_summary': result.get('extraction_summary', '')
-    }
-
+# DEPRECATED: _run_feature_extraction has been removed in V2.
+# Feature extraction is now handled by the functional audit workflow.
 
 # DEPRECATED: The following helper functions have been removed in V2:
 # - _run_pricing_analysis

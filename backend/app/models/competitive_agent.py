@@ -184,6 +184,9 @@ class FeatureClusterMember(Base):
     """
     Links a competitor feature to a cluster.
 
+    V2 Architecture: Stores feature data directly from CompetitorFunctionalReport
+    instead of referencing ProductCompetitorFeature table.
+
     Tracks similarity score for each feature's membership in the cluster.
     """
     __tablename__ = "feature_cluster_members"
@@ -195,21 +198,27 @@ class FeatureClusterMember(Base):
         nullable=False,
         index=True
     )
-    feature_id = Column(
-        Integer,
-        ForeignKey("product_competitor_features.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
+    # V2: Store feature key instead of FK to ProductCompetitorFeature
+    feature_key = Column(String(100), nullable=False, index=True)  # "{competitor_id}_{hash}"
+
+    # V2: Store feature data directly (denormalized from functional reports)
+    competitor_id = Column(Integer, ForeignKey("product_competitors.id"), nullable=False)
+    feature_name = Column(String(500), nullable=False)
+    feature_description = Column(Text, nullable=True)
+    feature_category = Column(String(200), nullable=True)
+    mapping_status = Column(String(50), nullable=True)  # Gap, Parity, Differentiator
+    source_report_id = Column(Integer, ForeignKey("competitor_functional_reports.id"), nullable=True)
+
     similarity_score = Column(Float, nullable=True)  # Similarity to cluster centroid
     added_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     # Relationships
     cluster = relationship("FeatureCluster", back_populates="members")
-    feature = relationship("ProductCompetitorFeature", backref="cluster_memberships")
+    competitor = relationship("ProductCompetitor")
+    source_report = relationship("CompetitorFunctionalReport")
 
     def __repr__(self):
-        return f"<FeatureClusterMember(cluster_id={self.cluster_id}, feature_id={self.feature_id})>"
+        return f"<FeatureClusterMember(cluster_id={self.cluster_id}, feature_key={self.feature_key})>"
 
 
 # NOTE: The following models have been deprecated and removed:

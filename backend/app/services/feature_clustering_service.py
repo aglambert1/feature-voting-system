@@ -4,11 +4,15 @@ Feature Clustering Service for competitive intensity analysis.
 This service groups semantically similar features across competitors
 to calculate competitive intensity and trigger idea generation.
 
+V2 Architecture: Uses CompetitorFunctionalReport.functional_comparison
+as the source of competitor features, instead of ProductCompetitorFeature.
+
 The clustering algorithm:
-1. Retrieves all competitor features with embeddings for a product
-2. Uses agglomerative clustering with cosine distance
-3. Creates/updates FeatureCluster records with intensity metrics
-4. Identifies high-intensity clusters for idea generation
+1. Extracts features from CompetitorFunctionalReport.functional_comparison
+2. Generates embeddings on-the-fly for semantic clustering
+3. Uses agglomerative clustering with cosine distance
+4. Creates/updates FeatureCluster records with intensity metrics
+5. Identifies high-intensity clusters for idea generation
 
 Phase: Agent-Centric Competitive Intelligence Restructuring
 """
@@ -23,21 +27,34 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import pdist, squareform
 
 from app.models.competitive_agent import FeatureCluster, FeatureClusterMember
-from app.models.competitor_intelligence import (
-    ProductCompetitor, ProductCompetitorFeature, CIProduct
-)
+from app.models.competitor_intelligence import ProductCompetitor, CIProduct
+from app.models.competitive_reports import CompetitorFunctionalReport
 from app.services.similarity_detector import get_embedding_model
+
+
+@dataclass
+class FeatureInfo:
+    """Information about a feature from functional report."""
+    feature_key: str  # Unique identifier: "{competitor_id}_{feature_name_hash}"
+    competitor_id: int
+    competitor_name: str
+    feature_name: str
+    feature_description: str
+    feature_category: str
+    mapping_status: str  # Gap, Parity, Advantage, Differentiator
+    report_id: int
 
 
 @dataclass
 class ClusterInfo:
     """Information about a computed cluster before persisting."""
-    feature_ids: List[int]
+    feature_keys: List[str]  # Changed from feature_ids to feature_keys
     competitor_ids: Set[int]
     competitor_names: Set[str]
     centroid: List[float]
     feature_names: List[str]
     feature_descriptions: List[str]
+    features: List[FeatureInfo]  # Full feature info for creating members
 
 
 @dataclass
@@ -86,59 +103,80 @@ class FeatureClusteringService:
     def get_features_with_embeddings(
         self,
         product_id: int
-    ) -> Tuple[List[Dict[str, Any]], np.ndarray]:
+    ) -> Tuple[List[FeatureInfo], np.ndarray]:
         """
-        Retrieve all competitor features with their embeddings for a product.
+        Extract features from CompetitorFunctionalReport and generate embeddings.
+
+        V2 Architecture: Reads from functional_comparison JSON arrays in
+        CompetitorFunctionalReport instead of ProductCompetitorFeature table.
 
         Args:
             product_id: Product ID to get features for
 
         Returns:
             Tuple of (feature_info_list, embeddings_matrix)
-            - feature_info_list: List of dicts with feature metadata
-            - embeddings_matrix: numpy array of shape (n_features, 384)
+            - feature_info_list: List of FeatureInfo objects
+            - embeddings_matrix: numpy array of shape (n_features, embedding_dim)
         """
-        # Query features and their embeddings from vec_competitor_features
-        results = self.db.execute(text("""
-            SELECT
-                pcf.id as feature_id,
-                pcf.feature_name,
-                pcf.feature_description,
-                pcf.feature_category,
-                pc.id as competitor_id,
-                pc.competitor_name,
-                v.embedding
-            FROM vec_competitor_features v
-            JOIN product_competitor_features pcf ON v.feature_id = pcf.id
-            JOIN product_competitors pc ON pcf.product_competitor_id = pc.id
-            WHERE pc.product_id = :product_id
-              AND pc.status = 'active'
-              AND pcf.status = 'active'
-        """), {"product_id": product_id}).fetchall()
+        import hashlib
 
-        if not results:
+        # Get all functional reports for this product
+        reports = self.db.query(CompetitorFunctionalReport).filter(
+            CompetitorFunctionalReport.product_id == product_id
+        ).all()
+
+        if not reports:
             return [], np.array([])
 
         features = []
         embeddings = []
 
-        for row in results:
-            feature_id, feature_name, feature_description, feature_category, \
-                competitor_id, competitor_name, embedding_blob = row
+        for report in reports:
+            # Get competitor info
+            competitor = self.db.query(ProductCompetitor).filter(
+                ProductCompetitor.id == report.product_competitor_id
+            ).first()
 
-            # Deserialize embedding from sqlite-vec format (stored as raw float32 bytes)
-            if embedding_blob:
-                embedding = np.frombuffer(embedding_blob, dtype=np.float32)
+            if not competitor:
+                continue
+
+            # Extract features from functional_comparison
+            functional_comparison = report.functional_comparison or []
+
+            for feature_data in functional_comparison:
+                feature_name = feature_data.get('competitor_feature_name', '')
+                feature_description = feature_data.get('functional_description', '')
+                feature_category = feature_data.get('feature_category', '')
+                mapping_status = feature_data.get('mapping_status', '')
+
+                # Only include features where competitor has the feature
+                # Gap = competitor has it, we don't
+                # Parity = both have it
+                # Differentiator = unique workflow they offer
+                if mapping_status not in ['Gap', 'Parity', 'Differentiator']:
+                    continue
+
+                if not feature_name:
+                    continue
+
+                # Generate unique key for this feature
+                feature_key = f"{competitor.id}_{hashlib.md5(feature_name.encode()).hexdigest()[:8]}"
+
+                # Generate embedding for the feature
+                feature_text = f"{feature_name}\n{feature_description}"
+                embedding = self.generate_embedding(feature_text)
+
+                features.append(FeatureInfo(
+                    feature_key=feature_key,
+                    competitor_id=competitor.id,
+                    competitor_name=competitor.competitor_name,
+                    feature_name=feature_name,
+                    feature_description=feature_description,
+                    feature_category=feature_category,
+                    mapping_status=mapping_status,
+                    report_id=report.id
+                ))
                 embeddings.append(embedding)
-
-                features.append({
-                    'feature_id': feature_id,
-                    'feature_name': feature_name,
-                    'feature_description': feature_description or '',
-                    'feature_category': feature_category,
-                    'competitor_id': competitor_id,
-                    'competitor_name': competitor_name,
-                })
 
         return features, np.array(embeddings) if embeddings else np.array([])
 
@@ -199,24 +237,26 @@ class FeatureClusteringService:
         cluster_groups: Dict[int, ClusterInfo] = {}
 
         for idx, label in enumerate(cluster_labels):
-            feature = features[idx]
+            feature = features[idx]  # This is now a FeatureInfo object
 
             if label not in cluster_groups:
                 cluster_groups[label] = ClusterInfo(
-                    feature_ids=[],
+                    feature_keys=[],
                     competitor_ids=set(),
                     competitor_names=set(),
                     centroid=[],
                     feature_names=[],
-                    feature_descriptions=[]
+                    feature_descriptions=[],
+                    features=[]
                 )
 
             cluster = cluster_groups[label]
-            cluster.feature_ids.append(feature['feature_id'])
-            cluster.competitor_ids.add(feature['competitor_id'])
-            cluster.competitor_names.add(feature['competitor_name'])
-            cluster.feature_names.append(feature['feature_name'])
-            cluster.feature_descriptions.append(feature['feature_description'])
+            cluster.feature_keys.append(feature.feature_key)
+            cluster.competitor_ids.add(feature.competitor_id)
+            cluster.competitor_names.add(feature.competitor_name)
+            cluster.feature_names.append(feature.feature_name)
+            cluster.feature_descriptions.append(feature.feature_description)
+            cluster.features.append(feature)
 
         # Calculate centroids for each cluster
         for label, cluster in cluster_groups.items():
@@ -228,7 +268,7 @@ class FeatureClusteringService:
         # Filter out clusters below minimum size
         valid_clusters = {
             label: cluster for label, cluster in cluster_groups.items()
-            if len(cluster.feature_ids) >= min_cluster_size
+            if len(cluster.feature_keys) >= min_cluster_size
         }
 
         # Get config for intensity threshold
@@ -270,7 +310,7 @@ class FeatureClusteringService:
                 cluster_description=cluster_description,
                 centroid_embedding=cluster_info.centroid,
                 competitor_count=len(cluster_info.competitor_ids),
-                feature_count=len(cluster_info.feature_ids),
+                feature_count=len(cluster_info.feature_keys),
                 idea_generated=False,
                 generated_idea_id=None
             )
@@ -281,23 +321,31 @@ class FeatureClusteringService:
             if len(cluster_info.competitor_ids) >= intensity_threshold:
                 high_intensity_count += 1
 
-            # Create cluster members
-            for feature_id in cluster_info.feature_ids:
+            # Create cluster members from V2 feature data
+            for feature_info in cluster_info.features:
                 # Calculate similarity to centroid
                 feature_idx = next(
                     i for i, f in enumerate(features)
-                    if f['feature_id'] == feature_id
+                    if f.feature_key == feature_info.feature_key
                 )
                 feature_embedding = embeddings[feature_idx]
-                similarity = 1.0 - np.dot(feature_embedding, cluster_info.centroid) / (
-                    np.linalg.norm(feature_embedding) * np.linalg.norm(cluster_info.centroid)
+                centroid_array = np.array(cluster_info.centroid)
+                similarity = 1.0 - np.dot(feature_embedding, centroid_array) / (
+                    np.linalg.norm(feature_embedding) * np.linalg.norm(centroid_array)
                 )
                 # Convert from cosine distance to similarity
                 similarity = self._distance_to_similarity(similarity)
 
+                # V2: Store feature data directly in the member record
                 member = FeatureClusterMember(
                     cluster_id=feature_cluster.id,
-                    feature_id=feature_id,
+                    feature_key=feature_info.feature_key,
+                    competitor_id=feature_info.competitor_id,
+                    feature_name=feature_info.feature_name,
+                    feature_description=feature_info.feature_description,
+                    feature_category=feature_info.feature_category,
+                    mapping_status=feature_info.mapping_status,
+                    source_report_id=feature_info.report_id,
                     similarity_score=float(similarity)
                 )
                 self.db.add(member)
@@ -416,24 +464,21 @@ class FeatureClusteringService:
 
                 member_info = []
                 for member in members:
-                    feature = self.db.query(ProductCompetitorFeature).filter(
-                        ProductCompetitorFeature.id == member.feature_id
+                    # V2: Feature data is stored directly in the member record
+                    competitor = self.db.query(ProductCompetitor).filter(
+                        ProductCompetitor.id == member.competitor_id
                     ).first()
 
-                    if feature:
-                        competitor = self.db.query(ProductCompetitor).filter(
-                            ProductCompetitor.id == feature.product_competitor_id
-                        ).first()
-
-                        member_info.append({
-                            'feature_id': feature.id,
-                            'feature_name': feature.feature_name,
-                            'feature_description': feature.feature_description,
-                            'feature_category': feature.feature_category,
-                            'competitor_id': competitor.id if competitor else None,
-                            'competitor_name': competitor.competitor_name if competitor else None,
-                            'similarity_score': member.similarity_score
-                        })
+                    member_info.append({
+                        'feature_key': member.feature_key,
+                        'feature_name': member.feature_name,
+                        'feature_description': member.feature_description,
+                        'feature_category': member.feature_category,
+                        'mapping_status': member.mapping_status,
+                        'competitor_id': member.competitor_id,
+                        'competitor_name': competitor.competitor_name if competitor else None,
+                        'similarity_score': member.similarity_score
+                    })
 
                 cluster_dict['members'] = member_info
 
@@ -491,27 +536,34 @@ class FeatureClusteringService:
             cluster.generated_idea_id = idea_id
             self.db.commit()
 
-    def get_cluster_feature_ids(self, cluster_id: int) -> List[int]:
+    def get_cluster_feature_keys(self, cluster_id: int) -> List[str]:
         """
-        Get all feature IDs in a cluster.
+        Get all feature keys in a cluster.
+
+        V2: Returns feature_key strings instead of integer feature_id.
 
         Args:
             cluster_id: Cluster ID
 
         Returns:
-            List of feature IDs
+            List of feature keys
         """
         members = self.db.query(FeatureClusterMember).filter(
             FeatureClusterMember.cluster_id == cluster_id
         ).all()
 
-        return [m.feature_id for m in members]
+        return [m.feature_key for m in members]
+
+    # Legacy compatibility alias
+    def get_cluster_feature_ids(self, cluster_id: int) -> List[str]:
+        """Legacy alias for get_cluster_feature_keys. Returns feature keys."""
+        return self.get_cluster_feature_keys(cluster_id)
 
     def recalculate_cluster_intensity(self, cluster_id: int) -> int:
         """
         Recalculate the competitor count for a cluster.
 
-        Useful after features are added/removed.
+        V2: Uses competitor_id stored directly in member records.
 
         Args:
             cluster_id: Cluster to recalculate
@@ -523,13 +575,8 @@ class FeatureClusteringService:
             FeatureClusterMember.cluster_id == cluster_id
         ).all()
 
-        competitor_ids = set()
-        for member in members:
-            feature = self.db.query(ProductCompetitorFeature).filter(
-                ProductCompetitorFeature.id == member.feature_id
-            ).first()
-            if feature:
-                competitor_ids.add(feature.product_competitor_id)
+        # V2: competitor_id is stored directly on the member
+        competitor_ids = set(m.competitor_id for m in members)
 
         cluster = self.db.query(FeatureCluster).filter(
             FeatureCluster.id == cluster_id

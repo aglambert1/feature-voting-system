@@ -319,7 +319,12 @@ class SimilarityDetectorService:
             embedding=embedding
         )
 
-    def find_competitive_matches(
+    # DEPRECATED: find_competitive_matches has been removed.
+    # It used VectorService.find_similar_competitor_features and ProductCompetitorFeature
+    # which are part of the legacy system.
+    # Use find_competitive_matches_from_reports() instead, which reads from V2 functional reports.
+
+    def find_competitive_matches_from_reports(
         self,
         idea_text: str,
         product_id: int,
@@ -327,14 +332,11 @@ class SimilarityDetectorService:
         similarity_threshold: float = 0.5
     ) -> Dict[str, Any]:
         """
-        Find competitor features that match an idea using vector similarity
-        and calculate competitive urgency.
+        Find competitor features that match an idea using CompetitorFunctionalReport data (V2).
 
-        This provides structured competitive context for idea triage with
-        deterministic urgency levels that help PMs understand priority.
-
-        Uses vector embeddings for accurate semantic matching between ideas
-        and competitor features.
+        This method queries the V2 functional reports instead of the legacy
+        ProductCompetitorFeature table, providing more accurate competitive
+        context from the latest functional audits.
 
         Args:
             idea_text: Text of the idea to match
@@ -347,19 +349,20 @@ class SimilarityDetectorService:
             - matches: List of matching competitor features with similarity scores
             - urgency: CompetitiveUrgencyResult with structured assessment
         """
+        from app.models.competitive_reports import CompetitorFunctionalReport
         from app.models.competitor_intelligence import ProductCompetitor
 
-        # Generate embedding for the idea
-        embedding = self.generate_embedding(idea_text)
+        # Get all functional reports for this product
+        reports = self.db.query(CompetitorFunctionalReport).filter(
+            CompetitorFunctionalReport.product_id == product_id
+        ).all()
 
-        # Get total active competitors for this product (for urgency calculation)
-        total_competitors = self.db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.status == 'active'
-        ).count()
+        # Count total competitors with reports (this is the denominator for V2)
+        total_competitors = len(reports)
 
         if total_competitors == 0:
-            # No competitors tracked - low urgency (potential differentiator)
+            # No functional reports - return empty result
+            # Caller can fall back to legacy method if desired
             return {
                 "matches": [],
                 "urgency": CompetitiveUrgencyResult(
@@ -367,47 +370,70 @@ class SimilarityDetectorService:
                     competitor_count=0,
                     total_competitors_analyzed=0,
                     competitors_with_feature=[],
-                    reasoning="No competitors are being tracked for this product. This feature could be a differentiator."
+                    reasoning="No functional reports available. Run competitive analysis first."
                 ).to_dict()
             }
 
-        # Use vector similarity search to find matching features
-        vector_results = VectorService.find_similar_competitor_features(
-            db=self.db,
-            query_embedding=embedding,
-            product_id=product_id,
-            limit=limit * 2,  # Get extra results in case of ties
-            threshold=similarity_threshold
-        )
+        # Generate embedding for the idea
+        embedding = self.generate_embedding(idea_text)
 
-        # Process results and track unique competitors
+        # Extract all features from functional_comparison arrays and match
+        all_features = []
+        competitor_names = {}
+
+        for report in reports:
+            # Get competitor name
+            competitor = self.db.query(ProductCompetitor).filter(
+                ProductCompetitor.id == report.product_competitor_id
+            ).first()
+
+            if not competitor:
+                continue
+
+            competitor_name = competitor.competitor_name
+            competitor_names[report.product_competitor_id] = competitor_name
+
+            # Extract features from functional_comparison
+            functional_comparison = report.functional_comparison or []
+            for feature in functional_comparison:
+                # Only include features where competitor has the feature (Gap = they have it, we don't)
+                # or Parity (both have it) - these are features the competitor offers
+                mapping_status = feature.get('mapping_status', '')
+                if mapping_status in ['Gap', 'Parity', 'Differentiator']:
+                    all_features.append({
+                        'competitor_id': report.product_competitor_id,
+                        'competitor_name': competitor_name,
+                        'feature_name': feature.get('competitor_feature_name', ''),
+                        'feature_description': feature.get('functional_description', ''),
+                        'feature_category': feature.get('feature_category', ''),
+                        'mapping_status': mapping_status,
+                    })
+
+        # Match features using vector similarity
         matches = []
         competitors_with_feature = set()
 
-        for result in vector_results:
-            feature_id, feature_name, feature_description, competitor_id, competitor_name, distance = result
+        for feature in all_features:
+            feature_text = f"{feature['feature_name']}\n{feature['feature_description']}"
+            feature_embedding = self.generate_embedding(feature_text)
 
-            # Convert distance to similarity score
-            similarity = self._distance_to_similarity(distance)
+            # Calculate cosine similarity
+            similarity = self._cosine_similarity(embedding, feature_embedding)
 
-            matches.append({
-                'competitor_id': competitor_id,
-                'competitor_name': competitor_name,
-                'feature_id': feature_id,
-                'feature_name': feature_name,
-                'feature_description': feature_description,
-                'similarity_score': round(similarity, 3),
-            })
-            competitors_with_feature.add(competitor_name)
+            if similarity >= similarity_threshold:
+                matches.append({
+                    'competitor_id': feature['competitor_id'],
+                    'competitor_name': feature['competitor_name'],
+                    'feature_name': feature['feature_name'],
+                    'feature_description': feature['feature_description'],
+                    'feature_category': feature['feature_category'],
+                    'mapping_status': feature['mapping_status'],
+                    'similarity_score': round(similarity, 3),
+                })
+                competitors_with_feature.add(feature['competitor_name'])
 
-        # If no vector matches found, fall back to text-based matching
-        # This handles cases where competitor features don't have embeddings yet
-        if not matches:
-            matches, competitors_with_feature = self._text_based_feature_matching(
-                idea_text=idea_text,
-                product_id=product_id,
-                limit=limit
-            )
+        # Sort by similarity and limit
+        matches.sort(key=lambda x: x['similarity_score'], reverse=True)
 
         # Calculate structured urgency
         urgency_result = self._calculate_competitive_urgency(
@@ -421,111 +447,33 @@ class SimilarityDetectorService:
             "urgency": urgency_result.to_dict()
         }
 
-    def _text_based_feature_matching(
-        self,
-        idea_text: str,
-        product_id: int,
-        limit: int = 5
-    ) -> Tuple[List[Dict[str, Any]], set]:
+    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
         """
-        Fallback text-based feature matching when embeddings are not available.
-
-        Uses word overlap similarity as a simple approximation.
+        Calculate cosine similarity between two vectors.
 
         Args:
-            idea_text: Text of the idea to match
-            product_id: Product to search competitors for
-            limit: Maximum feature matches to return
+            vec1: First embedding vector
+            vec2: Second embedding vector
 
         Returns:
-            Tuple of (matches list, set of competitor names with matches)
+            Similarity score between 0 and 1
         """
-        from app.models.competitor_intelligence import ProductCompetitor, ProductCompetitorFeature
+        import numpy as np
+        vec1 = np.array(vec1)
+        vec2 = np.array(vec2)
 
-        competitors = self.db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.status == 'active'
-        ).all()
+        dot_product = np.dot(vec1, vec2)
+        norm1 = np.linalg.norm(vec1)
+        norm2 = np.linalg.norm(vec2)
 
-        matches = []
-        competitors_with_feature = set()
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
 
-        for competitor in competitors:
-            features = self.db.query(ProductCompetitorFeature).filter(
-                ProductCompetitorFeature.product_competitor_id == competitor.id,
-                ProductCompetitorFeature.status == 'active'
-            ).all()
+        return float(dot_product / (norm1 * norm2))
 
-            for feature in features:
-                feature_text = f"{feature.feature_name}\n{feature.feature_description or ''}"
-                similarity = self._text_similarity(idea_text.lower(), feature_text.lower())
-
-                if similarity > 0.3:
-                    matches.append({
-                        'competitor_id': competitor.id,
-                        'competitor_name': competitor.competitor_name,
-                        'feature_id': feature.id,
-                        'feature_name': feature.feature_name,
-                        'feature_description': feature.feature_description,
-                        'feature_category': feature.feature_category,
-                        'similarity_score': round(similarity, 3),
-                    })
-                    competitors_with_feature.add(competitor.competitor_name)
-
-        # Sort by similarity and limit
-        matches.sort(key=lambda x: x['similarity_score'], reverse=True)
-        return matches[:limit], competitors_with_feature
-
-    def store_competitor_feature_embedding(self, feature_id: int, feature_text: str) -> None:
-        """
-        Generate and store embedding for a competitor feature.
-
-        Call this when extracting new features to enable vector similarity search.
-
-        Args:
-            feature_id: ID of the ProductCompetitorFeature
-            feature_text: Combined text (name + description) for embedding
-        """
-        embedding = self.generate_embedding(feature_text)
-        VectorService.store_competitor_feature_embedding(
-            db=self.db,
-            feature_id=feature_id,
-            embedding=embedding
-        )
-
-    def bulk_store_competitor_feature_embeddings(self, product_id: int) -> int:
-        """
-        Generate and store embeddings for all competitor features for a product.
-
-        Useful for backfilling embeddings for existing features.
-
-        Args:
-            product_id: Product ID to process features for
-
-        Returns:
-            Number of features processed
-        """
-        from app.models.competitor_intelligence import ProductCompetitor, ProductCompetitorFeature
-
-        competitors = self.db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.status == 'active'
-        ).all()
-
-        count = 0
-        for competitor in competitors:
-            features = self.db.query(ProductCompetitorFeature).filter(
-                ProductCompetitorFeature.product_competitor_id == competitor.id,
-                ProductCompetitorFeature.status == 'active'
-            ).all()
-
-            for feature in features:
-                feature_text = f"{feature.feature_name}\n{feature.feature_description or ''}"
-                self.store_competitor_feature_embedding(feature.id, feature_text)
-                count += 1
-
-        self.db.commit()
-        return count
+    # DEPRECATED: _text_based_feature_matching, store_competitor_feature_embedding,
+    # and bulk_store_competitor_feature_embeddings have been removed.
+    # Use find_competitive_matches_from_reports() which reads from V2 functional reports.
 
     def _calculate_competitive_urgency(
         self,

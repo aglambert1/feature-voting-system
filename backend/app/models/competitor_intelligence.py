@@ -132,10 +132,14 @@ class CIProduct(Base):
 
 class CompetitorAnalysisSession(Base):
     """
-    A single analysis session for a product.
+    DEPRECATED: This model is part of the legacy session-based workflow.
 
-    Each time a user runs competitor analysis, a new session is created.
-    Sessions can be "full" (new analysis) or "differential" (compare to previous).
+    Use the V2 Competitive Intelligence Agent workflow instead:
+    - CompetitorFunctionalReport for competitor analysis
+    - LandscapeOpportunityReport for opportunity synthesis
+
+    This model is kept for backward compatibility during migration.
+    The database should be reinitialized to drop this table.
     """
     __tablename__ = "competitor_analysis_sessions"
 
@@ -216,10 +220,10 @@ class ProductCompetitor(Base):
 
 class SessionCompetitor(Base):
     """
-    Competitor discovered in a specific analysis session.
+    DEPRECATED: This model is part of the legacy session-based workflow.
 
-    Links to persistent ProductCompetitor if it's a known competitor,
-    or represents a new discovery.
+    Use ProductCompetitor directly (without session linkage) in V2.
+    The database should be reinitialized to drop this table.
     """
     __tablename__ = "session_competitors"
 
@@ -247,9 +251,11 @@ class SessionCompetitor(Base):
 
 class ProductCompetitorFeature(Base):
     """
-    Persistent record of a feature from a competitor.
+    DEPRECATED: This model is part of the legacy session-based workflow.
 
-    Tracks features across multiple analysis sessions.
+    Use CompetitorFunctionalReport.functional_comparison for competitor features in V2.
+    Feature data is stored directly in the JSON field of functional reports.
+    The database should be reinitialized to drop this table.
     """
     __tablename__ = "product_competitor_features"
 
@@ -283,10 +289,10 @@ class ProductCompetitorFeature(Base):
 
 class CompetitorFeature(Base):
     """
-    Feature extracted from a competitor in a specific session.
+    DEPRECATED: This model is part of the legacy session-based workflow.
 
-    Links to persistent ProductCompetitorFeature if it's a known feature,
-    or represents a new discovery.
+    Use CompetitorFunctionalReport.functional_comparison for competitor features in V2.
+    The database should be reinitialized to drop this table.
     """
     __tablename__ = "competitor_features"
 
@@ -318,9 +324,14 @@ class CompetitorFeature(Base):
 
 class CompetitorGeneratedIdea(Base):
     """
-    AI-generated idea based on a competitor feature.
+    DEPRECATED: This model is part of the legacy session-based workflow.
 
-    These ideas can be edited by users and then submitted to the main ideas table.
+    In V2, ideas are generated from:
+    - LandscapeOpportunityReport.opportunities
+    - FeatureCluster with intensity above threshold
+
+    Use the idea normalization pipeline (IdeaNormalizerService) to create ideas.
+    The database should be reinitialized to drop this table.
     """
     __tablename__ = "competitor_generated_ideas"
 
