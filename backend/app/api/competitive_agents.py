@@ -91,7 +91,7 @@ class AgentConfigUpdateRequest(BaseModel):
     deep_analysis_schedule: Optional[str] = Field(None, pattern="^(daily|weekly|monthly)$")
 
     intensity_similarity_threshold: Optional[float] = Field(None, ge=0.5, le=0.95)
-    intensity_idea_threshold: Optional[int] = Field(None, ge=2, le=10)
+    intensity_idea_threshold: Optional[int] = Field(None, ge=0, le=10)  # 0 = disabled
 
     enabled: Optional[bool] = None
 

@@ -499,7 +499,8 @@ class FeatureClusteringService:
             threshold: Override threshold (uses config if not provided)
 
         Returns:
-            List of FeatureCluster objects meeting threshold
+            List of FeatureCluster objects meeting threshold.
+            Returns empty list if threshold is 0 (auto-generation disabled).
         """
         if threshold is None:
             # Get from product config
@@ -508,6 +509,10 @@ class FeatureClusteringService:
                 CompetitiveAgentConfig.product_id == product_id
             ).first()
             threshold = config.intensity_idea_threshold if config else 3
+
+        # Threshold of 0 means auto-generation is disabled
+        if threshold == 0:
+            return []
 
         return self.db.query(FeatureCluster).filter(
             FeatureCluster.product_id == product_id,
