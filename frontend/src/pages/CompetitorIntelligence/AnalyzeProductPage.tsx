@@ -5,12 +5,12 @@
  * Supports multi-source documentation and re-analysis.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import api from '../../services/api';
+import api, { getProductJobs } from '../../services/api';
 import Navigation from '../../components/Navigation';
 import { MultiSourceInput } from '../../components/MultiSourceInput';
-import { ProductSource } from '../../types';
+import { ProductSource, QueueJob, JobStatus, JobType } from '../../types';
 
 interface ProductData {
   id: number;
@@ -29,6 +29,7 @@ export default function AnalyzeProductPage() {
   const [sources, setSources] = useState<ProductSource[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
+  const [activeJob, setActiveJob] = useState<QueueJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const initialSourcesLoaded = useRef<boolean>(false);
   const autoAnalyzeTriggered = useRef<boolean>(false);
@@ -36,11 +37,72 @@ export default function AnalyzeProductPage() {
   // Check if we should auto-analyze (navigated from CreateProductPage)
   const autoAnalyze = (location.state as { autoAnalyze?: boolean })?.autoAnalyze ?? false;
 
+  // Check for existing active analysis job on mount
+  const checkActiveJob = useCallback(async () => {
+    if (!productId) return;
+    try {
+      const jobs = await getProductJobs(parseInt(productId), 5, [JobType.PRODUCT_ANALYSIS]);
+      const active = jobs.find(j =>
+        j.status === JobStatus.PENDING ||
+        j.status === JobStatus.QUEUED ||
+        j.status === JobStatus.RUNNING
+      );
+      if (active) {
+        setActiveJob(active);
+        setAnalyzing(true);
+      } else {
+        setActiveJob(null);
+        setAnalyzing(false);
+      }
+    } catch (err) {
+      console.error('[AnalyzeProduct] Failed to check active job:', err);
+    }
+  }, [productId]);
+
   useEffect(() => {
     if (productId) {
       fetchProduct();
+      checkActiveJob();
     }
   }, [productId]);
+
+  // Poll for job status while analyzing
+  useEffect(() => {
+    if (!analyzing || !productId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const jobs = await getProductJobs(parseInt(productId), 5, [JobType.PRODUCT_ANALYSIS]);
+        const active = jobs.find(j =>
+          j.status === JobStatus.PENDING ||
+          j.status === JobStatus.QUEUED ||
+          j.status === JobStatus.RUNNING
+        );
+
+        if (active) {
+          setActiveJob(active);
+        } else {
+          // Job completed - check if it succeeded
+          const completed = jobs.find(j =>
+            j.status === JobStatus.SUCCESS || j.status === JobStatus.FAILURE
+          );
+          setActiveJob(null);
+          setAnalyzing(false);
+
+          if (completed?.status === JobStatus.SUCCESS) {
+            // Redirect to product page on success
+            navigate(`/product-intelligence/products/${productId}`);
+          } else if (completed?.status === JobStatus.FAILURE) {
+            setError(completed.error_message || 'Analysis failed. Please try again.');
+          }
+        }
+      } catch (err) {
+        console.error('[AnalyzeProduct] Failed to poll job status:', err);
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [analyzing, productId, navigate]);
 
   // Parse existing product sources from source_data
   useEffect(() => {
@@ -145,20 +207,28 @@ export default function AnalyzeProductPage() {
 
       console.log('[AnalyzeProduct] Sending to API with', payload.source_data.total_tokens_estimate, 'tokens');
 
-      // Analyze product (Stage 1)
-      await api.post(
-        `/product-intelligence/products/${productId}/analyze`,
+      // Queue product analysis as a background job
+      const response = await api.post<QueueJob>(
+        `/product-intelligence/products/${productId}/analyze/queue`,
         payload
       );
 
-      console.log('[AnalyzeProduct] Analysis complete');
-
-      // Redirect directly to product detail page after successful analysis
-      navigate(`/product-intelligence/products/${productId}`);
+      console.log('[AnalyzeProduct] Analysis job queued:', response.data.job_uuid);
+      setActiveJob(response.data);
+      // Stay on page - polling will handle completion
     } catch (err: any) {
       console.error('[AnalyzeProduct] Error during analysis:', err);
-      setError(err.message || err.data?.detail || 'Failed to analyze product');
-      setAnalyzing(false);
+      const statusCode = err.response?.status;
+      const detail = err.response?.data?.detail || err.message || 'Failed to analyze product';
+
+      if (statusCode === 409) {
+        // Analysis already running - check for active job
+        setError('Analysis is already in progress for this product.');
+        checkActiveJob();
+      } else {
+        setError(detail);
+        setAnalyzing(false);
+      }
     }
   };
 
@@ -283,9 +353,47 @@ export default function AnalyzeProductPage() {
             <div className="flex flex-col items-center justify-center space-y-4">
               <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600"></div>
               <h3 className="text-lg font-semibold text-gray-900">Analyzing Product...</h3>
-              <p className="text-sm text-gray-600 text-center max-w-md">
-                AI is extracting features, categorizing, identifying target users, and generating competitor search keywords.
-                This may take a minute.
+
+              {/* Job Status */}
+              {activeJob && (
+                <div className="w-full max-w-md">
+                  <div className="flex items-center justify-between text-sm mb-2">
+                    <span className="text-gray-600">
+                      {activeJob.status === JobStatus.RUNNING
+                        ? 'Running'
+                        : activeJob.status === JobStatus.QUEUED
+                          ? 'Queued'
+                          : 'Starting'}
+                    </span>
+                    {activeJob.progress_percent > 0 && (
+                      <span className="text-gray-500">{Math.round(activeJob.progress_percent)}%</span>
+                    )}
+                  </div>
+                  {activeJob.status === JobStatus.RUNNING && activeJob.progress_percent > 0 && (
+                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                        style={{ width: `${activeJob.progress_percent}%` }}
+                      />
+                    </div>
+                  )}
+                  {activeJob.progress_message && (
+                    <p className="text-sm text-gray-500 mt-2 text-center">
+                      {activeJob.progress_message}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {!activeJob && (
+                <p className="text-sm text-gray-600 text-center max-w-md">
+                  AI is extracting features, categorizing, identifying target users, and generating competitor search keywords.
+                  This may take a minute.
+                </p>
+              )}
+
+              <p className="text-sm text-gray-500 mt-4">
+                You can return to the product page at any time. Analysis will continue in the background.
               </p>
             </div>
           </div>

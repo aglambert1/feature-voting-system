@@ -1343,6 +1343,9 @@ import type {
   InternalFeedbackImport,
   InternalFeedbackThemes,
   ImportStatusResponse,
+  ActivityImport,
+  ActivityInsights,
+  ActivityImportStatusResponse,
 } from '../types';
 
 /**
@@ -1436,6 +1439,92 @@ export const reprocessInternalFeedback = async (
 ): Promise<InternalFeedbackImport> => {
   const response = await api.post<InternalFeedbackImport>(
     `/internal-feedback/${productId}/imports/${importId}/reprocess`
+  );
+  return response.data;
+};
+
+// ============================================================================
+// ACTIVITY IMPORT API METHODS (CRM Activity Stream Analysis)
+// ============================================================================
+
+/**
+ * Upload activity data file (JSON or Markdown)
+ */
+export const uploadActivityData = async (
+  productId: number,
+  file: File
+): Promise<ActivityImport> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await api.post<ActivityImport>(
+    `/internal-feedback/${productId}/activity-import`,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+  return response.data;
+};
+
+/**
+ * Get all activity imports for a product
+ */
+export const getActivityImports = async (
+  productId: number
+): Promise<ActivityImport[]> => {
+  const response = await api.get<{ imports: ActivityImport[]; total: number }>(
+    `/internal-feedback/${productId}/activity-imports`
+  );
+  return response.data.imports;
+};
+
+/**
+ * Get activity import status (for polling)
+ */
+export const getActivityImportStatus = async (
+  productId: number,
+  importId: number
+): Promise<ActivityImportStatusResponse> => {
+  const response = await api.get<ActivityImportStatusResponse>(
+    `/internal-feedback/${productId}/activity-imports/${importId}/status`
+  );
+  return response.data;
+};
+
+/**
+ * Get activity insights for a product
+ */
+export const getActivityInsights = async (
+  productId: number
+): Promise<ActivityInsights> => {
+  const response = await api.get<ActivityInsights>(
+    `/internal-feedback/${productId}/activity-insights`
+  );
+  return response.data;
+};
+
+/**
+ * Delete an activity import
+ */
+export const deleteActivityImport = async (
+  productId: number,
+  importId: number
+): Promise<void> => {
+  await api.delete(`/internal-feedback/${productId}/activity-imports/${importId}`);
+};
+
+/**
+ * Reprocess an activity import
+ */
+export const reprocessActivityImport = async (
+  productId: number,
+  importId: number
+): Promise<ActivityImport> => {
+  const response = await api.post<ActivityImport>(
+    `/internal-feedback/${productId}/activity-imports/${importId}/reprocess`
   );
   return response.data;
 };

@@ -25,9 +25,10 @@ import api, {
   getLatestSynthesis,
   getUnreadAlertCount,
   getFunctionalReports,
+  getProductJobs,
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
-import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, FeatureCluster, TriageSettings, JobType } from '../../types';
+import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, FeatureCluster, TriageSettings, JobType, QueueJob, JobStatus } from '../../types';
 import IdeaTriageSetupModal from './components/IdeaTriageSetupModal';
 import CompetitiveIntelligenceSetupModal from './components/CompetitiveIntelligenceSetupModal';
 import AgentJobStatus from '../../components/AgentJobStatus';
@@ -80,6 +81,7 @@ export default function ProductDetailPage() {
   const [sources, setSources] = useState<ProductSource[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeAnalysisJob, setActiveAnalysisJob] = useState<QueueJob | null>(null);
 
   // Agent-related state
   const [pendingCounts, setPendingCounts] = useState<ProductPendingCounts | null>(null);
@@ -204,7 +206,8 @@ export default function ProductDetailPage() {
         synthesisStatusRes,
         synthesisResultsRes,
         alertCountRes,
-        functionalReportsRes
+        functionalReportsRes,
+        analysisJobsRes
       ] = await Promise.all([
         getProductPendingCounts(numProductId).catch(() => null),
         getAgentConfig(numProductId).catch(() => null),
@@ -219,7 +222,8 @@ export default function ProductDetailPage() {
         getSynthesisStatus(numProductId).catch(() => null),
         getLatestSynthesis(numProductId).catch(() => null),
         getUnreadAlertCount(numProductId).catch(() => ({ count: 0 })),
-        getFunctionalReports(numProductId).catch(() => [])
+        getFunctionalReports(numProductId).catch(() => []),
+        getProductJobs(numProductId, 5, [JobType.PRODUCT_ANALYSIS]).catch(() => [])
       ]);
 
       setPendingCounts(pendingCountsRes);
@@ -230,6 +234,14 @@ export default function ProductDetailPage() {
       setAnalysisHistory(historyRes);
       setUnreadAlertCount(alertCountRes?.count || 0);
       setFunctionalReportCount(functionalReportsRes?.length || 0);
+
+      // Check for active analysis job
+      const activeAnalysis = analysisJobsRes.find((j: QueueJob) =>
+        j.status === JobStatus.PENDING ||
+        j.status === JobStatus.QUEUED ||
+        j.status === JobStatus.RUNNING
+      );
+      setActiveAnalysisJob(activeAnalysis || null);
 
       // Set internal feedback stats
       setInternalFeedbackStats({
@@ -278,6 +290,34 @@ export default function ProductDetailPage() {
   useEffect(() => {
     fetchAllData();
   }, [fetchAllData, location.key]);
+
+  // Poll for active analysis job completion
+  useEffect(() => {
+    if (!activeAnalysisJob || !productId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const jobs = await getProductJobs(parseInt(productId), 5, [JobType.PRODUCT_ANALYSIS]);
+        const active = jobs.find(j =>
+          j.status === JobStatus.PENDING ||
+          j.status === JobStatus.QUEUED ||
+          j.status === JobStatus.RUNNING
+        );
+
+        if (active) {
+          setActiveAnalysisJob(active);
+        } else {
+          // Job completed - refresh all data
+          setActiveAnalysisJob(null);
+          fetchAllData();
+        }
+      } catch (err) {
+        console.error('[ProductDetail] Failed to poll analysis job:', err);
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [activeAnalysisJob, productId, fetchAllData]);
 
   // Clear action message after timeout
   useEffect(() => {
@@ -623,7 +663,7 @@ export default function ProductDetailPage() {
 
               <div className="flex gap-2">
                 <Link
-                  to={`/product-intelligence/products/${productId}/internal-feedback`}
+                  to={`/product-intelligence/products/${productId}/internal-feedback${internalFeedbackStats.importCount > 0 ? '?tab=themes' : ''}`}
                   className="flex-1 px-3 py-2 text-sm text-center bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
                 >
                   {internalFeedbackStats.importCount > 0 ? 'View Themes' : 'Import Data'}
@@ -705,11 +745,19 @@ export default function ProductDetailPage() {
         </div>
 
         {/* Current Product Analysis */}
-        {currentAnalysis && (
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Current Product Analysis
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Product Analysis
             </h2>
+            <AgentJobStatus
+              productId={parseInt(productId!)}
+              jobTypes={[JobType.PRODUCT_ANALYSIS]}
+              onJobComplete={fetchAllData}
+            />
+          </div>
+        {currentAnalysis && (
+          <>
             <div className="space-y-4">
               {currentAnalysis.core_features && currentAnalysis.core_features.length > 0 && (
                 <div>
@@ -774,8 +822,14 @@ export default function ProductDetailPage() {
                 </div>
               )}
             </div>
-          </div>
+          </>
         )}
+        {!currentAnalysis && (
+          <p className="text-gray-500 text-sm">
+            No analysis yet. Click "Change Sources" to add product information and run analysis.
+          </p>
+        )}
+        </div>
 
         {/* Feature Query Chat */}
         {product && product.structured_product_data && (
@@ -878,10 +932,42 @@ export default function ProductDetailPage() {
         {/* Analysis History */}
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            Analysis History ({analysisHistory.length})
+            Analysis History ({analysisHistory.length}{activeAnalysisJob ? ' + 1 in progress' : ''})
           </h2>
 
-          {analysisHistory.length === 0 ? (
+          {/* Active Analysis Job */}
+          {activeAnalysisJob && (
+            <div className="mb-4 border border-blue-200 bg-blue-50 rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-medium text-blue-900">
+                      Version {(product?.analysis_version || 0) + 1}
+                      <span className="ml-2 text-xs text-blue-600 font-semibold">(Analyzing...)</span>
+                    </h3>
+                  </div>
+                  <p className="text-sm text-blue-700">
+                    {activeAnalysisJob.status === JobStatus.RUNNING
+                      ? activeAnalysisJob.progress_message || 'Running analysis...'
+                      : activeAnalysisJob.status === JobStatus.QUEUED
+                        ? 'Queued, waiting to start...'
+                        : 'Starting analysis...'}
+                  </p>
+                  {activeAnalysisJob.status === JobStatus.RUNNING && activeAnalysisJob.progress_percent > 0 && (
+                    <div className="mt-2 h-1.5 bg-blue-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                        style={{ width: `${activeAnalysisJob.progress_percent}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {analysisHistory.length === 0 && !activeAnalysisJob ? (
             <div className="text-center py-8">
               <p className="text-gray-500 mb-4">No analyses yet</p>
               <button
@@ -891,7 +977,7 @@ export default function ProductDetailPage() {
                 Add sources and run analysis
               </button>
             </div>
-          ) : (
+          ) : analysisHistory.length > 0 ? (
             <div className="space-y-4">
               {analysisHistory.map((analysis) => {
                 const isExpanded = expandedVersions.has(analysis.id);
@@ -994,7 +1080,7 @@ export default function ProductDetailPage() {
                 );
               })}
             </div>
-          )}
+          ) : null}
         </div>
       </main>
 

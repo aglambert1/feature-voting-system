@@ -50,6 +50,11 @@ from app.models.internal_feedback import (
     SupportTheme,
     ImportStatus,
 )
+from app.models.activity_insights import (
+    ActivityImport,
+    DealActivityInsight,
+    SupportActivityInsight,
+)
 from app.models.synthesis import (
     SynthesisRun,
     SynthesizedOpportunity,
@@ -70,5 +75,6 @@ __all__ = [
     "AgentMode", "CompetitiveAgentConfig", "FeatureCluster", "FeatureClusterMember",
     "CompetitorFunctionalReport", "LandscapeOpportunityReport",
     "InternalFeedbackImport", "WinLossTheme", "SupportTheme", "ImportStatus",
+    "ActivityImport", "DealActivityInsight", "SupportActivityInsight",
     "SynthesisRun", "SynthesizedOpportunity", "SynthesisStatus", "SynthesisSourceType",
 ]

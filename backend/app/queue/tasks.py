@@ -110,6 +110,14 @@ def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
         # Update progress
         queue_service.update_progress(job_id, 70.0, "Saving analysis results...")
 
+        # Update product with source data from input (new/modified sources)
+        if input_data.get('product_description'):
+            product.product_description = input_data['product_description']
+        if input_data.get('source_type'):
+            product.product_source_type = input_data['source_type']
+        if input_data.get('source_data'):
+            product.product_source_data = input_data['source_data']
+
         # Update product with structured data
         product.structured_product_data = result
         product.product_category = result.get('product_category', product.product_category)
@@ -2490,6 +2498,171 @@ def internal_discovery_task(self, job_id: int):
             db.close()
 
 
+@shared_task(bind=True, name='app.queue.tasks.activity_insight_task')
+def activity_insight_task(self, job_id: int):
+    """
+    Process CRM activity data to extract product insights.
+
+    This task:
+    1. Retrieves the parsed activity data from the import record
+    2. Runs the ActivityInsightAgent for per-deal and aggregate analysis
+    3. Stores DealActivityInsight and SupportActivityInsight records
+    4. Updates the import status with analysis summary
+
+    Args:
+        job_id: The QueueJob ID for this task
+    """
+    from app.agents.activity_insight_agent import ActivityInsightAgent
+    from app.models.activity_insights import (
+        ActivityImport,
+        DealActivityInsight,
+        SupportActivityInsight
+    )
+    from app.services.llm_service import LLMService
+    from datetime import datetime
+
+    db = None
+    try:
+        db = SessionLocal()
+        queue_service = QueueService(db)
+
+        # Get job details
+        job = queue_service.get_job(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        queue_service.mark_running(job_id)
+        queue_service.update_progress(job_id, 10.0, "Loading activity data...")
+
+        # Extract job parameters
+        input_data = job.input_data or {}
+        import_id = input_data.get('import_id')
+        parsed_data = input_data.get('parsed_data', {})
+
+        if not import_id:
+            raise ValueError("import_id is required in input_data")
+
+        # Get import record
+        import_record = db.query(ActivityImport).filter(
+            ActivityImport.id == import_id
+        ).first()
+
+        if not import_record:
+            raise ValueError(f"Activity import {import_id} not found")
+
+        queue_service.update_progress(job_id, 20.0, "Initializing activity insight agent...")
+
+        # Initialize LLM service and agent
+        llm_service = LLMService()
+        agent = ActivityInsightAgent(
+            db=db,
+            llm_service=llm_service,
+            product_id=import_record.product_id
+        )
+
+        queue_service.update_progress(job_id, 30.0, "Analyzing deal activities...")
+
+        # Run the agent with higher max_tokens for detailed activity analysis
+        # The output includes multiple deal insights, each with quotes, keywords, etc.
+        result = agent.execute(parsed_data, max_tokens=8000)
+
+        queue_service.update_progress(job_id, 70.0, "Storing insights...")
+
+        # Store deal activity insights
+        for insight in result.get('deal_insights', []):
+            db_insight = DealActivityInsight(
+                import_id=import_id,
+                product_id=import_record.product_id,
+                deal_id=insight.get('deal_id'),
+                deal_name=insight.get('deal_name'),
+                deal_outcome=insight.get('deal_outcome', 'unknown'),
+                deal_value=insight.get('deal_value'),
+                competitor_mentioned=insight.get('competitor_mentioned'),
+                theme_name=insight.get('theme_name'),
+                category=insight.get('category', 'feature_gap'),
+                sentiment=insight.get('sentiment', 'neutral'),
+                urgency_level=insight.get('urgency_level', 'medium'),
+                sample_quotes=insight.get('sample_quotes', []),
+                activity_count=insight.get('activity_count', 1),
+                feature_keywords=insight.get('feature_keywords', [])
+            )
+            db.add(db_insight)
+
+        # Store support activity insights
+        for insight in result.get('support_insights', []):
+            db_insight = SupportActivityInsight(
+                import_id=import_id,
+                product_id=import_record.product_id,
+                theme_name=insight.get('theme_name'),
+                category=insight.get('category', 'feature_gap'),
+                ticket_count=insight.get('ticket_count', 0),
+                urgency_level=insight.get('urgency_level', 'medium'),
+                sample_quotes=insight.get('sample_quotes', []),
+                accounts_affected=insight.get('accounts_affected', []),
+                feature_keywords=insight.get('feature_keywords', [])
+            )
+            db.add(db_insight)
+
+        queue_service.update_progress(job_id, 90.0, "Finalizing...")
+
+        # Update import record
+        import_record.status = "completed"
+        import_record.analysis_summary = result.get('analysis_summary')
+        import_record.top_loss_themes = result.get('top_loss_themes', [])
+        import_record.top_win_themes = result.get('top_win_themes', [])
+        import_record.competitor_patterns = result.get('competitor_patterns', {})
+        import_record.processed_at = datetime.utcnow()
+
+        db.commit()
+
+        # Mark job success
+        queue_service.mark_success(job_id, {
+            'import_id': import_id,
+            'deal_insights_count': len(result.get('deal_insights', [])),
+            'support_insights_count': len(result.get('support_insights', [])),
+            'deals_analyzed': result.get('deals_analyzed', 0),
+            'activities_analyzed': result.get('activities_analyzed', 0)
+        })
+
+        return {
+            'status': 'completed',
+            'import_id': import_id,
+            'deal_insights': len(result.get('deal_insights', [])),
+            'support_insights': len(result.get('support_insights', []))
+        }
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[activity_insight_task] Error for job {job_id}: {error_msg}")
+
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
+
+                # Update import record status
+                input_data = queue_service.get_job(job_id).input_data or {}
+                import_id = input_data.get('import_id')
+                if import_id:
+                    from app.models.activity_insights import ActivityImport
+                    import_record = db.query(ActivityImport).filter(
+                        ActivityImport.id == import_id
+                    ).first()
+                    if import_record:
+                        import_record.status = "failed"
+                        import_record.error_message = error_msg
+                        db.commit()
+            except Exception:
+                pass
+
+        raise
+
+    finally:
+        if db:
+            db.close()
+
+
 @shared_task(bind=True, name='app.queue.tasks.opportunity_synthesis_task')
 def opportunity_synthesis_task(self, job_id: int):
     """
@@ -2507,14 +2680,11 @@ def opportunity_synthesis_task(self, job_id: int):
     from app.agents.synthesis_agent import OpportunitySynthesisAgent
     from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
     from app.models.competitive_reports import LandscapeOpportunityReport
-    from app.models.internal_feedback import (
-        InternalFeedbackImport,
-        WinLossTheme,
-        SupportTheme
-    )
+    from app.models.internal_feedback import InternalFeedbackImport
     from app.models.idea import Idea, IdeaStatus
     from app.schemas.synthesis import OpportunitySynthesisOutput
     from app.services.llm_service import LLMService
+    from app.services.internal_theme_merger import InternalThemeMergerService
     from datetime import datetime
     from sqlalchemy import desc
 
@@ -2598,46 +2768,20 @@ def opportunity_synthesis_task(self, job_id: int):
 
         queue_service.update_progress(job_id, 40.0, "Gathering internal feedback...")
 
-        # 3. Internal feedback themes (from most recent completed import)
-        winloss_themes = []
-        support_themes = []
+        # 3. Internal feedback themes (merged from structured + activity sources)
+        # Use the InternalThemeMergerService to combine themes from:
+        # - Structured imports (WinLossTheme, SupportTheme)
+        # - Activity imports (DealActivityInsight, SupportActivityInsight)
+        # Similar themes are merged with confidence boosted when sources agree
+        merger = InternalThemeMergerService(db)
+        merged_evidence = merger.merge_internal_evidence(product_id)
+        internal_evidence_data = merger.to_synthesis_format(merged_evidence)
 
-        latest_import = db.query(InternalFeedbackImport).filter(
-            InternalFeedbackImport.product_id == product_id,
-            InternalFeedbackImport.themes_extracted == True
-        ).order_by(desc(InternalFeedbackImport.imported_at)).first()
+        winloss_themes = internal_evidence_data.get('winloss_themes', [])
+        support_themes = internal_evidence_data.get('support_themes', [])
 
-        if latest_import:
-            # Get win/loss themes
-            wl_themes = db.query(WinLossTheme).filter(
-                WinLossTheme.import_id == latest_import.id
-            ).all()
-            for theme in wl_themes:
-                winloss_themes.append({
-                    'id': theme.id,
-                    'theme_name': theme.theme_name,
-                    'outcome': theme.outcome,
-                    'competitor_name': theme.competitor_name,
-                    'deal_count': theme.deal_count,
-                    'total_value': theme.total_value,
-                    'sample_reasons': theme.sample_reasons or [],
-                    'feature_keywords': theme.feature_keywords or []
-                })
-
-            # Get support themes
-            sup_themes = db.query(SupportTheme).filter(
-                SupportTheme.import_id == latest_import.id
-            ).all()
-            for theme in sup_themes:
-                support_themes.append({
-                    'id': theme.id,
-                    'theme_name': theme.theme_name,
-                    'category': theme.category,
-                    'ticket_count': theme.ticket_count,
-                    'sample_subjects': theme.sample_subjects or [],
-                    'feature_keywords': theme.feature_keywords or [],
-                    'urgency_indicator': theme.urgency_indicator
-                })
+        # Track which internal sources were used
+        internal_sources_used = merged_evidence.sources_used  # ["structured", "activity"]
 
         # Update source snapshot
         sources_used = []
@@ -2648,14 +2792,23 @@ def opportunity_synthesis_task(self, job_id: int):
         if winloss_themes or support_themes:
             sources_used.append("internal")
 
+        # Count high-confidence themes (those with evidence from both structured + activity)
+        high_confidence_winloss = sum(1 for t in winloss_themes if t.get('confidence') == 'high')
+        high_confidence_support = sum(1 for t in support_themes if t.get('confidence') == 'high')
+
         source_snapshot = {
             'landscape_report_id': landscape_report.id if landscape_report else None,
             'competitive_opportunities_count': len(competitive_opportunities),
             'ideas_count': len(customer_ideas),
             'ideas_total_votes': sum(i.get('vote_count', 0) for i in customer_ideas),
-            'internal_import_id': latest_import.id if latest_import else None,
+            # Internal evidence now comes from merged sources
+            'structured_import_id': merged_evidence.structured_import_id,
+            'activity_import_id': merged_evidence.activity_import_id,
+            'internal_sources_used': internal_sources_used,
             'winloss_themes_count': len(winloss_themes),
-            'support_themes_count': len(support_themes)
+            'support_themes_count': len(support_themes),
+            'high_confidence_winloss_count': high_confidence_winloss,
+            'high_confidence_support_count': high_confidence_support
         }
 
         synthesis_run.source_snapshot = source_snapshot

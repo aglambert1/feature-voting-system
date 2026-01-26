@@ -313,6 +313,10 @@ class BaseAgent(ABC):
         # Extract JSON from response (handle markdown code blocks)
         json_str = self._extract_json(response_content)
 
+        # Debug: log if extraction didn't fully clean the content
+        if json_str.startswith('`'):
+            print(f"[BaseAgent] Warning: extracted JSON still has backticks. First 100 chars: {json_str[:100]}")
+
         # Parse JSON
         output_dict = json.loads(json_str)
 
@@ -341,16 +345,22 @@ class BaseAgent(ABC):
         """
         content = content.strip()
 
-        # Check for markdown code block
+        # Check for markdown code block with json language tag
         if "```json" in content:
-            # Find and extract content between ```json and ```
+            # Find and extract content between ```json and closing ```
             start = content.find("```json") + 7
+            # Skip any whitespace/newlines after ```json
+            while start < len(content) and content[start] in ' \t\n\r':
+                start += 1
             end = content.find("```", start)
             if end != -1:
                 content = content[start:end]
         elif "```" in content:
-            # Find and extract content between ``` and ```
+            # Find and extract content between ``` and closing ```
             start = content.find("```") + 3
+            # Skip any whitespace/newlines after ```
+            while start < len(content) and content[start] in ' \t\n\r':
+                start += 1
             end = content.find("```", start)
             if end != -1:
                 content = content[start:end]

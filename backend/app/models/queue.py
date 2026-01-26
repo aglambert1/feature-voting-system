@@ -75,6 +75,9 @@ class JobType(str, enum.Enum):
     INTERNAL_DISCOVERY = "internal_discovery"  # Process uploaded internal feedback
     OPPORTUNITY_SYNTHESIS = "opportunity_synthesis"  # Three-source synthesis
 
+    # Activity Analysis job types (CRM activity stream analysis)
+    ACTIVITY_INSIGHT = "activity_insight"  # Analyze CRM activity streams for product insights
+
     # DEPRECATED: These job types are no longer used in the new two-step analysis system
     # Kept for backwards compatibility with existing job records
     STRATEGIC_ANALYSIS_ONLY = "strategic_analysis_only"  # DEPRECATED

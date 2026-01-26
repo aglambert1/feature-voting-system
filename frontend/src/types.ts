@@ -1124,6 +1124,96 @@ export interface ImportStatusResponse {
 }
 
 // ============================================================================
+// ACTIVITY INSIGHT TYPES (CRM Activity Stream Analysis)
+// ============================================================================
+
+/**
+ * Activity import record for CRM activity data.
+ */
+export interface ActivityImport {
+  id: number;
+  product_id: number;
+  filename: string;
+  source_type: 'salesforce' | 'hubspot' | 'manual' | string;
+  format_type: 'json' | 'markdown';
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  error_message: string | null;
+  deals_count: number;
+  activities_count: number;
+  support_tickets_count: number;
+  analysis_summary: string | null;
+  top_loss_themes: string[];
+  top_win_themes: string[];
+  competitor_patterns: Record<string, string[]>;
+  job_uuid: string | null;
+  imported_at: string;
+  processed_at: string | null;
+}
+
+/**
+ * Insight extracted from deal activities.
+ */
+export interface DealActivityInsight {
+  id: number;
+  import_id: number;
+  product_id: number;
+  deal_id: string | null;
+  deal_name: string | null;
+  deal_outcome: 'won' | 'lost' | 'open' | string;
+  deal_value: number | null;
+  competitor_mentioned: string | null;
+  theme_name: string;
+  category: 'feature_gap' | 'ux_friction' | 'competitive_pressure' | 'use_case_gap' | 'integration_need' | string;
+  sentiment: 'positive' | 'negative' | 'neutral' | string;
+  urgency_level: 'high' | 'medium' | 'low';
+  sample_quotes: string[];
+  activity_count: number;
+  feature_keywords: string[];
+}
+
+/**
+ * Insight extracted from support activities.
+ */
+export interface SupportActivityInsight {
+  id: number;
+  import_id: number;
+  product_id: number;
+  theme_name: string;
+  category: 'feature_gap' | 'ux_friction' | 'workaround_needed' | 'integration_need' | string;
+  ticket_count: number;
+  urgency_level: 'high' | 'medium' | 'low';
+  sample_quotes: string[];
+  accounts_affected: string[];
+  feature_keywords: string[];
+}
+
+/**
+ * Combined activity insights response.
+ */
+export interface ActivityInsights {
+  import_id: number;
+  deal_insights: DealActivityInsight[];
+  support_insights: SupportActivityInsight[];
+  analysis_summary: string | null;
+  top_loss_themes: string[];
+  top_win_themes: string[];
+  competitor_patterns: Record<string, string[]>;
+}
+
+/**
+ * Activity import status response (for polling).
+ */
+export interface ActivityImportStatusResponse {
+  id: number;
+  status: string;
+  deals_count: number;
+  activities_count: number;
+  deal_insights_count: number;
+  support_insights_count: number;
+  error_message: string | null;
+}
+
+// ============================================================================
 // SYNTHESIS TYPES
 // ============================================================================
 

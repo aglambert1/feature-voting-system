@@ -7,6 +7,13 @@ prioritized product opportunities:
 2. Customer feedback (highly voted ideas)
 3. Internal feedback (win/loss themes and support themes)
 
+Internal feedback comes from two sub-sources, merged by InternalThemeMergerService:
+- Structured: Direct win/loss reasons and support ticket categories
+- Activity: CRM activity streams (call notes, emails, meeting logs)
+
+When both structured and activity sources agree on a theme, confidence is "high".
+This represents validated internal evidence.
+
 The agent identifies:
 - Three-way matches (highest priority - validated across all sources)
 - Two-way matches (moderate priority - corroborated by two sources)
@@ -138,6 +145,15 @@ Calculate priority_score using these factors:
 - **Competitive prevalence**: Table Stakes = +20, Emerging = +15, Differentiator = +10
 - **Customer votes**: 50+ votes = +20, 20-49 = +15, 10-19 = +10
 - **Internal signal**: Lost deals OR high urgency support = +20, medium = +10
+- **Internal confidence**: High confidence (structured + activity agree) = +10 bonus
+
+## Internal Feedback Confidence Levels
+
+Internal themes may have different confidence levels:
+- **High confidence**: Theme appears in BOTH structured data (CRM reasons) AND activity analysis (call notes, emails). This is the strongest internal signal.
+- **Medium confidence**: Theme appears in only one internal source. Still valuable but single-validated.
+
+When an internal theme has "high" confidence, it means multiple independent signals within your organization confirm this issue. Prioritize these themes.
 
 ## Matching Guidelines
 
@@ -270,7 +286,13 @@ Respond with ONLY a valid JSON object following the schema in the system prompt.
         return "\n".join(lines)
 
     def _format_winloss(self, themes: List[Dict[str, Any]]) -> str:
-        """Format win/loss themes for the prompt."""
+        """Format win/loss themes for the prompt.
+
+        Themes now come from merged sources (structured + activity) and include:
+        - sources: List of ["structured", "activity"] indicating where theme was found
+        - confidence: "high" if both sources agree, "medium" otherwise
+        - sample_quotes: Verbatim customer voice from activity analysis
+        """
         if not themes:
             return "No win/loss themes available."
 
@@ -280,39 +302,67 @@ Respond with ONLY a valid JSON object following the schema in the system prompt.
         won_themes = [t for t in themes if t.get('outcome') == 'won']
 
         if lost_themes:
+            # Sort by confidence (high first) then by deal count
+            lost_themes = sorted(
+                lost_themes,
+                key=lambda x: (0 if x.get('confidence') == 'high' else 1, -x.get('deal_count', 0))
+            )
             lines.append("**Lost Deal Themes:**")
             for theme in lost_themes:
-                theme_id = theme.get('id', 0)
                 name = theme.get('theme_name', 'Unknown')
                 deal_count = theme.get('deal_count', 0)
                 total_value = theme.get('total_value', 0)
                 competitor = theme.get('competitor_name', theme.get('competitor_correlation'))
                 keywords = theme.get('feature_keywords', [])
+                confidence = theme.get('confidence', 'medium')
+                sources = theme.get('sources', [])
+                sample_quotes = theme.get('sample_quotes', [])
 
-                lines.append(f"  - **[ID:{theme_id}] {name}**")
+                confidence_indicator = "★ HIGH CONFIDENCE" if confidence == 'high' else "MEDIUM"
+                source_str = " + ".join(sources) if sources else "unknown"
+
+                lines.append(f"  - **{name}** [{confidence_indicator}]")
+                lines.append(f"    Sources: {source_str}")
                 lines.append(f"    Deals: {deal_count}, Value: ${total_value:,.0f}")
                 if competitor:
                     lines.append(f"    Competitor: {competitor}")
                 if keywords:
                     lines.append(f"    Keywords: {', '.join(keywords[:5])}")
+                if sample_quotes:
+                    lines.append(f"    Customer Voice: \"{sample_quotes[0][:150]}...\"")
             lines.append("")
 
         if won_themes:
-            lines.append("**Won Deal Themes:**")
+            won_themes = sorted(
+                won_themes,
+                key=lambda x: (0 if x.get('confidence') == 'high' else 1, -x.get('deal_count', 0))
+            )
+            lines.append("**Won Deal Themes (Differentiators):**")
             for theme in won_themes:
-                theme_id = theme.get('id', 0)
                 name = theme.get('theme_name', 'Unknown')
                 deal_count = theme.get('deal_count', 0)
                 total_value = theme.get('total_value', 0)
+                confidence = theme.get('confidence', 'medium')
+                sources = theme.get('sources', [])
 
-                lines.append(f"  - **[ID:{theme_id}] {name}**")
-                lines.append(f"    Deals: {deal_count}, Value: ${total_value:,.0f}")
+                confidence_indicator = "★" if confidence == 'high' else ""
+                source_str = " + ".join(sources) if sources else "unknown"
+
+                lines.append(f"  - **{name}** {confidence_indicator}")
+                lines.append(f"    Sources: {source_str}, Deals: {deal_count}, Value: ${total_value:,.0f}")
             lines.append("")
 
         return "\n".join(lines) if lines else "No win/loss themes available."
 
     def _format_support(self, themes: List[Dict[str, Any]]) -> str:
-        """Format support themes for the prompt."""
+        """Format support themes for the prompt.
+
+        Themes now come from merged sources (structured + activity) and include:
+        - sources: List of ["structured", "activity"] indicating where theme was found
+        - confidence: "high" if both sources agree, "medium" otherwise
+        - sample_quotes: Verbatim customer voice from activity analysis
+        - accounts_affected: List of account names affected
+        """
         if not themes:
             return "No support themes available."
 
@@ -327,17 +377,32 @@ Respond with ONLY a valid JSON object following the schema in the system prompt.
 
         for category, cat_themes in by_category.items():
             lines.append(f"**{category.replace('_', ' ').title()}:**")
-            for theme in sorted(cat_themes, key=lambda x: x.get('ticket_count', 0), reverse=True):
-                theme_id = theme.get('id', 0)
+            # Sort by confidence first, then by ticket count
+            sorted_themes = sorted(
+                cat_themes,
+                key=lambda x: (0 if x.get('confidence') == 'high' else 1, -x.get('ticket_count', 0))
+            )
+            for theme in sorted_themes:
                 name = theme.get('theme_name', 'Unknown')
                 ticket_count = theme.get('ticket_count', 0)
-                urgency = theme.get('urgency_indicator', 'medium')
+                urgency = theme.get('urgency_level', theme.get('urgency_indicator', 'medium'))
                 keywords = theme.get('feature_keywords', [])
+                confidence = theme.get('confidence', 'medium')
+                sources = theme.get('sources', [])
+                sample_quotes = theme.get('sample_quotes', [])
+                accounts = theme.get('accounts_affected', [])
 
-                lines.append(f"  - **[ID:{theme_id}] {name}** ({ticket_count} tickets)")
-                lines.append(f"    Urgency: {urgency}")
+                confidence_indicator = "★ HIGH CONFIDENCE" if confidence == 'high' else "MEDIUM"
+                source_str = " + ".join(sources) if sources else "unknown"
+
+                lines.append(f"  - **{name}** ({ticket_count} tickets) [{confidence_indicator}]")
+                lines.append(f"    Sources: {source_str}, Urgency: {urgency}")
                 if keywords:
                     lines.append(f"    Keywords: {', '.join(keywords[:5])}")
+                if sample_quotes:
+                    lines.append(f"    Customer Voice: \"{sample_quotes[0][:150]}...\"")
+                if accounts:
+                    lines.append(f"    Accounts Affected: {', '.join(accounts[:3])}")
             lines.append("")
 
         return "\n".join(lines) if lines else "No support themes available."
