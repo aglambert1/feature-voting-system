@@ -1,6 +1,22 @@
 """
 Intensity Idea Generator Agent.
 
+DEPRECATED: This agent has been superseded by the V2 landscape synthesis workflow.
+Auto-idea generation is now handled directly in landscape_synthesis_task which
+creates ideas from feature_opportunities based on priority scores.
+
+The old clustering-based approach (this agent) generated ideas from feature clusters
+when X competitors had similar features. The V2 approach uses priority scores
+(0.0-1.0) calculated by LandscapeOpportunitySynthesizerAgent based on:
+- Market prevalence
+- User value / pain point severity
+- Evidence quality
+- Table Stakes vs Innovation classification
+
+This agent is kept for backwards compatibility with the legacy workflow
+(intensity_idea_generation_task) and may be removed in a future version.
+
+Legacy description:
 This agent generates product ideas from high-intensity feature clusters.
 When multiple competitors have similar features, it indicates a market
 expectation that should be considered for the product roadmap.

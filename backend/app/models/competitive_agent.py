@@ -78,10 +78,13 @@ class CompetitiveAgentConfig(Base):
     deep_analysis_next_run = Column(DateTime, nullable=True)
     deep_analysis_last_run = Column(DateTime, nullable=True)
 
-    # === Competitive Intensity Settings ===
-    # Controls how features are clustered and when ideas are generated
-    intensity_similarity_threshold = Column(Float, nullable=False, default=0.75)  # For clustering features
-    intensity_idea_threshold = Column(Integer, nullable=False, default=3)  # Min competitors to auto-generate idea
+    # === Idea Auto-Generation Settings ===
+    # Controls when ideas are automatically generated from competitive analysis
+    # DEPRECATED: intensity_similarity_threshold - was used for legacy feature clustering
+    intensity_similarity_threshold = Column(Float, nullable=False, default=0.75)  # DEPRECATED - kept for migration
+    # V2: Priority score threshold (0.0-1.0) - ideas with priority >= this are auto-generated
+    # 0.0 = disabled, 0.5 = all, 0.7 = high priority only, 0.85 = critical only
+    intensity_idea_threshold = Column(Float, nullable=False, default=0.0)  # Priority threshold (was Integer)
     # Note: Once idea is generated, Idea Triage Agent handles dedup, auto-accept, etc.
 
     # === General ===

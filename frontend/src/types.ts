@@ -529,6 +529,20 @@ export interface IdeaComment {
 // IDEA DETAIL TYPES (Extended for PO workflow)
 // ============================================================================
 
+/**
+ * Competitive context for ideas generated from competitive analysis.
+ * Only visible to PO/Admin users.
+ */
+export interface CompetitiveContext {
+  priority_score: number;
+  priority_level: 'critical' | 'high' | 'medium' | 'low';
+  competitors_with_feature: string[];
+  total_competitors_analyzed: number;
+  market_context: string;
+  source_evidence_count: number;
+  landscape_report_id?: number;
+}
+
 export interface IdeaDetail {
   id: number;
   title: string;
@@ -551,10 +565,14 @@ export interface IdeaDetail {
   submitter_id: number | null;
   submitter_username: string | null;
   review_notes: string | null;
+  reviewer_username: string | null;
+  reviewed_at: string | null;
   created_at: string;
   updated_at: string;
   comments: IdeaComment[];
   status_history: StatusHistoryEntry[];
+  // Competitive context - only populated for PO/Admin users
+  competitive_context: CompetitiveContext | null;
 }
 
 // ============================================================================
@@ -714,9 +732,9 @@ export interface CompetitiveAgentConfig {
   deep_analysis_schedule: ScheduleFrequency | null;
   deep_analysis_last_run: string | null;
 
-  // Intensity Settings
-  intensity_similarity_threshold: number;
-  intensity_idea_threshold: number;
+  // Idea Auto-Generation Settings
+  intensity_similarity_threshold: number;  // DEPRECATED - kept for backwards compatibility
+  intensity_idea_threshold: number;  // Priority score threshold (0.0-1.0)
 
   enabled: boolean;
 }

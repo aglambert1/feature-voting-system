@@ -86,9 +86,11 @@ export default function CompetitiveIntelligenceSettingsForm({ config, onChange, 
   };
 
   // Derived values for UI
-  const similarityThreshold = Math.round((getValue('intensity_similarity_threshold') || 0.75) * 100);
-  const ideaThreshold = getValue('intensity_idea_threshold') ?? 3;
-  const autoGenerateIdeas = ideaThreshold > 0;
+  // V2: Priority score threshold (0.0-1.0) instead of competitor count
+  const priorityThreshold = getValue('intensity_idea_threshold') ?? 0;
+  const autoGenerateIdeas = priorityThreshold > 0;
+  // Display threshold as percentage for clarity
+  const priorityThresholdDisplay = Math.round(priorityThreshold * 100);
 
   // Check if using separate schedules
   const useSeparateSchedules = getValue('competitor_discovery_schedule') !== getValue('deep_analysis_schedule') &&
@@ -255,31 +257,9 @@ export default function CompetitiveIntelligenceSettingsForm({ config, onChange, 
         )}
       </section>
 
-      {/* Analysis Settings Section */}
+      {/* Idea Generation Settings Section */}
       <section className="bg-gray-50 rounded-lg p-5">
-        <h3 className="text-md font-medium text-gray-900 mb-4">Analysis Settings</h3>
-
-        {/* Feature Similarity Threshold */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Feature Similarity Threshold: {similarityThreshold}%
-          </label>
-          <input
-            type="range"
-            min="50"
-            max="95"
-            value={similarityThreshold}
-            onChange={(e) => handleChange('intensity_similarity_threshold', parseInt(e.target.value) / 100)}
-            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-          />
-          <div className="flex justify-between text-xs text-gray-500 mt-1">
-            <span>50% (Looser matching)</span>
-            <span>95% (Stricter matching)</span>
-          </div>
-          <p className="text-xs text-gray-500 mt-2">
-            Controls how similar features must be to be grouped together for analysis.
-          </p>
-        </div>
+        <h3 className="text-md font-medium text-gray-900 mb-4">Idea Generation</h3>
 
         {/* Auto-generate Ideas Toggle */}
         <div className="space-y-3">
@@ -289,7 +269,7 @@ export default function CompetitiveIntelligenceSettingsForm({ config, onChange, 
               checked={autoGenerateIdeas}
               onChange={(e) => {
                 if (e.target.checked) {
-                  handleChange('intensity_idea_threshold', 3);
+                  handleChange('intensity_idea_threshold', 0.7);  // Default to High priority
                 } else {
                   handleChange('intensity_idea_threshold', 0);
                 }
@@ -301,21 +281,49 @@ export default function CompetitiveIntelligenceSettingsForm({ config, onChange, 
 
           {/* Idea Generation Threshold - only shown when auto-generate is enabled */}
           {autoGenerateIdeas && (
-            <div className="ml-7">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Generate when {ideaThreshold} competitors have similar features
-              </label>
-              <input
-                type="range"
-                min="2"
-                max="10"
-                value={ideaThreshold}
-                onChange={(e) => handleChange('intensity_idea_threshold', parseInt(e.target.value))}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              />
-              <div className="flex justify-between text-xs text-gray-500 mt-1">
-                <span>2 (More ideas)</span>
-                <span>10 (Fewer ideas)</span>
+            <div className="ml-7 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Minimum Priority Score: {priorityThresholdDisplay}%
+                </label>
+                <input
+                  type="range"
+                  min="50"
+                  max="90"
+                  step="5"
+                  value={priorityThresholdDisplay}
+                  onChange={(e) => handleChange('intensity_idea_threshold', parseInt(e.target.value) / 100)}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                />
+                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>50% (More ideas)</span>
+                  <span>90% (Critical only)</span>
+                </div>
+              </div>
+
+              {/* Priority level indicator */}
+              <div className="bg-gray-100 rounded-lg p-3 text-xs">
+                <div className="font-medium text-gray-700 mb-1">Current threshold will generate:</div>
+                <div className="text-gray-600">
+                  {priorityThreshold >= 0.85 ? (
+                    <span className="text-red-600 font-medium">🔴 Critical priority only</span>
+                  ) : priorityThreshold >= 0.7 ? (
+                    <span className="text-orange-600 font-medium">🟠 High priority and above</span>
+                  ) : (
+                    <span className="text-yellow-600 font-medium">🟡 Medium priority and above</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Help text explaining priority score */}
+              <div className="text-xs text-gray-500 space-y-1">
+                <p className="font-medium">Priority score is calculated based on:</p>
+                <ul className="list-disc list-inside space-y-0.5 ml-1">
+                  <li>Market prevalence — how many competitors have this feature</li>
+                  <li>User value — severity of the pain point being addressed</li>
+                  <li>Evidence quality — supporting quotes from competitor analysis</li>
+                  <li>Table Stakes vs Innovation — industry expectation level</li>
+                </ul>
               </div>
             </div>
           )}
@@ -355,8 +363,8 @@ export default function CompetitiveIntelligenceSettingsForm({ config, onChange, 
         <ul className="text-sm text-blue-700 space-y-1 list-disc list-inside">
           <li>Functional audits analyze each competitor's features against your product</li>
           <li>Landscape synthesis identifies feature opportunities across all competitors</li>
-          <li>Similar features are clustered to identify competitive intensity</li>
-          <li>High-intensity clusters can automatically generate product ideas</li>
+          <li>Each opportunity receives a priority score based on market prevalence and user value</li>
+          <li>High-priority opportunities can automatically generate product ideas for voting</li>
         </ul>
       </div>
     </div>

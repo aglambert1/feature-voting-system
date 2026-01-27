@@ -1,6 +1,19 @@
 """
 Feature Clustering Service for competitive intensity analysis.
 
+DEPRECATED: This service has been superseded by the V2 landscape synthesis workflow.
+Auto-idea generation is now handled directly in landscape_synthesis_task based on
+priority scores from LandscapeOpportunitySynthesizerAgent output.
+
+The old clustering approach (competitor count threshold) has been replaced by:
+- Priority score threshold (0.0-1.0) based on market prevalence, user value, and evidence
+- Ideas are generated directly from feature_opportunities in the landscape report
+- See landscape_synthesis_task in app/queue/tasks.py for the new implementation
+
+This service is kept for backwards compatibility with existing feature clusters
+and may be removed in a future version.
+
+Legacy description:
 This service groups semantically similar features across competitors
 to calculate competitive intensity and trigger idea generation.
 

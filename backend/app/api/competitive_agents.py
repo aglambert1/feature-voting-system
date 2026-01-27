@@ -67,9 +67,9 @@ class AgentConfigResponse(BaseModel):
     deep_analysis_schedule: Optional[str]
     deep_analysis_last_run: Optional[datetime]
 
-    # Intensity Settings
-    intensity_similarity_threshold: float
-    intensity_idea_threshold: int
+    # Idea Auto-Generation Settings
+    intensity_similarity_threshold: float  # DEPRECATED - kept for backwards compatibility
+    intensity_idea_threshold: float  # Priority score threshold (0.0-1.0)
 
     enabled: bool
 
@@ -90,8 +90,8 @@ class AgentConfigUpdateRequest(BaseModel):
     deep_analysis_mode: Optional[str] = Field(None, pattern="^(manual|scheduled)$")
     deep_analysis_schedule: Optional[str] = Field(None, pattern="^(daily|weekly|monthly)$")
 
-    intensity_similarity_threshold: Optional[float] = Field(None, ge=0.5, le=0.95)
-    intensity_idea_threshold: Optional[int] = Field(None, ge=0, le=10)  # 0 = disabled
+    intensity_similarity_threshold: Optional[float] = Field(None, ge=0.5, le=0.95)  # DEPRECATED
+    intensity_idea_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)  # Priority threshold (0.0 = disabled)
 
     enabled: Optional[bool] = None
 

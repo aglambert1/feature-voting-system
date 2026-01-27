@@ -1365,7 +1365,11 @@ def deep_analysis_task(self, job_id: int) -> Dict[str, Any]:
 @shared_task(bind=True, name='app.queue.tasks.feature_clustering_task')
 def feature_clustering_task(self, job_id: int) -> Dict[str, Any]:
     """
+    DEPRECATED: Use landscape_synthesis_task instead.
+
     Background task to run feature clustering for a product.
+    This task has been superseded by the V2 landscape synthesis workflow
+    which generates ideas based on priority scores rather than cluster counts.
 
     This task:
     1. Gets all competitor features with embeddings
@@ -1449,7 +1453,12 @@ def feature_clustering_task(self, job_id: int) -> Dict[str, Any]:
 @shared_task(bind=True, name='app.queue.tasks.intensity_idea_generation_task')
 def intensity_idea_generation_task(self, job_id: int) -> Dict[str, Any]:
     """
+    DEPRECATED: Use landscape_synthesis_task instead.
+
     Background task to generate ideas from high-intensity feature clusters.
+    This task has been superseded by the V2 landscape synthesis workflow
+    which generates ideas directly from feature_opportunities based on
+    priority scores rather than cluster competitor counts.
 
     This task:
     1. Gets high-intensity clusters (meeting threshold)
@@ -1674,7 +1683,12 @@ def aggregate_deep_analysis_results(
     product_id: int
 ) -> Dict[str, Any]:
     """
+    DEPRECATED: Use aggregate_functional_audits + landscape_synthesis_task instead.
+
     Callback task to aggregate results from parallel deep analysis.
+    This task uses the old V1 deep_analysis_task workflow.
+    The V2 workflow (functional_audit_task + landscape_synthesis_task) now
+    generates ideas directly based on priority scores.
 
     After all deep analysis tasks complete, this:
     1. Aggregates results
@@ -2112,6 +2126,115 @@ def landscape_synthesis_task(self, job_id: int):
             landscape_report=landscape_report
         )
 
+        # Auto-generate ideas from high-priority opportunities (V2 approach)
+        ideas_generated = 0
+        triage_jobs_created = 0
+        from app.models.idea import Idea, SourceType, IdeaStatus
+
+        # Get config for priority threshold
+        config = db.query(CompetitiveAgentConfig).filter(
+            CompetitiveAgentConfig.product_id == product_id
+        ).first()
+        priority_threshold = config.intensity_idea_threshold if config else 0.0
+
+        if priority_threshold > 0 and result.get('feature_opportunities'):
+            queue_service.update_progress(
+                job_id, 92.0,
+                f"Generating ideas from high-priority opportunities (threshold: {priority_threshold})..."
+            )
+
+            total_competitors_analyzed = len(functional_reports)
+
+            for opportunity in result['feature_opportunities']:
+                priority_score = opportunity.get('priority_score', 0)
+                if priority_score is None or priority_score < priority_threshold:
+                    continue
+
+                # Check if idea already exists with same feature name (simple dedup)
+                feature_name = opportunity.get('feature_name', '')
+                existing_idea = db.query(Idea).filter(
+                    Idea.product_id == product_id,
+                    Idea.title == feature_name,
+                    Idea.source_type == SourceType.COMPETITOR_AUTOMATED
+                ).first()
+
+                if existing_idea:
+                    continue  # Skip - already generated
+
+                # Calculate priority level for display
+                if priority_score >= 0.85:
+                    priority_level = "critical"
+                elif priority_score >= 0.70:
+                    priority_level = "high"
+                elif priority_score >= 0.55:
+                    priority_level = "medium"
+                else:
+                    priority_level = "low"
+
+                # Build competitive context for PO display
+                competitors_with_feature = opportunity.get('competitors_with_feature', [])
+                competitive_context = {
+                    "priority_score": priority_score,
+                    "priority_level": priority_level,
+                    "competitors_with_feature": competitors_with_feature,
+                    "total_competitors_analyzed": total_competitors_analyzed,
+                    "market_context": opportunity.get('market_context', ''),
+                    "source_evidence_count": len(opportunity.get('source_evidence', [])),
+                    "landscape_report_id": landscape_report.id,
+                }
+
+                # Build source metadata
+                source_metadata = {
+                    "landscape_report_id": landscape_report.id,
+                    "landscape_report_version": landscape_report.report_version,
+                    "feature_name": feature_name,
+                    "priority_score": priority_score,
+                    "competitors": competitors_with_feature,
+                }
+
+                # Build use case from evidence
+                source_evidence = opportunity.get('source_evidence', [])
+                use_case = "Based on competitive analysis:\n"
+                if source_evidence:
+                    for evidence in source_evidence[:3]:
+                        use_case += f"• {evidence}\n"
+                else:
+                    use_case += f"• {len(competitors_with_feature)} competitors offer this capability"
+
+                # Create the idea
+                new_idea = Idea(
+                    title=feature_name[:255],  # Max 255 chars
+                    what_description=opportunity.get('summary', feature_name),
+                    why_description=f"{opportunity.get('user_value', '')} {opportunity.get('market_context', '')}".strip(),
+                    use_case_description=use_case,
+                    product_id=product_id,
+                    source_type=SourceType.COMPETITOR_AUTOMATED,
+                    source_metadata=source_metadata,
+                    competitive_context=competitive_context,
+                    status=IdeaStatus.PENDING,
+                    is_active=False,
+                    auto_categorized=False,
+                )
+                db.add(new_idea)
+                db.flush()  # Get the ID
+
+                ideas_generated += 1
+
+                # Create triage job for duplicate/feature-exists detection
+                triage_job = queue_service.create_job(
+                    job_type=JobType.IDEA_TRIAGE,
+                    input_data={'idea_id': new_idea.id},
+                    product_id=product_id,
+                    parent_job_id=job_id,
+                )
+                db.commit()
+
+                # Queue the triage task
+                triage_idea_task.delay(triage_job.id)
+                triage_jobs_created += 1
+
+            print(f"[landscape_synthesis_task] Generated {ideas_generated} ideas, {triage_jobs_created} triage jobs created")
+
         output_data = {
             'landscape_report_id': landscape_report.id,
             'report_version': landscape_report.report_version,
@@ -2122,6 +2245,8 @@ def landscape_synthesis_task(self, job_id: int):
             'source_report_ids': report_ids,
             'export_folder': export_result.get('folder'),
             'export_files': export_result.get('total_files', 0),
+            'ideas_generated': ideas_generated,
+            'triage_jobs_created': triage_jobs_created,
         }
 
         queue_service.mark_success(job_id, output_data)

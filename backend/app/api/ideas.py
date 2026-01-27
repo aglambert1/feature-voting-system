@@ -759,10 +759,14 @@ class IdeaDetailResponse(BaseModel):
     submitter_id: Optional[int]
     submitter_username: Optional[str] = None
     review_notes: Optional[str]
+    reviewer_username: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     comments: List[IdeaCommentResponse] = []
     status_history: List[StatusHistoryEntryResponse] = []
+    # Competitive context - only populated for PO/Admin users
+    competitive_context: Optional[dict] = None
 
 
 @router.post("/submit", response_model=JobQueueResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -1265,6 +1269,23 @@ def get_idea_detail(
             created_at=record.created_at,
         ))
 
+    # Competitive context is only shown to PO/Admin users
+    is_po_or_admin = current_user.role in [UserRole.ADMIN, UserRole.PRODUCT_OWNER]
+    competitive_context = None
+    if is_po_or_admin and idea.competitive_context:
+        competitive_context = idea.competitive_context
+
+    # Get reviewer info from status history (find last PM review)
+    reviewer_username = None
+    reviewed_at = None
+    for record in status_history_records:
+        if record.changed_by_user_id and not record.is_automated:
+            changed_by_user = db.query(User).filter(User.id == record.changed_by_user_id).first()
+            if changed_by_user:
+                reviewer_username = changed_by_user.username
+                reviewed_at = record.created_at
+            break
+
     return IdeaDetailResponse(
         id=idea.id,
         title=idea.title,
@@ -1287,10 +1308,13 @@ def get_idea_detail(
         submitter_id=idea.submitter_id,
         submitter_username=submitter_username,
         review_notes=idea.review_notes,
+        reviewer_username=reviewer_username,
+        reviewed_at=reviewed_at,
         created_at=idea.created_at,
         updated_at=idea.updated_at,
         comments=comments,
         status_history=status_history,
+        competitive_context=competitive_context,
     )
 
 
