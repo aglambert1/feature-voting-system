@@ -433,7 +433,7 @@ async def delete_import(
 
 @router.post(
     "/{product_id}/imports/{import_id}/reprocess",
-    response_model=ImportStatusResponse
+    response_model=InternalFeedbackImportResponse
 )
 async def reprocess_import(
     product_id: int,
@@ -488,12 +488,16 @@ async def reprocess_import(
 
     db.commit()
 
-    return ImportStatusResponse(
+    return InternalFeedbackImportResponse(
         id=import_record.id,
+        product_id=import_record.product_id,
+        filename=import_record.filename,
+        source_type=import_record.source_type,
         status=import_record.status,
+        imported_at=import_record.imported_at,
+        deals_count=import_record.deals_count,
+        tickets_count=import_record.tickets_count,
         themes_extracted=import_record.themes_extracted,
-        winloss_theme_count=0,
-        support_theme_count=0,
         error_message=import_record.error_message
     )
 
@@ -920,7 +924,7 @@ async def delete_activity_import(
 
 @router.post(
     "/{product_id}/activity-imports/{import_id}/reprocess",
-    response_model=ActivityImportStatusResponse
+    response_model=ActivityImportResponse
 )
 async def reprocess_activity_import(
     product_id: int,
@@ -975,10 +979,16 @@ async def reprocess_activity_import(
 
     db.commit()
 
-    return ActivityImportStatusResponse(
+    return ActivityImportResponse(
         id=import_record.id,
+        product_id=import_record.product_id,
+        filename=import_record.filename,
+        source_type=import_record.source_type,
+        format_type=import_record.format_type,
         status=import_record.status,
-        deal_insight_count=0,
-        support_insight_count=0,
+        imported_at=import_record.imported_at,
+        deals_count=import_record.deals_count,
+        activities_count=import_record.activities_count,
+        support_tickets_count=import_record.support_tickets_count,
         error_message=import_record.error_message
     )

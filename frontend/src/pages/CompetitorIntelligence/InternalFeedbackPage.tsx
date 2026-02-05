@@ -707,7 +707,7 @@ export default function InternalFeedbackPage() {
                               {formatDate(imp.imported_at)}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                              {imp.status === "completed" && (
+                              {(imp.status === "completed" || imp.status === "failed") && (
                                 <button
                                   onClick={() =>
                                     imp.type === "structured"
@@ -840,7 +840,7 @@ better Salesforce integration...`}
                 <div className="flex justify-center items-center h-32">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                 </div>
-              ) : winlossThemes.length === 0 && supportThemes.length === 0 ? (
+              ) : winlossThemes.length === 0 && supportThemes.length === 0 && dealInsights.length === 0 && supportInsights.length === 0 ? (
                 <div className="text-center py-12">
                   <svg
                     className="mx-auto h-12 w-12 text-gray-400"
@@ -1002,6 +1002,184 @@ better Salesforce integration...`}
                                   <span
                                     key={kIdx}
                                     className="px-2 py-0.5 text-xs bg-gray-200 text-gray-700 rounded"
+                                  >
+                                    {keyword}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Deal Activity Insights */}
+                  {dealInsights.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-medium text-gray-900 mb-4">
+                        Deal Activity Insights
+                        <span className="ml-2 text-sm font-normal text-purple-600">
+                          (from CRM activities)
+                        </span>
+                      </h3>
+                      <div className="space-y-4">
+                        {dealInsights.map((insight, idx) => (
+                          <div
+                            key={idx}
+                            className={`p-4 rounded-lg border ${
+                              insight.deal_outcome === "lost"
+                                ? "bg-red-50 border-red-200"
+                                : insight.deal_outcome === "won"
+                                ? "bg-green-50 border-green-200"
+                                : "bg-purple-50 border-purple-200"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <h4 className="font-medium text-gray-900">
+                                  {insight.theme_name}
+                                </h4>
+                                <p className="text-sm text-gray-600 mt-1">
+                                  {insight.deal_name && <>{insight.deal_name} &middot; </>}
+                                  {insight.activity_count} activities
+                                  {insight.deal_value && (
+                                    <> &middot; {formatCurrency(insight.deal_value)}</>
+                                  )}
+                                  {insight.competitor_mentioned && (
+                                    <> &middot; vs {insight.competitor_mentioned}</>
+                                  )}
+                                </p>
+                              </div>
+                              <div className="flex gap-2">
+                                <span
+                                  className={`
+                                    px-2 py-1 text-xs font-medium rounded-full
+                                    ${
+                                      insight.sentiment === "negative"
+                                        ? "bg-red-100 text-red-800"
+                                        : insight.sentiment === "positive"
+                                        ? "bg-green-100 text-green-800"
+                                        : "bg-gray-100 text-gray-800"
+                                    }
+                                  `}
+                                >
+                                  {insight.sentiment}
+                                </span>
+                                <span
+                                  className={`
+                                    px-2 py-1 text-xs font-medium rounded-full
+                                    ${
+                                      insight.deal_outcome === "lost"
+                                        ? "bg-red-100 text-red-800"
+                                        : insight.deal_outcome === "won"
+                                        ? "bg-green-100 text-green-800"
+                                        : "bg-gray-100 text-gray-800"
+                                    }
+                                  `}
+                                >
+                                  {insight.deal_outcome}
+                                </span>
+                              </div>
+                            </div>
+                            {insight.sample_quotes && insight.sample_quotes.length > 0 && (
+                              <div className="mt-3 text-sm text-gray-600">
+                                <p className="font-medium text-gray-700 mb-1">
+                                  Sample quotes:
+                                </p>
+                                <ul className="list-disc list-inside space-y-1">
+                                  {insight.sample_quotes.slice(0, 3).map((quote, qIdx) => (
+                                    <li key={qIdx} className="truncate italic">
+                                      "{quote}"
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {insight.feature_keywords && insight.feature_keywords.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-1">
+                                {insight.feature_keywords.map((keyword, kIdx) => (
+                                  <span
+                                    key={kIdx}
+                                    className="px-2 py-0.5 text-xs bg-purple-200 text-purple-700 rounded"
+                                  >
+                                    {keyword}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Support Activity Insights */}
+                  {supportInsights.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-medium text-gray-900 mb-4">
+                        Support Activity Insights
+                        <span className="ml-2 text-sm font-normal text-purple-600">
+                          (from CRM activities)
+                        </span>
+                      </h3>
+                      <div className="space-y-4">
+                        {supportInsights.map((insight, idx) => (
+                          <div
+                            key={idx}
+                            className={`p-4 rounded-lg border ${
+                              insight.urgency_level === "high"
+                                ? "bg-orange-50 border-orange-200"
+                                : "bg-purple-50 border-purple-200"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <h4 className="font-medium text-gray-900">
+                                  {insight.theme_name}
+                                </h4>
+                                <p className="text-sm text-gray-600 mt-1">
+                                  {insight.ticket_count} tickets &middot; {insight.category}
+                                  {insight.accounts_affected && insight.accounts_affected.length > 0 && (
+                                    <> &middot; {insight.accounts_affected.length} accounts affected</>
+                                  )}
+                                </p>
+                              </div>
+                              <span
+                                className={`
+                                  px-2 py-1 text-xs font-medium rounded-full
+                                  ${
+                                    insight.urgency_level === "high"
+                                      ? "bg-orange-100 text-orange-800"
+                                      : insight.urgency_level === "medium"
+                                      ? "bg-yellow-100 text-yellow-800"
+                                      : "bg-gray-100 text-gray-800"
+                                  }
+                                `}
+                              >
+                                {insight.urgency_level} urgency
+                              </span>
+                            </div>
+                            {insight.sample_quotes && insight.sample_quotes.length > 0 && (
+                              <div className="mt-3 text-sm text-gray-600">
+                                <p className="font-medium text-gray-700 mb-1">
+                                  Sample quotes:
+                                </p>
+                                <ul className="list-disc list-inside space-y-1">
+                                  {insight.sample_quotes.slice(0, 3).map((quote, qIdx) => (
+                                    <li key={qIdx} className="truncate italic">
+                                      "{quote}"
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {insight.feature_keywords && insight.feature_keywords.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-1">
+                                {insight.feature_keywords.map((keyword, kIdx) => (
+                                  <span
+                                    key={kIdx}
+                                    className="px-2 py-0.5 text-xs bg-purple-200 text-purple-700 rounded"
                                   >
                                     {keyword}
                                   </span>
