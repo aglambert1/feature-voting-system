@@ -29,7 +29,7 @@ services:
       - key: DEBUG
         value: "false"
       - key: ALLOWED_ORIGINS
-        value: "https://feature-iq.onrender.com"
+        value: '["https://feature-iq.onrender.com"]'
       - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_USERNAME
