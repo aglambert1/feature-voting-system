@@ -48,8 +48,6 @@ import type {
   CompetitiveAgentConfigUpdate,
   AgentCompetitor,
   CompetitorFeature,
-  FeatureCluster,
-  FeatureClusterDetail,
   AgentJobResponse,
   CreateIdeasRequest,
   FeatureQueryResponse,
@@ -211,6 +209,7 @@ interface GetIdeasParams {
   limit?: number;
   product_id?: number;
   sort_by?: 'most_votes' | 'pending_first' | 'most_recent' | 'my_ideas';
+  lifecycle_status_id?: number;
 }
 
 /**
@@ -883,27 +882,6 @@ export const triggerProductReanalysis = async (productId: number): Promise<Agent
   return response.data;
 };
 
-/**
- * Trigger feature clustering only (re-cluster existing features)
- */
-export const triggerFeatureClustering = async (productId: number): Promise<AgentJobResponse> => {
-  const response = await api.post<AgentJobResponse>(
-    `/product-intelligence/agents/${productId}/run-clustering`
-  );
-  return response.data;
-};
-
-/**
- * Trigger full competitive analysis workflow.
- * This runs deep analysis on all enabled competitors, then clustering, then idea generation.
- */
-export const triggerCompetitiveAnalysis = async (productId: number): Promise<AgentJobResponse> => {
-  const response = await api.post<AgentJobResponse>(
-    `/product-intelligence/agents/${productId}/run-competitive-analysis`
-  );
-  return response.data;
-};
-
 // --- Competitor Management ---
 
 /**
@@ -1049,21 +1027,6 @@ export const markAllAlertsRead = async (
   return response.data;
 };
 
-// --- Per-Competitor Deep Analysis ---
-
-/**
- * Trigger deep analysis for a single competitor
- */
-export const triggerDeepAnalysis = async (
-  productId: number,
-  competitorId: number
-): Promise<AgentJobResponse> => {
-  const response = await api.post<AgentJobResponse>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/deep-analysis`
-  );
-  return response.data;
-};
-
 // --- Per-Competitor Feature Review ---
 
 /**
@@ -1104,48 +1067,6 @@ export const createIdeasFromFeatures = async (
   const response = await api.post<AgentJobResponse[]>(
     `/product-intelligence/agents/${productId}/competitors/${competitorId}/features/create-ideas`,
     request
-  );
-  return response.data;
-};
-
-// --- Feature Clusters & Intensity ---
-
-/**
- * List feature clusters with intensity scores
- */
-export const getFeatureClusters = async (
-  productId: number,
-  minCompetitors?: number
-): Promise<FeatureCluster[]> => {
-  const response = await api.get<FeatureCluster[]>(
-    `/product-intelligence/agents/${productId}/feature-clusters`,
-    { params: minCompetitors !== undefined ? { min_competitors: minCompetitors } : {} }
-  );
-  return response.data;
-};
-
-/**
- * Get feature cluster details with members
- */
-export const getFeatureClusterDetail = async (
-  productId: number,
-  clusterId: number
-): Promise<FeatureClusterDetail> => {
-  const response = await api.get<FeatureClusterDetail>(
-    `/product-intelligence/agents/${productId}/feature-clusters/${clusterId}`
-  );
-  return response.data;
-};
-
-/**
- * Create an idea from a feature cluster
- */
-export const createIdeaFromCluster = async (
-  productId: number,
-  clusterId: number
-): Promise<AgentJobResponse> => {
-  const response = await api.post<AgentJobResponse>(
-    `/product-intelligence/agents/${productId}/feature-clusters/${clusterId}/create-idea`
   );
   return response.data;
 };
@@ -1677,6 +1598,41 @@ export const createIdeaFromOpportunity = async (
   const response = await api.post(
     `/synthesis/${productId}/opportunities/${opportunityId}/create-idea`,
     { additional_description: additionalDescription }
+  );
+  return response.data;
+};
+
+// --- Idea Lifecycle Status CRUD (Admin) ---
+
+import type { IdeaLifecycleStatus, IdeaFunnelData } from '../types';
+
+export const getLifecycleStatuses = async (): Promise<IdeaLifecycleStatus[]> => {
+  const response = await api.get<IdeaLifecycleStatus[]>('/admin/idea-lifecycle-statuses');
+  return response.data;
+};
+
+export const createLifecycleStatus = async (data: { name: string; color: string }): Promise<IdeaLifecycleStatus> => {
+  const response = await api.post<IdeaLifecycleStatus>('/admin/idea-lifecycle-statuses', data);
+  return response.data;
+};
+
+export const updateLifecycleStatus = async (
+  id: number,
+  data: { name?: string; color?: string; position?: number; is_active?: boolean }
+): Promise<IdeaLifecycleStatus> => {
+  const response = await api.put<IdeaLifecycleStatus>(`/admin/idea-lifecycle-statuses/${id}`, data);
+  return response.data;
+};
+
+export const deleteLifecycleStatus = async (id: number): Promise<void> => {
+  await api.delete(`/admin/idea-lifecycle-statuses/${id}`);
+};
+
+// --- Idea Funnel ---
+
+export const getIdeaFunnel = async (productId: number): Promise<IdeaFunnelData> => {
+  const response = await api.get<IdeaFunnelData>(
+    `/product-intelligence/products/${productId}/idea-funnel`
   );
   return response.data;
 };

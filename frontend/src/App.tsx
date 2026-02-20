@@ -30,6 +30,7 @@ import ProductDashboardPage from './pages/ProductDashboardPage';
 import IntelligenceHubPage from './pages/CompetitorIntelligence/IntelligenceHubPage';
 import InternalFeedbackPage from './pages/CompetitorIntelligence/InternalFeedbackPage';
 import SynthesisHubPage from './pages/CompetitorIntelligence/SynthesisHubPage';
+import IdeaLifecycleSettingsPage from './pages/IdeaLifecycleSettingsPage';
 
 // Redirect from old /report route to new V2 IntelligenceHub
 function ReportRedirect() {
@@ -89,6 +90,17 @@ function App() {
               <ProtectedRoute>
                 <AdminRoute>
                   <UserManagementPage />
+                </AdminRoute>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/admin/idea-settings"
+            element={
+              <ProtectedRoute>
+                <AdminRoute>
+                  <IdeaLifecycleSettingsPage />
                 </AdminRoute>
               </ProtectedRoute>
             }

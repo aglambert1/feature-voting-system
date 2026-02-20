@@ -50,7 +50,7 @@ export default function IdeaDetailPage() {
     try {
       const data = await getIdeaDetail(parseInt(ideaId));
       setIdea(data);
-      setUserVote(data.user_vote || null);
+      setUserVote((data as any).user_vote ?? null);
 
       // Check if user can respond (PO/admin)
       try {
@@ -191,7 +191,7 @@ export default function IdeaDetailPage() {
             {/* Vote section (for approved ideas) */}
             {canVote && (
               <div className="flex flex-col items-center">
-                <div className="text-2xl font-bold text-gray-900">{idea.upvotes || 0}</div>
+                <div className="text-2xl font-bold text-gray-900">{(idea as any).upvotes ?? 0}</div>
                 <div className="text-xs text-gray-500 mb-2">votes</div>
                 <VoteButtons
                   ideaId={idea.id}
@@ -466,8 +466,8 @@ export default function IdeaDetailPage() {
                   <div className="bg-gray-50 rounded-lg p-3">
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 text-xs font-medium rounded ${getStatusBadgeClass(entry.new_status)}`}>
-                          {entry.new_status.replace('_', ' ')}
+                        <span className={`px-2 py-0.5 text-xs font-medium rounded ${getStatusBadgeClass(entry.new_status ?? undefined)}`}>
+                          {(entry.new_status ?? 'unknown').replace('_', ' ')}
                         </span>
                         {entry.is_automated ? (
                           <span className="text-xs text-purple-600">AI Agent</span>

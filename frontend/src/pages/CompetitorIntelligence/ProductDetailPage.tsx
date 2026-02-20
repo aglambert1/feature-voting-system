@@ -15,7 +15,6 @@ import api, {
   getProductPendingCounts,
   getAgentConfig,
   getAgentCompetitors,
-  getFeatureClusters,
   getTriageSettings,
   triggerCompetitorDiscovery,
   triggerCompetitiveAnalysisV2,
@@ -28,7 +27,7 @@ import api, {
   getProductJobs,
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
-import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, FeatureCluster, TriageSettings, JobType, QueueJob, JobStatus } from '../../types';
+import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, TriageSettings, JobType, QueueJob, JobStatus } from '../../types';
 import IdeaTriageSetupModal from './components/IdeaTriageSetupModal';
 import CompetitiveIntelligenceSetupModal from './components/CompetitiveIntelligenceSetupModal';
 import AgentJobStatus from '../../components/AgentJobStatus';
@@ -40,6 +39,7 @@ interface StructuredProductData {
   value_propositions?: string[];
   competitor_search_keywords?: string[];
   product_category?: string;
+  _warnings?: string[];
 }
 
 interface SourceData {
@@ -87,7 +87,6 @@ export default function ProductDetailPage() {
   const [pendingCounts, setPendingCounts] = useState<ProductPendingCounts | null>(null);
   const [agentConfig, setAgentConfig] = useState<CompetitiveAgentConfig | null>(null);
   const [competitors, setCompetitors] = useState<AgentCompetitor[]>([]);
-  const [clusters, setClusters] = useState<FeatureCluster[]>([]);
   const [triageSettings, setTriageSettings] = useState<TriageSettings | null>(null);
 
   // Internal feedback state
@@ -198,7 +197,6 @@ export default function ProductDetailPage() {
         pendingCountsRes,
         agentConfigRes,
         competitorsRes,
-        clustersRes,
         triageRes,
         historyRes,
         internalImportsRes,
@@ -212,7 +210,6 @@ export default function ProductDetailPage() {
         getProductPendingCounts(numProductId).catch(() => null),
         getAgentConfig(numProductId).catch(() => null),
         getAgentCompetitors(numProductId).catch(() => []),
-        getFeatureClusters(numProductId).catch(() => []),
         getTriageSettings(numProductId).catch(() => null),
         productResponse.data.analysis_version > 0
           ? api.get<AnalysisHistory[]>(`/product-intelligence/products/${productId}/analysis-history`).then(r => r.data)
@@ -221,7 +218,7 @@ export default function ProductDetailPage() {
         getInternalFeedbackThemes(numProductId).catch(() => ({ import_id: 0, winloss_themes: [], support_themes: [], analysis_summary: null })),
         getSynthesisStatus(numProductId).catch(() => null),
         getLatestSynthesis(numProductId).catch(() => null),
-        getUnreadAlertCount(numProductId).catch(() => ({ count: 0 })),
+        getUnreadAlertCount(numProductId).catch(() => ({ unread_count: 0 })),
         getFunctionalReports(numProductId).catch(() => []),
         getProductJobs(numProductId, 5, [JobType.PRODUCT_ANALYSIS]).catch(() => [])
       ]);
@@ -229,10 +226,9 @@ export default function ProductDetailPage() {
       setPendingCounts(pendingCountsRes);
       setAgentConfig(agentConfigRes);
       setCompetitors(competitorsRes);
-      setClusters(clustersRes);
       setTriageSettings(triageRes);
       setAnalysisHistory(historyRes);
-      setUnreadAlertCount(alertCountRes?.count || 0);
+      setUnreadAlertCount(alertCountRes?.unread_count ?? 0);
       setFunctionalReportCount(functionalReportsRes?.length || 0);
 
       // Check for active analysis job
@@ -248,7 +244,7 @@ export default function ProductDetailPage() {
         importCount: internalImportsRes.length,
         winlossThemeCount: internalThemesRes.winloss_themes.length,
         supportThemeCount: internalThemesRes.support_themes.length,
-        lastImportDate: internalImportsRes.length > 0 ? internalImportsRes[0].imported_at : null
+        lastImportDate: internalImportsRes.length > 0 && internalImportsRes[0] ? internalImportsRes[0].imported_at : null
       });
 
       // Set synthesis stats
@@ -436,11 +432,7 @@ export default function ProductDetailPage() {
 
   // Calculate stats
   const totalCompetitors = competitors.length;
-  const newCompetitors = competitors.filter(c => (c as any).is_new).length;
   const trackingCompetitors = competitors.filter(c => c.deep_analysis_enabled).length;
-  const totalFeatures = competitors.reduce((sum, c) => sum + (c.feature_count || 0), 0);
-  const totalClusters = clusters.length;
-  const ideasFromClusters = clusters.filter(c => c.idea_generated).length;
 
   if (loading) {
     return (
@@ -521,7 +513,7 @@ export default function ProductDetailPage() {
               <div className="text-sm text-gray-600">
                 {pendingCounts && (pendingCounts.ideas_pending > 0 || pendingCounts.ideas_needs_review > 0) ? (
                   <Link
-                    to={`/ideas?product_id=${productId}`}
+                    to={`/ideas?product=${productId}&from=dashboard`}
                     className="text-blue-600 hover:text-blue-800 font-medium"
                   >
                     {(pendingCounts.ideas_pending || 0) + (pendingCounts.ideas_needs_review || 0)} {
@@ -578,8 +570,6 @@ export default function ProductDetailPage() {
                 productId={parseInt(productId!)}
                 jobTypes={[
                   JobType.COMPETITOR_DISCOVERY,
-                  JobType.FEATURE_CLUSTERING,
-                  JobType.DEEP_ANALYSIS,
                   JobType.SCHEDULED_DEEP_ANALYSIS
                 ]}
                 onJobComplete={fetchAllData}
@@ -758,6 +748,20 @@ export default function ProductDetailPage() {
           </div>
         {currentAnalysis && (
           <>
+            {currentAnalysis._warnings && currentAnalysis._warnings.length > 0 && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  <div>
+                    {currentAnalysis._warnings.map((warning, idx) => (
+                      <p key={idx} className="text-sm text-amber-800">{warning}</p>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="space-y-4">
               {currentAnalysis.core_features && currentAnalysis.core_features.length > 0 && (
                 <div>

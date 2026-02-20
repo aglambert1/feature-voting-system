@@ -3,7 +3,7 @@
  *
  * Displays a single idea with:
  * - Title and descriptions (what, why, use_case)
- * - Vote counts (score, upvotes, downvotes)
+ * - Vote counts (upvotes)
  * - VoteButtons component
  * - Expandable details with status history
  * - Timestamp
@@ -194,6 +194,16 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
               {statusBadge && (
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusBadge.className}`}>
                   {statusBadge.label}
+                </span>
+              )}
+
+              {/* Lifecycle Status Badge */}
+              {idea.lifecycle_status_name && (
+                <span
+                  className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white"
+                  style={{ backgroundColor: idea.lifecycle_status_color || '#6B7280' }}
+                >
+                  {idea.lifecycle_status_name}
                 </span>
               )}
 

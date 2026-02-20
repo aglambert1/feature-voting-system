@@ -81,7 +81,7 @@ const SubmitIdeaPage = () => {
           setSelectedProductId(productId);
         }
       }
-    } else if (!loadingProducts && !selectedProductId && products.length === 1) {
+    } else if (!loadingProducts && !selectedProductId && products.length === 1 && products[0]) {
       // Auto-select if only one product (and no URL param and nothing already selected)
       setSelectedProductId(products[0].id);
     }
@@ -102,7 +102,8 @@ const SubmitIdeaPage = () => {
     setCheckingSimilarity(true);
 
     try {
-      const similar = await findSimilarIdeas(query, selectedProductId!, {
+      if (!selectedProductId || selectedProductId === 'all') return;
+      const similar = await findSimilarIdeas(query, selectedProductId, {
         signal: newController.signal,
       });
       setSimilarIdeas(similar);
@@ -148,7 +149,12 @@ const SubmitIdeaPage = () => {
 
     try {
       // Call API to structure text using Claude with product context
-      const result = await structureText(freeformText, parseInt(selectedProductId));
+      if (selectedProductId === 'all') {
+        setError('Please select a specific product');
+        setIsStructuring(false);
+        return;
+      }
+      const result = await structureText(freeformText, selectedProductId as number);
 
       // Update structured data with AI response
       setStructuredData({
@@ -218,7 +224,7 @@ const SubmitIdeaPage = () => {
    */
   const handleSubmit = async () => {
     // Validation
-    if (!selectedProductId) {
+    if (!selectedProductId || selectedProductId === 'all') {
       setError('Please select a product');
       return;
     }
@@ -250,15 +256,11 @@ const SubmitIdeaPage = () => {
         what_description: structuredData.what_description,
         why_description: structuredData.why_description,
         use_case_description: structuredData.use_case_description,
-        product_id: selectedProductId,
+        product_id: selectedProductId as number,
       });
 
       // Success - redirect to ideas page with product filter preserved
-      if (selectedProductId && selectedProductId !== 'all') {
-        navigate(`/ideas?product=${selectedProductId}`);
-      } else {
-        navigate('/ideas');
-      }
+      navigate(`/ideas?product=${selectedProductId}`);
     } catch (err) {
       const error = err as ApiError;
       // Handle FastAPI validation errors (422 returns array of error objects)

@@ -17,11 +17,11 @@ import { useState, useEffect, useCallback, ChangeEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useProduct } from '../contexts/ProductContext';
-import { getIdeas, checkCanRespond } from '../services/api';
+import { getIdeas, checkCanRespond, getLifecycleStatuses } from '../services/api';
 import IdeaCard from '../components/IdeaCard';
 import IdeaResponseModal from '../components/IdeaResponseModal';
 import Navigation from '../components/Navigation';
-import type { IdeaListItem, ApiError, IdeaSortOption } from '../types';
+import type { IdeaListItem, ApiError, IdeaSortOption, IdeaLifecycleStatus } from '../types';
 import { UserRole } from '../types';
 
 const ITEMS_PER_PAGE = 20;
@@ -47,6 +47,17 @@ const IdeasPage = () => {
 
   // Determine if user is PO or Admin
   const isPOOrAdmin = user?.role === UserRole.PRODUCT_OWNER || user?.role === UserRole.ADMIN;
+
+  // Triage mode: when navigated from Product Dashboard
+  const isTriageMode = searchParams.get('from') === 'dashboard';
+  const triageProductId = searchParams.get('product');
+  const triageProductName = isTriageMode && triageProductId
+    ? products.find(p => p.id === parseInt(triageProductId))?.product_name
+    : null;
+
+  // Lifecycle status filter (PO/Admin only)
+  const [lifecycleStatuses, setLifecycleStatuses] = useState<IdeaLifecycleStatus[]>([]);
+  const [selectedLifecycleStatusId, setSelectedLifecycleStatusId] = useState<number | null>(null);
 
   // State
   const [ideas, setIdeas] = useState<IdeaListItem[]>([]);
@@ -80,6 +91,15 @@ const IdeasPage = () => {
     }
   }, [searchParams, setSelectedProductId]);
 
+  // Fetch lifecycle statuses for PO/Admin filter
+  useEffect(() => {
+    if (isPOOrAdmin) {
+      getLifecycleStatuses()
+        .then(setLifecycleStatuses)
+        .catch(() => {}); // Non-critical, filter just won't show
+    }
+  }, [isPOOrAdmin]);
+
   /**
    * Fetch ideas from API with pagination and sorting
    */
@@ -93,6 +113,7 @@ const IdeasPage = () => {
         skip,
         limit: ITEMS_PER_PAGE,
         ...(sortBy && { sort_by: sortBy }),
+        ...(selectedLifecycleStatusId && { lifecycle_status_id: selectedLifecycleStatusId }),
       };
       const params = (selectedProductId === 'all' || selectedProductId === null)
         ? baseParams
@@ -110,7 +131,7 @@ const IdeasPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedProductId, currentPage, sortBy]);
+  }, [selectedProductId, currentPage, sortBy, selectedLifecycleStatusId]);
 
   // Fetch ideas when product selection, page, or sort changes
   useEffect(() => {
@@ -200,31 +221,51 @@ const IdeasPage = () => {
 
       {/* Main Content */}
       <main className="main-content max-w-7xl mx-auto py-8 px-4">
+        {/* Back to Dashboard link (triage mode) */}
+        {isTriageMode && triageProductId && (
+          <Link
+            to={`/product-intelligence/products/${triageProductId}`}
+            className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700 mb-4"
+          >
+            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Back to {triageProductName || 'Product'} Dashboard
+          </Link>
+        )}
+
         {/* Page Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
-            <h2 className="text-3xl font-bold text-gray-900">All Ideas</h2>
+            <h2 className="text-3xl font-bold text-gray-900">
+              {isTriageMode ? 'Idea Triage' : 'All Ideas'}
+            </h2>
             <p className="mt-2 text-gray-600">
-              Vote on ideas to help prioritize features
+              {isTriageMode
+                ? 'Review and respond to submitted ideas'
+                : 'Vote on ideas to help prioritize features'
+              }
             </p>
           </div>
 
-          {/* Submit Button - disabled if no products */}
-          {!loadingProducts && hasProducts ? (
-            <Link
-              to={selectedProductId !== 'all' ? `/submit?product=${selectedProductId}` : '/submit'}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-3 rounded-lg shadow-sm transition-colors"
-            >
-              Submit New Idea
-            </Link>
-          ) : (
-            <button
-              disabled
-              className="bg-gray-300 text-gray-500 font-medium px-6 py-3 rounded-lg shadow-sm cursor-not-allowed"
-              title="Create a product first to submit ideas"
-            >
-              Submit New Idea
-            </button>
+          {/* Submit Button - hidden in triage mode, disabled if no products */}
+          {!isTriageMode && (
+            !loadingProducts && hasProducts ? (
+              <Link
+                to={selectedProductId !== 'all' ? `/submit?product=${selectedProductId}` : '/submit'}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-3 rounded-lg shadow-sm transition-colors"
+              >
+                Submit New Idea
+              </Link>
+            ) : (
+              <button
+                disabled
+                className="bg-gray-300 text-gray-500 font-medium px-6 py-3 rounded-lg shadow-sm cursor-not-allowed"
+                title="Create a product first to submit ideas"
+              >
+                Submit New Idea
+              </button>
+            )
           )}
         </div>
 
@@ -267,7 +308,7 @@ const IdeasPage = () => {
         {/* Filters: Product Selector and Sort */}
         {!loadingProducts && hasProducts && (
           <div className="mb-6 bg-white rounded-lg border border-gray-200 p-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className={`grid grid-cols-1 gap-4 ${isPOOrAdmin && lifecycleStatuses.length > 0 ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
               {/* Product Filter */}
               <div>
                 <label htmlFor="product-filter" className="block text-sm font-medium text-gray-700 mb-2">
@@ -306,6 +347,32 @@ const IdeasPage = () => {
                   ))}
                 </select>
               </div>
+
+              {/* Lifecycle Status Filter - PO/Admin only */}
+              {isPOOrAdmin && lifecycleStatuses.length > 0 && (
+                <div>
+                  <label htmlFor="lifecycle-filter" className="block text-sm font-medium text-gray-700 mb-2">
+                    Lifecycle Stage
+                  </label>
+                  <select
+                    id="lifecycle-filter"
+                    value={selectedLifecycleStatusId ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSelectedLifecycleStatusId(val ? parseInt(val) : null);
+                      setCurrentPage(1);
+                    }}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="">All Stages</option>
+                    {lifecycleStatuses.map((status) => (
+                      <option key={status.id} value={status.id}>
+                        {status.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           </div>
         )}

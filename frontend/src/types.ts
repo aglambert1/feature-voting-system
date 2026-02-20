@@ -73,8 +73,6 @@ export interface AuthResult {
 
 export interface VoteCount {
   upvotes: number;
-  downvotes: number;
-  score: number;
   total_votes: number;
 }
 
@@ -96,6 +94,10 @@ export interface IdeaListItem {
   is_active: boolean | null;
   duplicate_of_idea_id: number | null;
   duplicate_of_title: string | null;
+  // Lifecycle status (post-acceptance stage)
+  lifecycle_status_id: number | null;
+  lifecycle_status_name: string | null;
+  lifecycle_status_color: string | null;
   // Submitter info
   submitter_id: number | null;
   // Vote counts
@@ -311,11 +313,8 @@ export enum JobType {
   IDEA_TRIAGE = 'idea_triage',
   COMPETITIVE_MONITORING = 'competitive_monitoring',
   FULL_WORKFLOW = 'full_workflow',
-  // Agent-Centric Architecture job types
-  DEEP_ANALYSIS = 'deep_analysis',
+  // V2 competitive analysis orchestration
   SCHEDULED_DEEP_ANALYSIS = 'scheduled_deep_analysis',
-  FEATURE_CLUSTERING = 'feature_clustering',
-  INTENSITY_IDEA_GENERATION = 'intensity_idea_generation',
   // Three-source synthesis
   OPPORTUNITY_SYNTHESIS = 'opportunity_synthesis',
 }
@@ -619,7 +618,6 @@ export interface ExistingFeatureMatch {
 
 export interface SourceSummary {
   vote_count: number;
-  downvote_count: number;
   voters: IdeaVoter[];
   competitors_with_feature: string[];
   competitive_urgency: string | null;
@@ -787,39 +785,6 @@ export interface CompetitorFeature {
   status: string;
   cluster_id: number | null;
   cluster_name: string | null;
-}
-
-/**
- * Feature cluster for competitive intensity.
- */
-export interface FeatureCluster {
-  id: number;
-  product_id: number;
-  cluster_name: string | null;
-  cluster_description: string | null;
-  competitor_count: number;
-  feature_count: number;
-  idea_generated: boolean;
-  generated_idea_id: number | null;
-}
-
-/**
- * Feature cluster member.
- */
-export interface FeatureClusterMember {
-  feature_id: number;
-  feature_name: string;
-  feature_description: string | null;
-  competitor_id: number;
-  competitor_name: string;
-  similarity_score: number;
-}
-
-/**
- * Detailed feature cluster with members.
- */
-export interface FeatureClusterDetail extends FeatureCluster {
-  members: FeatureClusterMember[];
 }
 
 /**
@@ -1379,4 +1344,26 @@ export interface SynthesisStatusResponse {
 export interface SynthesisResultsResponse {
   run: SynthesisRun;
   opportunities: SynthesizedOpportunity[];
+}
+
+// --- Idea Lifecycle & Funnel ---
+
+export interface IdeaLifecycleStatus {
+  id: number;
+  name: string;
+  slug: string;
+  color: string;
+  position: number;
+  is_default: boolean;
+  is_active: boolean;
+  idea_count: number;
+}
+
+export interface IdeaFunnelData {
+  product_id: number;
+  total_submitted: number;
+  status_counts: Record<string, number>;
+  lifecycle_counts: Record<string, number>;
+  auto_triaged_count: number;
+  manual_triaged_count: number;
 }
