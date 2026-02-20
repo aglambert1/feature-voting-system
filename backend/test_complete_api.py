@@ -5,7 +5,7 @@ Complete API test script covering all endpoints.
 Tests:
 - Authentication (register, login, JWT)
 - Ideas (create, list, get single)
-- Votes (upvote, downvote, vote counts)
+- Votes (upvote, unvote, vote counts)
 - Submissions (structure with AI, submit)
 - Admin functions (user management)
 
@@ -257,8 +257,7 @@ def test_complete_api():
         print(f"  What: {idea['what_description'][:60]}...")
         print(f"  Product ID: {idea['product_id']}")
         print(f"  Upvotes: {idea['vote_counts']['upvotes']}")
-        print(f"  Downvotes: {idea['vote_counts']['downvotes']}")
-        print(f"  Score: {idea['vote_counts']['score']}")
+        print(f"  Total votes: {idea['vote_counts']['total_votes']}")
     else:
         print(f"✗ Failed: {response.status_code}")
         pprint(response.json())
@@ -305,34 +304,14 @@ def test_complete_api():
         print("✓ Upvote successful!")
         vote_response = response.json()
         print(f"  Vote value: {vote_response['vote']['vote_value']}")
-        print(f"  New score: {vote_response['vote_counts']['score']}")
         print(f"  Upvotes: {vote_response['vote_counts']['upvotes']}")
-        print(f"  Downvotes: {vote_response['vote_counts']['downvotes']}")
+        print(f"  Total votes: {vote_response['vote_counts']['total_votes']}")
     else:
         print(f"✗ Failed: {response.status_code}")
         pprint(response.json())
 
-    # Test 4.2: Change vote to downvote
-    print_test("4.2", "Change vote to downvote")
-    vote_data = {"vote_value": -1}
-    response = requests.post(
-        f"{BASE_URL}/ideas/{idea_id}/vote",
-        json=vote_data,
-        headers=headers
-    )
-
-    if response.status_code == 200:
-        print("✓ Vote changed successfully!")
-        vote_response = response.json()
-        print(f"  Vote value: {vote_response['vote']['vote_value']}")
-        print(f"  New score: {vote_response['vote_counts']['score']}")
-        print(f"  Message: {vote_response['message']}")
-    else:
-        print(f"✗ Failed: {response.status_code}")
-        pprint(response.json())
-
-    # Test 4.3: Try invalid vote value (should fail)
-    print_test("4.3", "Try invalid vote value (should fail)")
+    # Test 4.2: Try invalid vote value (should fail)
+    print_test("4.2", "Try invalid vote value (should fail)")
     vote_data = {"vote_value": 5}
     response = requests.post(
         f"{BASE_URL}/ideas/{idea_id}/vote",

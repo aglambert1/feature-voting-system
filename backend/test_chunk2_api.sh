@@ -109,22 +109,7 @@ echo "  New score: $SCORE"
 echo "  Message: $(echo "$VOTE_RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin)['message'])")"
 echo ""
 
-# Test 7: Change vote to downvote
-echo "Test 7: Change vote to downvote"
-echo "------------------------------------------------------------"
-VOTE_RESPONSE2=$(curl -s -X POST "${BASE_URL}/ideas/${IDEA_ID}/vote" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"vote_value": -1}')
-
-SCORE2=$(echo "$VOTE_RESPONSE2" | python3 -c "import sys, json; print(json.load(sys.stdin)['vote_counts']['score'])")
-
-echo "✓ Vote updated successfully"
-echo "  New score: $SCORE2"
-echo "  Message: $(echo "$VOTE_RESPONSE2" | python3 -c "import sys, json; print(json.load(sys.stdin)['message'])")"
-echo ""
-
-# Test 8: Try to vote without authentication (should fail)
+# Test 7: Try to vote without authentication (should fail)
 echo "Test 8: Try to vote without authentication (should fail)"
 echo "------------------------------------------------------------"
 UNAUTH_RESPONSE=$(curl -s -X POST "${BASE_URL}/ideas/${IDEA_ID}/vote" \
