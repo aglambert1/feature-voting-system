@@ -135,7 +135,7 @@ const RegisterPage = () => {
             Create an Account
           </h2>
           <p className="mt-2 text-sm text-gray-600">
-            Join the Feature Voting System
+            Join Feature-IQ
           </p>
         </div>
 

@@ -20,7 +20,7 @@ export default function Navigation() {
               href={isProductOwnerOrAdmin ? '/product-intelligence' : '/ideas'}
               className="text-lg sm:text-xl font-bold text-blue-600 whitespace-nowrap"
             >
-              Feature Voting
+              Feature-IQ
             </a>
           </div>
 

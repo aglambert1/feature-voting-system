@@ -80,6 +80,13 @@ services:
         source: /*
         destination: /index.html
 
+  # Redis for Celery message broker
+  - type: redis
+    name: feature-iq-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []  # Only internal services can connect
+
 databases:
   - name: feature-iq-db
     plan: free

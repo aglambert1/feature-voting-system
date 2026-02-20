@@ -52,11 +52,11 @@ class EmailService:
             return False
 
         # MVP: Log to console (in production, send actual email)
-        subject = "Password Reset Request - Feature Voting System"
+        subject = "Password Reset Request - Feature-IQ"
         body = f"""
 Hello {username},
 
-You requested to reset your password for Feature Voting System.
+You requested to reset your password for Feature-IQ.
 
 Your One-Time Password (OTP) is: {otp}
 
@@ -65,7 +65,7 @@ This code will expire in 15 minutes.
 If you didn't request this, please ignore this email.
 
 Best regards,
-Feature Voting System Team
+The Feature-IQ Team
         """
 
         # Log the email (MVP implementation)
@@ -106,16 +106,16 @@ Feature Voting System Team
             logger.info(f"Emails disabled - would have sent notification to {to_email}")
             return False
 
-        subject = "Password Changed - Feature Voting System"
+        subject = "Password Changed - Feature-IQ"
         body = f"""
 Hello {username},
 
-Your password for Feature Voting System was successfully changed.
+Your password for Feature-IQ was successfully changed.
 
 If you didn't make this change, please contact support immediately.
 
 Best regards,
-Feature Voting System Team
+The Feature-IQ Team
         """
 
         logger.info("=" * 60)

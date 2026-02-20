@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     """
 
     # Application settings
-    app_name: str = "Feature Voting System"
+    app_name: str = "Feature-IQ"
     debug: bool = False  # Safe default; set DEBUG=true in .env for local dev
 
     # Database connection

@@ -171,7 +171,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
-    description="A feature voting system for prioritizing product ideas",
+    description="Feature-IQ: AI-powered product intelligence and feature prioritization",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     openapi_url="/openapi.json" if settings.debug else None,
@@ -238,7 +238,7 @@ def root():
         A welcome message
     """
     return {
-        "message": "Welcome to the Feature Voting System API",
+        "message": "Welcome to the Feature-IQ API",
         "docs": "/docs",
         "version": "0.1.0"
     }
