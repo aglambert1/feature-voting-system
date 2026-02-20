@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 
 from app.models.competitor_intelligence import CIProduct
 from app.models.user import UserRole
-from tests.conftest import auth_headers
+from conftest import auth_headers
 
 
 class TestCreateProduct:

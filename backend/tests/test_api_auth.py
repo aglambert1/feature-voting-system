@@ -12,7 +12,7 @@ from unittest.mock import patch, AsyncMock
 from app.models.user import User, UserRole
 from app.models.password_reset import PasswordResetToken
 from app.utils.security import hash_password, create_access_token, verify_password
-from tests.conftest import auth_headers
+from conftest import auth_headers
 
 
 # ============================================================================

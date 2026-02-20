@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.user import UserRole
 from app.models.competitor_intelligence import CIProduct
-from tests.conftest import auth_headers
+from conftest import auth_headers
 
 
 class TestCreateIdea:

@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from app.models.synthesis import SynthesisRun
-from tests.conftest import auth_headers
+from conftest import auth_headers
 
 
 class TestSynthesisStatus:

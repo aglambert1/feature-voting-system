@@ -7,7 +7,7 @@ Covers AI-powered idea structuring and submission with triage.
 import pytest
 from unittest.mock import patch, MagicMock
 
-from tests.conftest import auth_headers
+from conftest import auth_headers
 
 
 class TestStructureFreeformText:

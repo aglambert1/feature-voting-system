@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock
 
 from app.models.competitive_agent import CompetitiveAgentConfig, AgentMode
 from app.models.competitor_intelligence import CIProduct, ProductCompetitor
-from tests.conftest import auth_headers
+from conftest import auth_headers
 
 
 class TestAgentConfig:

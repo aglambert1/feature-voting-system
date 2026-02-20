@@ -6,7 +6,7 @@ Covers upvoting, unvoting, and vote validation.
 
 import pytest
 from app.models.vote import Vote
-from tests.conftest import auth_headers
+from conftest import auth_headers
 
 
 class TestVoting:
