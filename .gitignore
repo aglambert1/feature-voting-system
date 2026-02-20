@@ -143,3 +143,10 @@ logs/
 
 # User uploaded files
 backend/uploads/
+
+# Generated competitive intelligence reports (runtime data)
+backend/data/competitive_reports/
+
+# Binary documents (use Google Drive/Notion instead)
+*.pptx
+*.docx

@@ -15,16 +15,21 @@ import api, {
   getProductPendingCounts,
   getAgentConfig,
   getAgentCompetitors,
-  getFeatureClusters,
   getTriageSettings,
   triggerCompetitorDiscovery,
   triggerCompetitiveAnalysisV2,
+  getInternalFeedbackImports,
+  getInternalFeedbackThemes,
+  getSynthesisStatus,
+  getLatestSynthesis,
+  getUnreadAlertCount,
+  getFunctionalReports,
+  getProductJobs,
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
-import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, FeatureCluster, TriageSettings, JobType } from '../../types';
+import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, TriageSettings, JobType, QueueJob, JobStatus } from '../../types';
 import IdeaTriageSetupModal from './components/IdeaTriageSetupModal';
-import MarketDiscoverySetupModal from './components/MarketDiscoverySetupModal';
-import CompetitiveAnalysisSetupModal from './components/CompetitiveAnalysisSetupModal';
+import CompetitiveIntelligenceSetupModal from './components/CompetitiveIntelligenceSetupModal';
 import AgentJobStatus from '../../components/AgentJobStatus';
 import FeatureQueryChat from './components/FeatureQueryChat';
 
@@ -34,6 +39,7 @@ interface StructuredProductData {
   value_propositions?: string[];
   competitor_search_keywords?: string[];
   product_category?: string;
+  _warnings?: string[];
 }
 
 interface SourceData {
@@ -75,13 +81,40 @@ export default function ProductDetailPage() {
   const [sources, setSources] = useState<ProductSource[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeAnalysisJob, setActiveAnalysisJob] = useState<QueueJob | null>(null);
 
   // Agent-related state
   const [pendingCounts, setPendingCounts] = useState<ProductPendingCounts | null>(null);
   const [agentConfig, setAgentConfig] = useState<CompetitiveAgentConfig | null>(null);
   const [competitors, setCompetitors] = useState<AgentCompetitor[]>([]);
-  const [clusters, setClusters] = useState<FeatureCluster[]>([]);
   const [triageSettings, setTriageSettings] = useState<TriageSettings | null>(null);
+
+  // Internal feedback state
+  const [internalFeedbackStats, setInternalFeedbackStats] = useState<{
+    importCount: number;
+    winlossThemeCount: number;
+    supportThemeCount: number;
+    lastImportDate: string | null;
+  }>({ importCount: 0, winlossThemeCount: 0, supportThemeCount: 0, lastImportDate: null });
+
+  // Synthesis state
+  const [synthesisStats, setSynthesisStats] = useState<{
+    hasRun: boolean;
+    status: string;
+    opportunityCount: number;
+    threeWayMatches: number;
+    twoWayMatches: number;
+    lastRunDate: string | null;
+    sourcesAvailable: number;
+  }>({
+    hasRun: false,
+    status: 'none',
+    opportunityCount: 0,
+    threeWayMatches: 0,
+    twoWayMatches: 0,
+    lastRunDate: null,
+    sourcesAvailable: 0
+  });
 
   // UI state
   const [expandedVersions, setExpandedVersions] = useState<Set<number>>(new Set());
@@ -89,12 +122,59 @@ export default function ProductDetailPage() {
 
   // Modal state
   const [showIdeaTriageSetup, setShowIdeaTriageSetup] = useState(false);
-  const [showMarketDiscoverySetup, setShowMarketDiscoverySetup] = useState(false);
-  const [showCompetitiveAnalysisSetup, setShowCompetitiveAnalysisSetup] = useState(false);
+  const [showCompetitiveIntelligenceSetup, setShowCompetitiveIntelligenceSetup] = useState(false);
+  const [showNoCompetitorsWarning, setShowNoCompetitorsWarning] = useState(false);
+
+  // Competitive intelligence stats
+  const [unreadAlertCount, setUnreadAlertCount] = useState(0);
+  const [functionalReportCount, setFunctionalReportCount] = useState(0);
 
   // Action state
   const [runningAction, setRunningAction] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Fetch synthesis stats (can be called independently when synthesis job completes)
+  const fetchSynthesisStats = useCallback(async () => {
+    if (!productId) return;
+    const numProductId = parseInt(productId);
+
+    try {
+      const [synthesisStatusRes, synthesisResultsRes] = await Promise.all([
+        getSynthesisStatus(numProductId).catch(() => null),
+        getLatestSynthesis(numProductId).catch(() => null)
+      ]);
+
+      const sourcesAvailable = [
+        synthesisStatusRes?.sources_available?.competitive,
+        synthesisStatusRes?.sources_available?.customer,
+        synthesisStatusRes?.sources_available?.internal
+      ].filter(Boolean).length;
+
+      if (synthesisResultsRes && synthesisResultsRes.run && synthesisResultsRes.run.status !== 'none') {
+        setSynthesisStats({
+          hasRun: true,
+          status: synthesisResultsRes.run.status,
+          opportunityCount: synthesisResultsRes.opportunities?.length || 0,
+          threeWayMatches: synthesisResultsRes.run.summary_stats?.three_way_matches || 0,
+          twoWayMatches: synthesisResultsRes.run.summary_stats?.two_way_matches || 0,
+          lastRunDate: synthesisResultsRes.run.completed_at || synthesisResultsRes.run.created_at,
+          sourcesAvailable
+        });
+      } else {
+        setSynthesisStats({
+          hasRun: false,
+          status: 'none',
+          opportunityCount: 0,
+          threeWayMatches: 0,
+          twoWayMatches: 0,
+          lastRunDate: null,
+          sourcesAvailable
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch synthesis stats:', err);
+    }
+  }, [productId]);
 
   // Fetch all data
   const fetchAllData = useCallback(async () => {
@@ -117,26 +197,84 @@ export default function ProductDetailPage() {
         pendingCountsRes,
         agentConfigRes,
         competitorsRes,
-        clustersRes,
         triageRes,
-        historyRes
+        historyRes,
+        internalImportsRes,
+        internalThemesRes,
+        synthesisStatusRes,
+        synthesisResultsRes,
+        alertCountRes,
+        functionalReportsRes,
+        analysisJobsRes
       ] = await Promise.all([
         getProductPendingCounts(numProductId).catch(() => null),
         getAgentConfig(numProductId).catch(() => null),
         getAgentCompetitors(numProductId).catch(() => []),
-        getFeatureClusters(numProductId).catch(() => []),
         getTriageSettings(numProductId).catch(() => null),
         productResponse.data.analysis_version > 0
           ? api.get<AnalysisHistory[]>(`/product-intelligence/products/${productId}/analysis-history`).then(r => r.data)
-          : Promise.resolve([])
+          : Promise.resolve([]),
+        getInternalFeedbackImports(numProductId).catch(() => []),
+        getInternalFeedbackThemes(numProductId).catch(() => ({ import_id: 0, winloss_themes: [], support_themes: [], analysis_summary: null })),
+        getSynthesisStatus(numProductId).catch(() => null),
+        getLatestSynthesis(numProductId).catch(() => null),
+        getUnreadAlertCount(numProductId).catch(() => ({ unread_count: 0 })),
+        getFunctionalReports(numProductId).catch(() => []),
+        getProductJobs(numProductId, 5, [JobType.PRODUCT_ANALYSIS]).catch(() => [])
       ]);
 
       setPendingCounts(pendingCountsRes);
       setAgentConfig(agentConfigRes);
       setCompetitors(competitorsRes);
-      setClusters(clustersRes);
       setTriageSettings(triageRes);
       setAnalysisHistory(historyRes);
+      setUnreadAlertCount(alertCountRes?.unread_count ?? 0);
+      setFunctionalReportCount(functionalReportsRes?.length || 0);
+
+      // Check for active analysis job
+      const activeAnalysis = analysisJobsRes.find((j: QueueJob) =>
+        j.status === JobStatus.PENDING ||
+        j.status === JobStatus.QUEUED ||
+        j.status === JobStatus.RUNNING
+      );
+      setActiveAnalysisJob(activeAnalysis || null);
+
+      // Set internal feedback stats
+      setInternalFeedbackStats({
+        importCount: internalImportsRes.length,
+        winlossThemeCount: internalThemesRes.winloss_themes.length,
+        supportThemeCount: internalThemesRes.support_themes.length,
+        lastImportDate: internalImportsRes.length > 0 && internalImportsRes[0] ? internalImportsRes[0].imported_at : null
+      });
+
+      // Set synthesis stats
+      const sourcesAvailable = [
+        synthesisStatusRes?.sources_available?.competitive,
+        synthesisStatusRes?.sources_available?.customer,
+        synthesisStatusRes?.sources_available?.internal
+      ].filter(Boolean).length;
+
+      if (synthesisResultsRes && synthesisResultsRes.run && synthesisResultsRes.run.status !== 'none') {
+        setSynthesisStats({
+          hasRun: true,
+          status: synthesisResultsRes.run.status,
+          opportunityCount: synthesisResultsRes.opportunities?.length || 0,
+          threeWayMatches: synthesisResultsRes.run.summary_stats?.three_way_matches || 0,
+          twoWayMatches: synthesisResultsRes.run.summary_stats?.two_way_matches || 0,
+          lastRunDate: synthesisResultsRes.run.completed_at || synthesisResultsRes.run.created_at,
+          sourcesAvailable
+        });
+      } else {
+        setSynthesisStats({
+          hasRun: false,
+          status: 'none',
+          opportunityCount: 0,
+          threeWayMatches: 0,
+          twoWayMatches: 0,
+          lastRunDate: null,
+          sourcesAvailable
+        });
+      }
 
     } catch (err: any) {
       setError(err.message || err.data?.detail || 'Failed to load product');
@@ -148,6 +286,34 @@ export default function ProductDetailPage() {
   useEffect(() => {
     fetchAllData();
   }, [fetchAllData, location.key]);
+
+  // Poll for active analysis job completion
+  useEffect(() => {
+    if (!activeAnalysisJob || !productId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const jobs = await getProductJobs(parseInt(productId), 5, [JobType.PRODUCT_ANALYSIS]);
+        const active = jobs.find(j =>
+          j.status === JobStatus.PENDING ||
+          j.status === JobStatus.QUEUED ||
+          j.status === JobStatus.RUNNING
+        );
+
+        if (active) {
+          setActiveAnalysisJob(active);
+        } else {
+          // Job completed - refresh all data
+          setActiveAnalysisJob(null);
+          fetchAllData();
+        }
+      } catch (err) {
+        console.error('[ProductDetail] Failed to poll analysis job:', err);
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [activeAnalysisJob, productId, fetchAllData]);
 
   // Clear action message after timeout
   useEffect(() => {
@@ -194,6 +360,7 @@ export default function ProductDetailPage() {
   const handleRunMarketDiscovery = async () => {
     if (!productId) return;
     setRunningAction('market-discovery');
+    setShowNoCompetitorsWarning(false);
     try {
       await triggerCompetitorDiscovery(parseInt(productId));
       setActionMessage({ type: 'success', text: 'Market Discovery started. Check back shortly for results.' });
@@ -206,15 +373,26 @@ export default function ProductDetailPage() {
     }
   };
 
-  const handleRunCompetitiveAnalysis = async () => {
+  const handleRunAllNow = async () => {
     if (!productId) return;
-    setRunningAction('competitive-analysis');
+
+    // Check if any competitors are selected for deep analysis
+    const selectedForAnalysis = competitors.filter(c => c.deep_analysis_enabled).length;
+    if (selectedForAnalysis === 0) {
+      setShowNoCompetitorsWarning(true);
+      return;
+    }
+
+    // Run full pipeline: discovery → analysis → synthesis
+    setRunningAction('run-all');
     try {
+      // First trigger discovery, then analysis (V2 includes synthesis)
+      await triggerCompetitorDiscovery(parseInt(productId));
       await triggerCompetitiveAnalysisV2(parseInt(productId));
-      setActionMessage({ type: 'success', text: 'V2 Competitive Analysis started. Functional audits for all competitors will run, followed by landscape synthesis.' });
+      setActionMessage({ type: 'success', text: 'Full competitive intelligence pipeline started: Discovery → Functional Audits → Landscape Synthesis' });
       setTimeout(fetchAllData, 2000);
     } catch (err: any) {
-      const errorDetail = err.response?.data?.detail || err.message || 'Failed to start Competitive Analysis';
+      const errorDetail = err.response?.data?.detail || err.message || 'Failed to start competitive intelligence pipeline';
       setActionMessage({ type: 'error', text: errorDetail });
     } finally {
       setRunningAction(null);
@@ -254,11 +432,7 @@ export default function ProductDetailPage() {
 
   // Calculate stats
   const totalCompetitors = competitors.length;
-  const newCompetitors = competitors.filter(c => (c as any).is_new).length;
   const trackingCompetitors = competitors.filter(c => c.deep_analysis_enabled).length;
-  const totalFeatures = competitors.reduce((sum, c) => sum + (c.feature_count || 0), 0);
-  const totalClusters = clusters.length;
-  const ideasFromClusters = clusters.filter(c => c.idea_generated).length;
 
   if (loading) {
     return (
@@ -339,7 +513,7 @@ export default function ProductDetailPage() {
               <div className="text-sm text-gray-600">
                 {pendingCounts && (pendingCounts.ideas_pending > 0 || pendingCounts.ideas_needs_review > 0) ? (
                   <Link
-                    to={`/ideas?product_id=${productId}`}
+                    to={`/ideas?product=${productId}&from=dashboard`}
                     className="text-blue-600 hover:text-blue-800 font-medium"
                   >
                     {(pendingCounts.ideas_pending || 0) + (pendingCounts.ideas_needs_review || 0)} {
@@ -365,52 +539,75 @@ export default function ProductDetailPage() {
             </div>
           </div>
 
-          {/* Market Discovery Agent Tile */}
+          {/* Competitive Intelligence Agent Tile (Combined) */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-gray-900">Market Discovery Agent</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-gray-900">Competitive Intelligence Agent</h3>
+                {unreadAlertCount > 0 && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded-full">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
+                    </svg>
+                    {unreadAlertCount}
+                  </span>
+                )}
+              </div>
               <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                agentConfig?.competitor_discovery_mode === 'scheduled' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                agentConfig?.competitor_discovery_mode === 'scheduled' || agentConfig?.deep_analysis_mode === 'scheduled'
+                  ? 'bg-green-100 text-green-800'
+                  : 'bg-gray-100 text-gray-600'
               }`}>
-                {agentConfig?.competitor_discovery_mode === 'scheduled' ? 'Automatic' : 'Manual'}
+                {agentConfig?.competitor_discovery_mode === 'scheduled' || agentConfig?.deep_analysis_mode === 'scheduled'
+                  ? 'Scheduled'
+                  : 'Manual'}
               </span>
             </div>
 
             <div className="space-y-3">
-              {/* Job Status */}
+              {/* Job Status - shows all competitive intelligence jobs */}
               <AgentJobStatus
                 productId={parseInt(productId!)}
-                jobTypes={[JobType.COMPETITOR_DISCOVERY]}
+                jobTypes={[
+                  JobType.COMPETITOR_DISCOVERY,
+                  JobType.SCHEDULED_DEEP_ANALYSIS
+                ]}
                 onJobComplete={fetchAllData}
               />
 
+              {/* Stats */}
               <div className="text-sm text-gray-600">
-                {totalCompetitors > 0 ? (
-                  <Link
-                    to={`/product-intelligence/products/${productId}/competitors`}
-                    className="text-blue-600 hover:text-blue-800 font-medium"
-                  >
-                    {totalCompetitors} competitors discovered{newCompetitors > 0 && `; ${newCompetitors} new`} →
-                  </Link>
-                ) : (
-                  <span className="text-gray-500">No competitors discovered</span>
-                )}
+                {totalCompetitors} competitors discovered
               </div>
 
               <div className="text-sm text-gray-500">
-                {trackingCompetitors} competitors selected for deep analysis
+                {trackingCompetitors} selected for deep analysis
+              </div>
+
+              <div className="text-sm text-gray-500">
+                {functionalReportCount} functional reports available
+              </div>
+
+              {/* Actions */}
+              <div className="pt-2 border-t border-gray-100">
+                <Link
+                  to={`/product-intelligence/products/${productId}/intelligence?tab=competitor-reports`}
+                  className="text-blue-600 hover:text-blue-800 font-medium text-sm"
+                >
+                  View Reports →
+                </Link>
               </div>
 
               <div className="flex gap-2">
                 <button
-                  onClick={handleRunMarketDiscovery}
-                  disabled={runningAction === 'market-discovery'}
+                  onClick={handleRunAllNow}
+                  disabled={runningAction === 'run-all' || runningAction === 'market-discovery'}
                   className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
                 >
-                  {runningAction === 'market-discovery' ? 'Running...' : 'Run Now'}
+                  {runningAction === 'run-all' || runningAction === 'market-discovery' ? 'Running...' : 'Run All Now'}
                 </button>
                 <button
-                  onClick={() => setShowMarketDiscoverySetup(true)}
+                  onClick={() => setShowCompetitiveIntelligenceSetup(true)}
                   className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
                 >
                   Setup
@@ -419,76 +616,152 @@ export default function ProductDetailPage() {
             </div>
           </div>
 
-          {/* Competitive Analysis Agent Tile */}
+          {/* Internal Discovery Agent Tile */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-gray-900">Competitive Analysis Agent</h3>
+              <h3 className="font-semibold text-gray-900">Internal Discovery Agent</h3>
               <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                agentConfig?.deep_analysis_mode === 'scheduled' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                internalFeedbackStats.importCount > 0 ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
               }`}>
-                {agentConfig?.deep_analysis_mode === 'scheduled' ? 'Automatic' : 'Manual'}
+                {internalFeedbackStats.importCount > 0 ? 'Data Imported' : 'No Data'}
               </span>
             </div>
 
             <div className="space-y-3">
-              {/* Job Status */}
-              <AgentJobStatus
-                productId={parseInt(productId!)}
-                jobTypes={[JobType.FEATURE_CLUSTERING, JobType.DEEP_ANALYSIS, JobType.SCHEDULED_DEEP_ANALYSIS]}
-                onJobComplete={fetchAllData}
-              />
-
               <div className="text-sm text-gray-600">
-                {(pendingCounts?.competitive_alerts || 0) > 0 ? (
+                {internalFeedbackStats.importCount > 0 ? (
                   <Link
-                    to={`/product-intelligence/products/${productId}/intelligence?tab=competitor-reports`}
+                    to={`/product-intelligence/products/${productId}/internal-feedback`}
                     className="text-blue-600 hover:text-blue-800 font-medium"
                   >
-                    {pendingCounts?.competitive_alerts} new competitive alerts →
+                    {internalFeedbackStats.winlossThemeCount + internalFeedbackStats.supportThemeCount} themes extracted →
                   </Link>
                 ) : (
-                  <Link
-                    to={`/product-intelligence/products/${productId}/intelligence?tab=competitor-reports`}
-                    className="text-blue-600 hover:text-blue-800 font-medium"
-                  >
-                    Go to Report →
-                  </Link>
+                  <span className="text-gray-500">Import sales win/loss and support data</span>
                 )}
               </div>
 
               <div className="text-sm text-gray-500">
-                {totalFeatures} competitive features extracted
+                {internalFeedbackStats.winlossThemeCount} win/loss themes; {internalFeedbackStats.supportThemeCount} support themes
+              </div>
+
+              {internalFeedbackStats.lastImportDate && (
+                <div className="text-sm text-gray-500">
+                  Last import: {format(new Date(internalFeedbackStats.lastImportDate), 'MMM d, yyyy')}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Link
+                  to={`/product-intelligence/products/${productId}/internal-feedback${internalFeedbackStats.importCount > 0 ? '?tab=themes' : ''}`}
+                  className="flex-1 px-3 py-2 text-sm text-center bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                >
+                  {internalFeedbackStats.importCount > 0 ? 'View Themes' : 'Import Data'}
+                </Link>
+              </div>
+            </div>
+          </div>
+
+          {/* Opportunity Synthesis Agent Tile */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900">Opportunity Synthesis Agent</h3>
+              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                synthesisStats.hasRun && synthesisStats.status === 'completed'
+                  ? 'bg-green-100 text-green-800'
+                  : synthesisStats.sourcesAvailable > 0
+                    ? 'bg-blue-100 text-blue-800'
+                    : 'bg-gray-100 text-gray-600'
+              }`}>
+                {synthesisStats.hasRun && synthesisStats.status === 'completed'
+                  ? `${synthesisStats.opportunityCount} Opportunities`
+                  : synthesisStats.sourcesAvailable > 0
+                    ? `${synthesisStats.sourcesAvailable}/3 Sources`
+                    : 'No Sources'}
+              </span>
+            </div>
+
+            {/* Job Status - shows running progress */}
+            <AgentJobStatus
+              productId={parseInt(productId!, 10)}
+              jobTypes={[JobType.OPPORTUNITY_SYNTHESIS]}
+              onJobComplete={() => {
+                // Refresh synthesis stats when job completes
+                fetchSynthesisStats();
+              }}
+              className="mb-3"
+            />
+
+            <div className="space-y-3">
+              <div className="text-sm text-gray-600">
+                {synthesisStats.hasRun && synthesisStats.status === 'completed' ? (
+                  <Link
+                    to={`/product-intelligence/products/${productId}/synthesis`}
+                    className="text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    {synthesisStats.threeWayMatches} three-way, {synthesisStats.twoWayMatches} two-way matches →
+                  </Link>
+                ) : (
+                  <span className="text-gray-500">
+                    Combines competitive, customer, and internal signals
+                  </span>
+                )}
               </div>
 
               <div className="text-sm text-gray-500">
-                {totalClusters} feature clusters; {ideasFromClusters} ideas created
+                {synthesisStats.sourcesAvailable}/3 sources available for synthesis
               </div>
 
+              {synthesisStats.lastRunDate && (
+                <div className="text-sm text-gray-500">
+                  Last run: {format(new Date(synthesisStats.lastRunDate), 'MMM d, yyyy')}
+                </div>
+              )}
+
               <div className="flex gap-2">
-                <button
-                  onClick={handleRunCompetitiveAnalysis}
-                  disabled={runningAction === 'competitive-analysis'}
-                  className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
+                <Link
+                  to={`/product-intelligence/products/${productId}/synthesis`}
+                  className={`flex-1 px-3 py-2 text-sm text-center rounded-lg font-medium transition-colors ${
+                    synthesisStats.sourcesAvailable > 0
+                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                      : 'bg-gray-200 text-gray-500 cursor-not-allowed pointer-events-none'
+                  }`}
                 >
-                  {runningAction === 'competitive-analysis' ? 'Running...' : 'Run Now'}
-                </button>
-                <button
-                  onClick={() => setShowCompetitiveAnalysisSetup(true)}
-                  className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
-                >
-                  Setup
-                </button>
+                  {synthesisStats.hasRun ? 'View Synthesis' : 'Run Synthesis'}
+                </Link>
               </div>
             </div>
           </div>
         </div>
 
         {/* Current Product Analysis */}
-        {currentAnalysis && (
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Current Product Analysis
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Product Analysis
             </h2>
+            <AgentJobStatus
+              productId={parseInt(productId!)}
+              jobTypes={[JobType.PRODUCT_ANALYSIS]}
+              onJobComplete={fetchAllData}
+            />
+          </div>
+        {currentAnalysis && (
+          <>
+            {currentAnalysis._warnings && currentAnalysis._warnings.length > 0 && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  <div>
+                    {currentAnalysis._warnings.map((warning, idx) => (
+                      <p key={idx} className="text-sm text-amber-800">{warning}</p>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="space-y-4">
               {currentAnalysis.core_features && currentAnalysis.core_features.length > 0 && (
                 <div>
@@ -553,8 +826,14 @@ export default function ProductDetailPage() {
                 </div>
               )}
             </div>
-          </div>
+          </>
         )}
+        {!currentAnalysis && (
+          <p className="text-gray-500 text-sm">
+            No analysis yet. Click "Change Sources" to add product information and run analysis.
+          </p>
+        )}
+        </div>
 
         {/* Feature Query Chat */}
         {product && product.structured_product_data && (
@@ -657,10 +936,42 @@ export default function ProductDetailPage() {
         {/* Analysis History */}
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            Analysis History ({analysisHistory.length})
+            Analysis History ({analysisHistory.length}{activeAnalysisJob ? ' + 1 in progress' : ''})
           </h2>
 
-          {analysisHistory.length === 0 ? (
+          {/* Active Analysis Job */}
+          {activeAnalysisJob && (
+            <div className="mb-4 border border-blue-200 bg-blue-50 rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-medium text-blue-900">
+                      Version {(product?.analysis_version || 0) + 1}
+                      <span className="ml-2 text-xs text-blue-600 font-semibold">(Analyzing...)</span>
+                    </h3>
+                  </div>
+                  <p className="text-sm text-blue-700">
+                    {activeAnalysisJob.status === JobStatus.RUNNING
+                      ? activeAnalysisJob.progress_message || 'Running analysis...'
+                      : activeAnalysisJob.status === JobStatus.QUEUED
+                        ? 'Queued, waiting to start...'
+                        : 'Starting analysis...'}
+                  </p>
+                  {activeAnalysisJob.status === JobStatus.RUNNING && activeAnalysisJob.progress_percent > 0 && (
+                    <div className="mt-2 h-1.5 bg-blue-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                        style={{ width: `${activeAnalysisJob.progress_percent}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {analysisHistory.length === 0 && !activeAnalysisJob ? (
             <div className="text-center py-8">
               <p className="text-gray-500 mb-4">No analyses yet</p>
               <button
@@ -670,7 +981,7 @@ export default function ProductDetailPage() {
                 Add sources and run analysis
               </button>
             </div>
-          ) : (
+          ) : analysisHistory.length > 0 ? (
             <div className="space-y-4">
               {analysisHistory.map((analysis) => {
                 const isExpanded = expandedVersions.has(analysis.id);
@@ -773,7 +1084,7 @@ export default function ProductDetailPage() {
                 );
               })}
             </div>
-          )}
+          ) : null}
         </div>
       </main>
 
@@ -790,28 +1101,45 @@ export default function ProductDetailPage() {
         />
       )}
 
-      {showMarketDiscoverySetup && (
-        <MarketDiscoverySetupModal
+      {showCompetitiveIntelligenceSetup && (
+        <CompetitiveIntelligenceSetupModal
           productId={parseInt(productId!)}
           currentConfig={agentConfig}
-          onClose={() => setShowMarketDiscoverySetup(false)}
+          onClose={() => setShowCompetitiveIntelligenceSetup(false)}
           onSave={(config) => {
             setAgentConfig(config);
-            setShowMarketDiscoverySetup(false);
+            setShowCompetitiveIntelligenceSetup(false);
           }}
         />
       )}
 
-      {showCompetitiveAnalysisSetup && (
-        <CompetitiveAnalysisSetupModal
-          productId={parseInt(productId!)}
-          currentConfig={agentConfig}
-          onClose={() => setShowCompetitiveAnalysisSetup(false)}
-          onSave={(config) => {
-            setAgentConfig(config);
-            setShowCompetitiveAnalysisSetup(false);
-          }}
-        />
+      {/* Warning modal when no competitors selected */}
+      {showNoCompetitorsWarning && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">
+              No Competitors Selected
+            </h3>
+            <p className="text-gray-600 mb-6">
+              No competitors are currently selected for deep analysis. Would you like to run market discovery first to find competitors?
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleRunMarketDiscovery}
+                disabled={runningAction === 'market-discovery'}
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
+              >
+                {runningAction === 'market-discovery' ? 'Running...' : 'Run Discovery Only'}
+              </button>
+              <button
+                onClick={() => setShowNoCompetitorsWarning(false)}
+                className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

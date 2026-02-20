@@ -1,0 +1,375 @@
+{
+  "source": "salesforce",
+  "export_date": "2026-01-26",
+  "deals": [
+    {
+      "deal_id": "OPP-2026-001",
+      "deal_name": "Acme Manufacturing",
+      "outcome": "lost",
+      "close_date": "2026-01-15",
+      "competitor": "Expensify",
+      "deal_value": 48000,
+      "activities": [
+        {
+          "type": "call",
+          "timestamp": "2026-01-03T14:30:00Z",
+          "subject": "Discovery Call",
+          "body": "Met with CFO and Controller. They're currently using spreadsheets and are drowning in manual receipt processing. Key requirements: 1) Mobile receipt capture, 2) Integration with their NetSuite ERP, 3) Multi-currency support for their UK office. CFO asked specifically about OCR accuracy - they've tried other tools that couldn't read receipts properly.",
+          "direction": "outbound",
+          "duration_minutes": 45
+        },
+        {
+          "type": "email",
+          "timestamp": "2026-01-08T09:15:00Z",
+          "subject": "Re: Follow-up from Demo",
+          "body": "Hi Sarah, thanks for the demo yesterday. The team was impressed with the UI, but we have concerns about the NetSuite integration. Our IT team says it would require custom development work on your end. Expensify showed us a native connector that syncs in real-time. Can you clarify what's involved in the NetSuite setup?",
+          "direction": "inbound",
+          "author": "customer"
+        },
+        {
+          "type": "call",
+          "timestamp": "2026-01-12T16:00:00Z",
+          "subject": "Final Decision Call",
+          "body": "Customer informed us they're going with Expensify. Main reasons: 1) Native NetSuite integration was the dealbreaker - they can't afford custom development, 2) Expensify's mobile app had better offline support for their field sales team, 3) Their accounting team was already familiar with Expensify from previous jobs. Customer said 'We really liked your product but the integration gap was too much to overcome.'",
+          "direction": "inbound",
+          "duration_minutes": 15
+        }
+      ]
+    },
+    {
+      "deal_id": "OPP-2026-002",
+      "deal_name": "TechStart Innovations",
+      "outcome": "lost",
+      "close_date": "2026-01-18",
+      "competitor": "Ramp",
+      "deal_value": 36000,
+      "activities": [
+        {
+          "type": "call",
+          "timestamp": "2026-01-05T10:00:00Z",
+          "subject": "Initial Discovery",
+          "body": "Fast-growing startup, 150 employees. Currently using corporate cards with no expense tracking. CEO wants full visibility into spend. Key pain points: 1) No real-time spend alerts, 2) Month-end reconciliation takes their finance team 3 days, 3) Need virtual cards for SaaS subscriptions. They mentioned they're also looking at Ramp and Brex.",
+          "direction": "outbound",
+          "duration_minutes": 30
+        },
+        {
+          "type": "meeting",
+          "timestamp": "2026-01-10T14:00:00Z",
+          "subject": "Product Demo with Finance Team",
+          "body": "Demo went well but they pushed hard on corporate card integration. Customer asked: 'Can we issue virtual cards directly from your platform?' We explained our card partnership program but they seemed disappointed it wasn't native. Ramp apparently offers integrated corporate cards with automatic expense categorization. Their VP Finance said 'We want one platform for cards and expenses, not two systems.'",
+          "duration_minutes": 60
+        },
+        {
+          "type": "email",
+          "timestamp": "2026-01-17T11:30:00Z",
+          "subject": "Decision Update",
+          "body": "Hi team, we've decided to go with Ramp. The integrated corporate card offering was the key factor. We need spend controls built into the card itself, and Ramp's real-time decline notifications are exactly what we need. Your expense tracking is solid but we can't manage two separate systems. Thanks for your time.",
+          "direction": "inbound",
+          "author": "customer"
+        }
+      ]
+    },
+    {
+      "deal_id": "OPP-2026-003",
+      "deal_name": "Global Consulting Partners",
+      "outcome": "lost",
+      "close_date": "2026-01-20",
+      "competitor": "SAP Concur",
+      "deal_value": 125000,
+      "activities": [
+        {
+          "type": "call",
+          "timestamp": "2025-12-15T09:00:00Z",
+          "subject": "Enterprise Discovery",
+          "body": "Large consulting firm, 2000+ employees across 12 countries. Current Concur users but frustrated with the UI and cost. Looking for alternatives. Requirements: 1) Per-diem automation for different countries, 2) Project-based expense allocation, 3) SOC2 Type II compliance, 4) SSO with Okta. They travel extensively - 80% of employees file expenses weekly.",
+          "direction": "outbound",
+          "duration_minutes": 60
+        },
+        {
+          "type": "meeting",
+          "timestamp": "2026-01-08T10:00:00Z",
+          "subject": "Security Review with IT",
+          "body": "IT team grilled us on security. We passed most requirements but they raised concerns about: 1) We don't have SOC2 Type II yet (only Type I), 2) Our data residency options don't include EU-only hosting, 3) No SAML SSO - only OIDC. Their CISO said 'For a company our size, these are non-negotiable. We need enterprise-grade security.'",
+          "duration_minutes": 90
+        },
+        {
+          "type": "email",
+          "timestamp": "2026-01-19T16:45:00Z",
+          "subject": "Re: Proposal Review",
+          "body": "After careful consideration, we've decided to renew with Concur. While your pricing was attractive and the UI is much better, the security gaps are too significant for our compliance requirements. Specifically: lack of SOC2 Type II, no EU data residency, and the SSO limitations. We'd be open to revisiting once these are addressed.",
+          "direction": "inbound",
+          "author": "customer"
+        }
+      ]
+    },
+    {
+      "deal_id": "OPP-2026-004",
+      "deal_name": "Riverside Healthcare",
+      "outcome": "won",
+      "close_date": "2026-01-22",
+      "competitor": "Expensify",
+      "deal_value": 67000,
+      "activities": [
+        {
+          "type": "call",
+          "timestamp": "2026-01-02T11:00:00Z",
+          "subject": "Discovery with Finance Director",
+          "body": "Healthcare org with 500 employees. Currently using Expensify but frustrated with support response times and lack of HIPAA compliance documentation. Need: 1) Quick reimbursement processing, 2) Approval workflows by department, 3) Mileage tracking for home health nurses, 4) Integration with their Workday HCM.",
+          "direction": "outbound",
+          "duration_minutes": 40
+        },
+        {
+          "type": "meeting",
+          "timestamp": "2026-01-10T13:00:00Z",
+          "subject": "Demo and Q&A",
+          "body": "Great demo session. They loved our mileage tracking with automatic IRS rate updates. The approval workflow builder impressed them - 'Finally, a system that matches how our organization actually works.' Workday integration was a plus. They asked about HIPAA - we showed our BAA and compliance documentation which satisfied their legal team.",
+          "duration_minutes": 75
+        },
+        {
+          "type": "email",
+          "timestamp": "2026-01-21T10:00:00Z",
+          "subject": "Contract Signed!",
+          "body": "Great news - contract is signed and we're ready to kick off implementation. The team is excited to move away from Expensify. Key factors in our decision: 1) Superior mileage tracking for our field staff, 2) Flexible approval workflows, 3) Responsive support team during evaluation, 4) Competitive pricing. Looking forward to going live!",
+          "direction": "inbound",
+          "author": "customer"
+        }
+      ]
+    },
+    {
+      "deal_id": "OPP-2026-005",
+      "deal_name": "Quantum Software Labs",
+      "outcome": "won",
+      "close_date": "2026-01-10",
+      "competitor": null,
+      "deal_value": 28000,
+      "activities": [
+        {
+          "type": "call",
+          "timestamp": "2025-12-20T15:00:00Z",
+          "subject": "Inbound Lead Follow-up",
+          "body": "Software company, 80 employees, fully remote. No current expense system - using email and spreadsheets. Pain: reimbursements take 3-4 weeks. They want: 1) Easy mobile app for remote workers, 2) Quick reimbursement processing, 3) Simple setup - no IT resources available, 4) Slack integration for notifications.",
+          "direction": "outbound",
+          "duration_minutes": 25
+        },
+        {
+          "type": "call",
+          "timestamp": "2026-01-08T14:00:00Z",
+          "subject": "Final Questions Before Decision",
+          "body": "Customer had a few final questions. They loved our Slack integration demo. CEO said 'This is exactly what a modern remote company needs.' Quick implementation timeline sealed the deal - we can have them live in 2 weeks versus 6-8 weeks quoted by competitors.",
+          "direction": "outbound",
+          "duration_minutes": 20
+        }
+      ]
+    },
+    {
+      "deal_id": "OPP-2026-006",
+      "deal_name": "Metro Construction Group",
+      "outcome": "lost",
+      "close_date": "2026-01-25",
+      "competitor": "Expensify",
+      "deal_value": 52000,
+      "activities": [
+        {
+          "type": "call",
+          "timestamp": "2026-01-06T08:30:00Z",
+          "subject": "Discovery - Construction Industry",
+          "body": "Construction company, 300 employees across job sites. Currently using paper receipts (!). Challenges: 1) Workers in the field with poor cell coverage, 2) Need to allocate expenses to specific job codes/projects, 3) Per diem handling for overnight crews, 4) Integration with their Procore project management system.",
+          "direction": "outbound",
+          "duration_minutes": 35
+        },
+        {
+          "type": "meeting",
+          "timestamp": "2026-01-15T11:00:00Z",
+          "subject": "Demo with Operations Team",
+          "body": "Challenging demo. Their main concern was offline functionality. Their crews are often in areas with no cell coverage for hours. They asked 'Can workers capture receipts offline and sync later?' Our offline mode only caches for 24 hours and requires periodic connectivity. Expensify apparently has full offline mode that syncs whenever connection is available. Project allocation feature was well-received but offline was the blocker.",
+          "duration_minutes": 60
+        },
+        {
+          "type": "email",
+          "timestamp": "2026-01-24T17:00:00Z",
+          "subject": "Update on our decision",
+          "body": "We've gone with Expensify. The offline capability was essential for our field crews. Some of our job sites are in remote areas with no cell service for days. We can't have workers lose their expense data. Your project allocation features were actually better than Expensify's, but offline was a must-have.",
+          "direction": "inbound",
+          "author": "customer"
+        }
+      ]
+    }
+  ],
+  "support_tickets": [
+    {
+      "ticket_id": "SUP-4521",
+      "account_name": "Bright Ideas Agency",
+      "subject": "QuickBooks sync failing",
+      "activities": [
+        {
+          "type": "comment",
+          "timestamp": "2026-01-20T09:00:00Z",
+          "author": "customer",
+          "body": "Our QuickBooks integration stopped working 3 days ago. Expenses aren't syncing and our accountant is manually entering everything. This is urgent - we have month-end close coming up. We've tried reconnecting but get 'Authentication failed' error."
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-20T14:30:00Z",
+          "author": "agent",
+          "body": "This is a known issue affecting some QuickBooks Online connections after their recent API update. Engineering is working on a fix. ETA is 48-72 hours. As a workaround, you can export to CSV and import manually."
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-21T08:15:00Z",
+          "author": "customer",
+          "body": "48-72 hours is not acceptable. We're a paying customer and this integration is critical. Manual CSV export defeats the purpose of having an integration. Can you escalate this?"
+        }
+      ]
+    },
+    {
+      "ticket_id": "SUP-4532",
+      "account_name": "Summit Legal Associates",
+      "subject": "Need to track billable vs non-billable expenses",
+      "activities": [
+        {
+          "type": "comment",
+          "timestamp": "2026-01-18T11:00:00Z",
+          "author": "customer",
+          "body": "We're a law firm and need to track which expenses are billable to clients. Currently we have to manually tag each expense after the fact. Is there a way to set this at submission time? We bill back travel expenses to clients and need clean reporting."
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-18T16:00:00Z",
+          "author": "agent",
+          "body": "Currently expense categories don't have a billable flag. You could use custom fields as a workaround, but it's not ideal for reporting. I'll submit this as a feature request."
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-19T09:30:00Z",
+          "author": "customer",
+          "body": "Custom fields don't work for us because they don't flow through to our billing system. We need native billable expense tracking with client/matter assignment. Several other firms we've talked to need this too. This is standard for professional services."
+        }
+      ]
+    },
+    {
+      "ticket_id": "SUP-4545",
+      "account_name": "Pacific Retail Group",
+      "subject": "Bulk expense upload not working",
+      "activities": [
+        {
+          "type": "comment",
+          "timestamp": "2026-01-22T10:00:00Z",
+          "author": "customer",
+          "body": "We have 50 corporate card transactions that need to be uploaded. The bulk upload keeps timing out after processing about 20 items. Our store managers don't have time to enter these one by one. File is a standard CSV, 52KB."
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-22T11:30:00Z",
+          "author": "agent",
+          "body": "The bulk upload has a soft limit of 25 transactions per batch due to processing constraints. Can you try splitting into smaller files?"
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-22T14:00:00Z",
+          "author": "customer",
+          "body": "Splitting files is not a reasonable workaround. We have 15 store managers each with 30-50 transactions monthly. That's 450-750 transactions. Are we supposed to create 30 separate uploads every month? We need this fixed or we'll have to look at alternatives."
+        }
+      ]
+    },
+    {
+      "ticket_id": "SUP-4558",
+      "account_name": "NorthStar Ventures",
+      "subject": "Receipt OCR not reading hotel folios correctly",
+      "activities": [
+        {
+          "type": "comment",
+          "timestamp": "2026-01-23T08:45:00Z",
+          "author": "customer",
+          "body": "The OCR is terrible at reading hotel receipts. It picks up the room rate but misses parking, meals, and incidentals that are itemized on the folio. Our travelers stay at hotels 3-4 nights per week and have to manually fix every single hotel expense. This is a huge time sink."
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-23T13:00:00Z",
+          "author": "agent",
+          "body": "Hotel folios are challenging for OCR due to varying formats. The system is optimized for single-item receipts. For itemized hotel bills, we recommend splitting into separate line items manually."
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-23T15:30:00Z",
+          "author": "customer",
+          "body": "That's exactly what we're doing now and it's painful. Our competitor evaluation showed Concur handles hotel folios automatically, splitting out room, tax, parking, etc. If your OCR can't handle the most common business travel receipt, that's a significant gap."
+        }
+      ]
+    },
+    {
+      "ticket_id": "SUP-4567",
+      "account_name": "Greenfield Manufacturing",
+      "subject": "Need approval workflow based on cost center",
+      "activities": [
+        {
+          "type": "comment",
+          "timestamp": "2026-01-24T09:00:00Z",
+          "author": "customer",
+          "body": "We have 12 cost centers and each needs its own approval chain. Right now approvals only route by department. Our manufacturing cost centers have different budget owners than our corporate cost centers. How can we set up cost center-based routing?"
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-24T14:00:00Z",
+          "author": "agent",
+          "body": "Currently approval workflows can only be configured by department, expense type, or amount threshold. Cost center-based routing isn't available. Would mapping cost centers to departments work as an alternative?"
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-24T16:30:00Z",
+          "author": "customer",
+          "body": "No, that won't work. We have employees who submit expenses to multiple cost centers depending on the project. The expense needs to route to whoever owns that cost center's budget, not the employee's home department. This is basic functionality for manufacturing companies."
+        }
+      ]
+    },
+    {
+      "ticket_id": "SUP-4589",
+      "account_name": "Atlas International",
+      "subject": "Currency conversion using wrong exchange rate",
+      "activities": [
+        {
+          "type": "comment",
+          "timestamp": "2026-01-25T07:00:00Z",
+          "author": "customer",
+          "body": "Our employees traveling in Europe are seeing incorrect exchange rates. An expense from Jan 20 in EUR is being converted at today's rate instead of the transaction date rate. This causes discrepancies with our credit card statements. We need historical exchange rates."
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-25T10:00:00Z",
+          "author": "agent",
+          "body": "The system uses daily exchange rates from our feed. There can be a 1-2 day lag in rate updates. For precise matching with credit card statements, you can manually override the exchange rate on individual expenses."
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-25T11:45:00Z",
+          "author": "customer",
+          "body": "Manual override for every international expense is not scalable. We have 200 employees traveling internationally. We need the system to automatically use the rate from the transaction date, or better yet, match the credit card statement rate. This is causing audit findings."
+        }
+      ]
+    },
+    {
+      "ticket_id": "SUP-4601",
+      "account_name": "Velocity Logistics",
+      "subject": "Mobile app crashes on Android 14",
+      "activities": [
+        {
+          "type": "comment",
+          "timestamp": "2026-01-25T13:00:00Z",
+          "author": "customer",
+          "body": "Multiple drivers reporting the app crashes when trying to capture receipts on Android 14 devices. We just rolled out new Samsung phones to our fleet. App worked fine on older Android versions. Crash happens immediately when opening camera. Very urgent - drivers can't submit fuel receipts."
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-25T15:00:00Z",
+          "author": "agent",
+          "body": "We're aware of compatibility issues with Android 14 and certain Samsung models. A fix is in development for our next release, targeted for early February. As a temporary workaround, drivers can take photos with the native camera app and upload from gallery."
+        },
+        {
+          "type": "comment",
+          "timestamp": "2026-01-25T16:30:00Z",
+          "author": "customer",
+          "body": "Early February? Our drivers submit 500+ receipts daily. The gallery workaround adds extra steps and our drivers barely have time as-is. Android 14 has been out for months. Why wasn't this caught in testing? We need an expedited fix."
+        }
+      ]
+    }
+  ]
+}

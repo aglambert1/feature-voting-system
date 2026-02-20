@@ -73,8 +73,6 @@ export interface AuthResult {
 
 export interface VoteCount {
   upvotes: number;
-  downvotes: number;
-  score: number;
   total_votes: number;
 }
 
@@ -96,6 +94,10 @@ export interface IdeaListItem {
   is_active: boolean | null;
   duplicate_of_idea_id: number | null;
   duplicate_of_title: string | null;
+  // Lifecycle status (post-acceptance stage)
+  lifecycle_status_id: number | null;
+  lifecycle_status_name: string | null;
+  lifecycle_status_color: string | null;
   // Submitter info
   submitter_id: number | null;
   // Vote counts
@@ -311,11 +313,10 @@ export enum JobType {
   IDEA_TRIAGE = 'idea_triage',
   COMPETITIVE_MONITORING = 'competitive_monitoring',
   FULL_WORKFLOW = 'full_workflow',
-  // Agent-Centric Architecture job types
-  DEEP_ANALYSIS = 'deep_analysis',
+  // V2 competitive analysis orchestration
   SCHEDULED_DEEP_ANALYSIS = 'scheduled_deep_analysis',
-  FEATURE_CLUSTERING = 'feature_clustering',
-  INTENSITY_IDEA_GENERATION = 'intensity_idea_generation',
+  // Three-source synthesis
+  OPPORTUNITY_SYNTHESIS = 'opportunity_synthesis',
 }
 
 export enum JobStatus {
@@ -527,6 +528,20 @@ export interface IdeaComment {
 // IDEA DETAIL TYPES (Extended for PO workflow)
 // ============================================================================
 
+/**
+ * Competitive context for ideas generated from competitive analysis.
+ * Only visible to PO/Admin users.
+ */
+export interface CompetitiveContext {
+  priority_score: number;
+  priority_level: 'critical' | 'high' | 'medium' | 'low';
+  competitors_with_feature: string[];
+  total_competitors_analyzed: number;
+  market_context: string;
+  source_evidence_count: number;
+  landscape_report_id?: number;
+}
+
 export interface IdeaDetail {
   id: number;
   title: string;
@@ -549,10 +564,14 @@ export interface IdeaDetail {
   submitter_id: number | null;
   submitter_username: string | null;
   review_notes: string | null;
+  reviewer_username: string | null;
+  reviewed_at: string | null;
   created_at: string;
   updated_at: string;
   comments: IdeaComment[];
   status_history: StatusHistoryEntry[];
+  // Competitive context - only populated for PO/Admin users
+  competitive_context: CompetitiveContext | null;
 }
 
 // ============================================================================
@@ -599,7 +618,6 @@ export interface ExistingFeatureMatch {
 
 export interface SourceSummary {
   vote_count: number;
-  downvote_count: number;
   voters: IdeaVoter[];
   competitors_with_feature: string[];
   competitive_urgency: string | null;
@@ -707,21 +725,14 @@ export interface CompetitiveAgentConfig {
   alert_on_new_competitors: boolean;
   alert_on_disappeared_competitors: boolean;
 
-  // Deep Analysis
+  // Deep Analysis (V2: Functional Audit + Landscape Synthesis)
   deep_analysis_mode: AgentMode | string;
   deep_analysis_schedule: ScheduleFrequency | null;
   deep_analysis_last_run: string | null;
 
-  // Strategic Analysis Toggles
-  enable_pricing_analysis: boolean;
-  enable_positioning_analysis: boolean;
-  enable_changes_tracking: boolean;
-  enable_momentum_analysis: boolean;
-  enable_financials_analysis: boolean;
-
-  // Intensity Settings
-  intensity_similarity_threshold: number;
-  intensity_idea_threshold: number;
+  // Idea Auto-Generation Settings
+  intensity_similarity_threshold: number;  // DEPRECATED - kept for backwards compatibility
+  intensity_idea_threshold: number;  // Priority score threshold (0.0-1.0)
 
   enabled: boolean;
 }
@@ -740,12 +751,6 @@ export interface CompetitiveAgentConfigUpdate {
 
   deep_analysis_mode?: AgentMode | string;
   deep_analysis_schedule?: ScheduleFrequency;
-
-  enable_pricing_analysis?: boolean;
-  enable_positioning_analysis?: boolean;
-  enable_changes_tracking?: boolean;
-  enable_momentum_analysis?: boolean;
-  enable_financials_analysis?: boolean;
 
   intensity_similarity_threshold?: number;
   intensity_idea_threshold?: number;
@@ -780,130 +785,6 @@ export interface CompetitorFeature {
   status: string;
   cluster_id: number | null;
   cluster_name: string | null;
-}
-
-/**
- * Feature cluster for competitive intensity.
- */
-export interface FeatureCluster {
-  id: number;
-  product_id: number;
-  cluster_name: string | null;
-  cluster_description: string | null;
-  competitor_count: number;
-  feature_count: number;
-  idea_generated: boolean;
-  generated_idea_id: number | null;
-}
-
-/**
- * Feature cluster member.
- */
-export interface FeatureClusterMember {
-  feature_id: number;
-  feature_name: string;
-  feature_description: string | null;
-  competitor_id: number;
-  competitor_name: string;
-  similarity_score: number;
-}
-
-/**
- * Detailed feature cluster with members.
- */
-export interface FeatureClusterDetail extends FeatureCluster {
-  members: FeatureClusterMember[];
-}
-
-/**
- * Pricing analysis for a competitor.
- */
-export interface PricingAnalysis {
-  id: number;
-  product_competitor_id: number;
-  pricing_model: string | null;
-  has_free_tier: boolean;
-  has_trial: boolean;
-  trial_days: number | null;
-  pricing_tiers: PricingTier[] | null;
-  has_enterprise: boolean;
-  source_url: string | null;
-  confidence: number;
-  analyzed_at: string;
-}
-
-export interface PricingTier {
-  name: string;
-  price: number | string;
-  billing: string;
-  features: string[];
-  limits?: Record<string, unknown>;
-}
-
-/**
- * Positioning analysis for a competitor.
- */
-export interface PositioningAnalysis {
-  id: number;
-  product_competitor_id: number;
-  tagline: string | null;
-  value_propositions: string[] | null;
-  target_audience: string | null;
-  key_differentiators: string[] | null;
-  positioning_statement: string | null;
-  market_segment: string | null;
-  confidence: number;
-  analyzed_at: string;
-}
-
-/**
- * Momentum analysis for a competitor.
- */
-export interface MomentumAnalysis {
-  id: number;
-  product_competitor_id: number;
-  momentum_score: number;
-  momentum_trend: 'rising' | 'stable' | 'declining' | string;
-  customer_growth_trend: string | null;
-  release_velocity: string | null;
-  notable_customers: string[] | null;
-  analysis_summary: string | null;
-  confidence: number;
-  analyzed_at: string;
-}
-
-/**
- * Change event for a competitor.
- */
-export interface ChangeEvent {
-  id: number;
-  product_competitor_id: number;
-  event_type: string;
-  event_title: string;
-  event_description: string | null;
-  event_date: string | null;
-  source_url: string | null;
-  source_type: string;
-  impact_level: 'major' | 'minor' | 'patch' | string;
-  detected_at: string;
-}
-
-/**
- * Financials analysis for a competitor.
- */
-export interface FinancialsAnalysis {
-  id: number;
-  product_competitor_id: number;
-  company_type: 'public' | 'private' | 'startup' | string;
-  total_funding: number | null;
-  funding_stage: string | null;
-  market_cap: number | null;
-  revenue_ttm: number | null;
-  employee_count: number | null;
-  financial_health: 'strong' | 'moderate' | 'weak' | string;
-  analysis_summary: string | null;
-  confidence: number;
-  analyzed_at: string;
 }
 
 /**
@@ -1134,4 +1015,355 @@ export interface FeatureOpportunitiesExport {
     total_competitors_analyzed: number;
     report_ids: number[];
   };
+}
+
+// ============================================================================
+// INTERNAL FEEDBACK TYPES (Phase 2 - Internal Discovery Agent)
+// ============================================================================
+
+/**
+ * Status of an internal feedback import.
+ */
+export type ImportStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed';
+
+/**
+ * Source type for internal feedback.
+ */
+export type InternalFeedbackSourceType =
+  | 'file_import'
+  | 'hubspot'
+  | 'salesforce'
+  | 'zendesk';
+
+/**
+ * Internal feedback import record.
+ */
+export interface InternalFeedbackImport {
+  id: number;
+  product_id: number;
+  filename: string;
+  source_type: string;
+  status: string;
+  error_message: string | null;
+  deals_count: number;
+  tickets_count: number;
+  themes_extracted: boolean;
+  imported_at: string;
+}
+
+/**
+ * Win/loss theme extracted from deal data.
+ */
+export interface WinLossTheme {
+  id: number;
+  import_id: number;
+  theme_name: string;
+  outcome: 'won' | 'lost';
+  competitor_name: string | null;
+  deal_count: number;
+  total_value: number | null;
+  sample_reasons: string[];
+  feature_keywords: string[];
+}
+
+/**
+ * Support theme extracted from ticket data.
+ */
+export interface SupportTheme {
+  id: number;
+  import_id: number;
+  theme_name: string;
+  ticket_count: number;
+  category: string;
+  sample_subjects: string[];
+  feature_keywords: string[];
+  urgency_indicator: 'high' | 'medium' | 'low' | null;
+}
+
+/**
+ * Combined themes response.
+ */
+export interface InternalFeedbackThemes {
+  import_id: number;
+  winloss_themes: WinLossTheme[];
+  support_themes: SupportTheme[];
+  analysis_summary: string | null;
+}
+
+/**
+ * Import status response (for polling).
+ */
+export interface ImportStatusResponse {
+  id: number;
+  status: string;
+  themes_extracted: boolean;
+  winloss_theme_count: number;
+  support_theme_count: number;
+  error_message: string | null;
+}
+
+// ============================================================================
+// ACTIVITY INSIGHT TYPES (CRM Activity Stream Analysis)
+// ============================================================================
+
+/**
+ * Activity import record for CRM activity data.
+ */
+export interface ActivityImport {
+  id: number;
+  product_id: number;
+  filename: string;
+  source_type: 'salesforce' | 'hubspot' | 'manual' | string;
+  format_type: 'json' | 'markdown';
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  error_message: string | null;
+  deals_count: number;
+  activities_count: number;
+  support_tickets_count: number;
+  analysis_summary: string | null;
+  top_loss_themes: string[];
+  top_win_themes: string[];
+  competitor_patterns: Record<string, string[]>;
+  job_uuid: string | null;
+  imported_at: string;
+  processed_at: string | null;
+}
+
+/**
+ * Insight extracted from deal activities.
+ */
+export interface DealActivityInsight {
+  id: number;
+  import_id: number;
+  product_id: number;
+  deal_id: string | null;
+  deal_name: string | null;
+  deal_outcome: 'won' | 'lost' | 'open' | string;
+  deal_value: number | null;
+  competitor_mentioned: string | null;
+  theme_name: string;
+  category: 'feature_gap' | 'ux_friction' | 'competitive_pressure' | 'use_case_gap' | 'integration_need' | string;
+  sentiment: 'positive' | 'negative' | 'neutral' | string;
+  urgency_level: 'high' | 'medium' | 'low';
+  sample_quotes: string[];
+  activity_count: number;
+  feature_keywords: string[];
+}
+
+/**
+ * Insight extracted from support activities.
+ */
+export interface SupportActivityInsight {
+  id: number;
+  import_id: number;
+  product_id: number;
+  theme_name: string;
+  category: 'feature_gap' | 'ux_friction' | 'workaround_needed' | 'integration_need' | string;
+  ticket_count: number;
+  urgency_level: 'high' | 'medium' | 'low';
+  sample_quotes: string[];
+  accounts_affected: string[];
+  feature_keywords: string[];
+}
+
+/**
+ * Combined activity insights response.
+ */
+export interface ActivityInsights {
+  import_id: number;
+  deal_insights: DealActivityInsight[];
+  support_insights: SupportActivityInsight[];
+  analysis_summary: string | null;
+  top_loss_themes: string[];
+  top_win_themes: string[];
+  competitor_patterns: Record<string, string[]>;
+}
+
+/**
+ * Activity import status response (for polling).
+ */
+export interface ActivityImportStatusResponse {
+  id: number;
+  status: string;
+  deals_count: number;
+  activities_count: number;
+  deal_insights_count: number;
+  support_insights_count: number;
+  error_message: string | null;
+}
+
+// ============================================================================
+// SYNTHESIS TYPES
+// ============================================================================
+
+/**
+ * Sources available for synthesis.
+ */
+export interface SynthesisSourcesAvailable {
+  competitive: boolean;
+  competitive_detail: string | null;
+  customer: boolean;
+  customer_detail: string | null;
+  internal: boolean;
+  internal_detail: string | null;
+}
+
+/**
+ * Snapshot of sources used in a synthesis run.
+ */
+export interface SourceSnapshot {
+  landscape_report_id: number | null;
+  competitive_opportunities_count: number;
+  ideas_count: number;
+  ideas_total_votes: number;
+  internal_import_id: number | null;
+  winloss_themes_count: number;
+  support_themes_count: number;
+}
+
+/**
+ * Summary statistics from synthesis.
+ */
+export interface SummaryStats {
+  three_way_matches: number;
+  two_way_matches: number;
+  single_source: number;
+  total_opportunities: number;
+}
+
+/**
+ * Synthesis run record.
+ */
+export interface SynthesisRun {
+  id: number;
+  product_id: number;
+  status: string;
+  error_message: string | null;
+  source_snapshot: SourceSnapshot | null;
+  sources_used: string[];
+  summary_stats: SummaryStats | null;
+  analysis_summary: string | null;
+  job_uuid: string | null;
+  created_at: string;
+  completed_at: string | null;
+  opportunity_count: number;
+}
+
+/**
+ * Evidence from competitive analysis.
+ */
+export interface CompetitiveEvidence {
+  feature_name: string;
+  prevalence: string | null;
+  competitors: string[];
+  competitor_count: number;
+  our_status: string | null;
+  priority_score: number | null;
+}
+
+/**
+ * Evidence from customer feedback.
+ */
+export interface CustomerEvidence {
+  idea_id: number;
+  idea_title: string;
+  vote_count: number;
+  status: string | null;
+  submitted_at: string | null;
+}
+
+/**
+ * Evidence from win/loss analysis.
+ */
+export interface WinLossEvidence {
+  theme_id: number;
+  theme_name: string;
+  outcome: string;
+  deal_count: number;
+  total_value: number;
+  competitor_correlation: string | null;
+}
+
+/**
+ * Evidence from support themes.
+ */
+export interface SupportEvidence {
+  theme_id: number;
+  theme_name: string;
+  ticket_count: number;
+  category: string;
+  urgency_indicator: string | null;
+}
+
+/**
+ * Combined internal evidence.
+ */
+export interface InternalEvidence {
+  winloss: WinLossEvidence | null;
+  support: SupportEvidence | null;
+}
+
+/**
+ * Synthesized opportunity.
+ */
+export interface SynthesizedOpportunity {
+  id: number;
+  synthesis_run_id: number;
+  product_id: number;
+  opportunity_name: string;
+  opportunity_summary: string | null;
+  priority_score: number;
+  source_count: number;
+  sources: string[];
+  competitive_evidence: CompetitiveEvidence | null;
+  customer_evidence: CustomerEvidence | null;
+  internal_evidence: InternalEvidence | null;
+  recommended_action: string | null;
+  feature_keywords: string[];
+  linked_idea_id: number | null;
+  created_at: string;
+}
+
+/**
+ * Synthesis status response.
+ */
+export interface SynthesisStatusResponse {
+  product_id: number;
+  sources_available: SynthesisSourcesAvailable;
+  has_previous_run: boolean;
+  previous_run: SynthesisRun | null;
+}
+
+/**
+ * Full synthesis results response.
+ */
+export interface SynthesisResultsResponse {
+  run: SynthesisRun;
+  opportunities: SynthesizedOpportunity[];
+}
+
+// --- Idea Lifecycle & Funnel ---
+
+export interface IdeaLifecycleStatus {
+  id: number;
+  name: string;
+  slug: string;
+  color: string;
+  position: number;
+  is_default: boolean;
+  is_active: boolean;
+  idea_count: number;
+}
+
+export interface IdeaFunnelData {
+  product_id: number;
+  total_submitted: number;
+  status_counts: Record<string, number>;
+  lifecycle_counts: Record<string, number>;
+  auto_triaged_count: number;
+  manual_triaged_count: number;
 }

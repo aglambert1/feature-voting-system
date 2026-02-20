@@ -3,8 +3,12 @@ Configuration settings for the application.
 
 This file manages all configuration settings using environment variables.
 Settings are loaded from a .env file in the backend directory.
+
+Production defaults are safe: debug=False, no secrets hardcoded.
+For local development, set DEBUG=true in your .env file.
 """
 
+import sys
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,7 +25,7 @@ class Settings(BaseSettings):
 
     # Application settings
     app_name: str = "Feature Voting System"
-    debug: bool = True
+    debug: bool = False  # Safe default; set DEBUG=true in .env for local dev
 
     # Database connection
     # Format: postgresql://username:password@host:port/database_name
@@ -30,7 +34,7 @@ class Settings(BaseSettings):
     # Security settings
     # SECRET_KEY is used to sign JWT tokens - keep this secret!
     # Generate a secure key with: python -c "import secrets; print(secrets.token_urlsafe(32))"
-    secret_key: str = "your-secret-key-change-this-in-production"
+    secret_key: str = ""  # Required in production; set in .env or environment
     algorithm: str = "HS256"  # Algorithm for JWT encoding
     access_token_expire_minutes: int = 30  # Tokens expire after 30 minutes
 
@@ -41,7 +45,7 @@ class Settings(BaseSettings):
     # Initial admin user settings (created automatically on first startup)
     admin_email: str = "admin@example.com"
     admin_username: str = "admin"
-    admin_password: str = "change-this-secure-password"
+    admin_password: str = ""  # Required to create bootstrap admin; set in .env
     admin_full_name: str = "System Administrator"
 
     # AI/LLM settings
@@ -60,9 +64,9 @@ class Settings(BaseSettings):
     celery_result_backend: str = ""  # Defaults to redis_url if not set
 
     # Development mode settings for OTP bypass
-    # SECURITY WARNING: Only use in development! Never enable in production!
-    dev_otp_bypass: str = "000000"  # Fixed OTP that always works in debug mode
-    dev_return_otp: bool = True  # Return OTP in API response when debug=True
+    # These only activate when debug=True AND the values are non-empty/True
+    dev_otp_bypass: str = ""  # Set to "000000" in .env for local dev convenience
+    dev_return_otp: bool = False  # Set to true in .env to see OTPs in API responses
 
     # Configuration for pydantic to read from .env file
     model_config = SettingsConfigDict(
@@ -70,6 +74,33 @@ class Settings(BaseSettings):
         case_sensitive=False,  # DATABASE_URL and database_url are treated the same
         extra="ignore"  # Ignore extra environment variables
     )
+
+    def validate_for_production(self) -> None:
+        """Validate that required settings are configured for production.
+
+        Called during startup when debug=False. Fails fast with clear errors
+        so misconfigurations are caught before the app serves traffic.
+        """
+        errors = []
+
+        if not self.secret_key or len(self.secret_key) < 32:
+            errors.append(
+                "SECRET_KEY must be set and at least 32 characters. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            )
+
+        if self.secret_key == "your-secret-key-change-this-in-production":
+            errors.append("SECRET_KEY is still the old insecure default. Change it.")
+
+        if self.anthropic_api_key == "your-anthropic-api-key-here":
+            errors.append("ANTHROPIC_API_KEY is still the placeholder value.")
+
+        if errors:
+            print("\n=== PRODUCTION CONFIGURATION ERRORS ===", file=sys.stderr)
+            for error in errors:
+                print(f"  - {error}", file=sys.stderr)
+            print("Set DEBUG=true to run in development mode.\n", file=sys.stderr)
+            raise SystemExit(1)
 
 
 # Create a single instance of settings to use throughout the app

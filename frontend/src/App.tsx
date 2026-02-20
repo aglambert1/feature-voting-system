@@ -26,11 +26,11 @@ import ProductListPage from './pages/CompetitorIntelligence/ProductListPage';
 import CreateProductPage from './pages/CompetitorIntelligence/CreateProductPage';
 import AnalyzeProductPage from './pages/CompetitorIntelligence/AnalyzeProductPage';
 import ProductDetailPage from './pages/CompetitorIntelligence/ProductDetailPage';
-import CompetitorsPage from './pages/CompetitorIntelligence/CompetitorsPage';
-// Legacy pages - kept for hidden route access
-import SessionWorkflowPage from './pages/CompetitorIntelligence/SessionWorkflowPage';
 import ProductDashboardPage from './pages/ProductDashboardPage';
 import IntelligenceHubPage from './pages/CompetitorIntelligence/IntelligenceHubPage';
+import InternalFeedbackPage from './pages/CompetitorIntelligence/InternalFeedbackPage';
+import SynthesisHubPage from './pages/CompetitorIntelligence/SynthesisHubPage';
+import IdeaLifecycleSettingsPage from './pages/IdeaLifecycleSettingsPage';
 
 // Redirect from old /report route to new V2 IntelligenceHub
 function ReportRedirect() {
@@ -95,6 +95,17 @@ function App() {
             }
           />
 
+          <Route
+            path="/admin/idea-settings"
+            element={
+              <ProtectedRoute>
+                <AdminRoute>
+                  <IdeaLifecycleSettingsPage />
+                </AdminRoute>
+              </ProtectedRoute>
+            }
+          />
+
           {/* Product Intelligence routes - restricted to Product Owners and Admins */}
           <Route
             path="/product-intelligence"
@@ -136,41 +147,10 @@ function App() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/product-intelligence/products/:productId/competitors"
-            element={
-              <ProtectedRoute>
-                <ProductOwnerRoute>
-                  <CompetitorsPage />
-                </ProductOwnerRoute>
-              </ProtectedRoute>
-            }
-          />
           {/* Legacy route - redirect to V2 IntelligenceHub */}
           <Route
             path="/product-intelligence/products/:productId/report"
             element={<ReportRedirect />}
-          />
-          {/* Legacy routes - hidden from navigation but still accessible */}
-          <Route
-            path="/product-intelligence/products/:productId/sessions/:sessionId"
-            element={
-              <ProtectedRoute>
-                <ProductOwnerRoute>
-                  <SessionWorkflowPage />
-                </ProductOwnerRoute>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/product-intelligence/products/:productId/sessions"
-            element={
-              <ProtectedRoute>
-                <ProductOwnerRoute>
-                  <SessionWorkflowPage />
-                </ProductOwnerRoute>
-              </ProtectedRoute>
-            }
           />
           <Route
             path="/product-intelligence/products/:productId/dashboard"
@@ -188,6 +168,26 @@ function App() {
               <ProtectedRoute>
                 <ProductOwnerRoute>
                   <IntelligenceHubPage />
+                </ProductOwnerRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/product-intelligence/products/:productId/internal-feedback"
+            element={
+              <ProtectedRoute>
+                <ProductOwnerRoute>
+                  <InternalFeedbackPage />
+                </ProductOwnerRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/product-intelligence/products/:productId/synthesis"
+            element={
+              <ProtectedRoute>
+                <ProductOwnerRoute>
+                  <SynthesisHubPage />
                 </ProductOwnerRoute>
               </ProtectedRoute>
             }

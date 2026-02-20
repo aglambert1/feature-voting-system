@@ -141,7 +141,7 @@ class TestCheckScheduledTasks:
         assert result['total_jobs'] == 0
         mock_qs.create_job.assert_not_called()
 
-    @patch('app.queue.tasks.scheduled_deep_analysis_task')
+    @patch('app.queue.tasks.run_competitive_analysis_v2')
     @patch('app.queue.tasks.get_db')
     @patch('app.queue.tasks.QueueService')
     def test_scheduled_deep_analysis_queued_when_due(
@@ -272,7 +272,7 @@ class TestCheckScheduledTasks:
         assert result['total_jobs'] == 0
         mock_qs.create_job.assert_not_called()
 
-    @patch('app.queue.tasks.scheduled_deep_analysis_task')
+    @patch('app.queue.tasks.run_competitive_analysis_v2')
     @patch('app.queue.tasks.discover_competitors_task')
     @patch('app.queue.tasks.analyze_product_task')
     @patch('app.queue.tasks.get_db')
@@ -318,7 +318,7 @@ class TestCheckScheduledTasks:
         assert len(result['jobs_queued']['competitor_discovery']) == 1
         assert len(result['jobs_queued']['deep_analysis']) == 1
 
-    @patch('app.queue.tasks.scheduled_deep_analysis_task')
+    @patch('app.queue.tasks.run_competitive_analysis_v2')
     @patch('app.queue.tasks.get_db')
     @patch('app.queue.tasks.QueueService')
     def test_multiple_products(self, mock_qs_class, mock_get_db, mock_deep_task, mock_db):
@@ -430,7 +430,7 @@ class TestCeleryBeatConfiguration:
 class TestNextRunUpdates:
     """Test that next_run times are properly updated after scheduling."""
 
-    @patch('app.queue.tasks.scheduled_deep_analysis_task')
+    @patch('app.queue.tasks.run_competitive_analysis_v2')
     @patch('app.queue.tasks.get_db')
     @patch('app.queue.tasks.QueueService')
     def test_next_run_updated_after_scheduling(

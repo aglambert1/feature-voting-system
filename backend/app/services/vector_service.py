@@ -530,3 +530,159 @@ class VectorService:
             })
 
         return results.fetchall()
+
+    # ============================================================================
+    # Bulk Delete Methods (for product removal)
+    # ============================================================================
+
+    @staticmethod
+    def delete_all_product_embeddings(db: Session, product_id: int) -> dict:
+        """
+        Delete ALL embeddings associated with a product.
+
+        Covers: vec_products, product_chunks, vec_competitor_features,
+        vec_product_features, and vec_ideas.
+
+        Returns:
+            Dict with counts of deleted embeddings per table
+        """
+        counts = {}
+
+        # 1. Product description embeddings
+        if VectorService.is_postgres(db):
+            db.execute(
+                text("UPDATE ci_products SET embedding = NULL WHERE id = :id"),
+                {"id": product_id}
+            )
+            counts["product_chunks"] = 1
+        else:
+            vec_rowids = db.execute(
+                text("SELECT vec_rowid FROM product_chunks WHERE product_id = :id"),
+                {"id": product_id}
+            ).fetchall()
+            for (vec_rowid,) in vec_rowids:
+                db.execute(
+                    text("DELETE FROM vec_products WHERE rowid = :rowid"),
+                    {"rowid": vec_rowid}
+                )
+            result = db.execute(
+                text("DELETE FROM product_chunks WHERE product_id = :id"),
+                {"id": product_id}
+            )
+            counts["product_chunks"] = result.rowcount
+
+        # 2. Competitor feature embeddings
+        if VectorService.is_postgres(db):
+            result = db.execute(text("""
+                UPDATE product_competitor_features SET embedding = NULL
+                WHERE product_competitor_id IN (
+                    SELECT id FROM product_competitors WHERE product_id = :product_id
+                )
+            """), {"product_id": product_id})
+            counts["competitor_feature_embeddings"] = result.rowcount
+        else:
+            result = db.execute(text("""
+                DELETE FROM vec_competitor_features WHERE feature_id IN (
+                    SELECT pcf.id FROM product_competitor_features pcf
+                    JOIN product_competitors pc ON pcf.product_competitor_id = pc.id
+                    WHERE pc.product_id = :product_id
+                )
+            """), {"product_id": product_id})
+            counts["competitor_feature_embeddings"] = result.rowcount
+
+        # 3. Product's own feature embeddings
+        if VectorService.is_postgres(db):
+            result = db.execute(text("""
+                UPDATE product_features SET embedding = NULL
+                WHERE product_id = :product_id
+            """), {"product_id": product_id})
+            counts["product_feature_embeddings"] = result.rowcount
+        else:
+            result = db.execute(text("""
+                DELETE FROM vec_product_features WHERE feature_id IN (
+                    SELECT id FROM product_features WHERE product_id = :product_id
+                )
+            """), {"product_id": product_id})
+            counts["product_feature_embeddings"] = result.rowcount
+
+        # 4. Idea embeddings
+        if VectorService.is_postgres(db):
+            result = db.execute(text("""
+                UPDATE ideas SET embedding = NULL
+                WHERE product_id = :product_id
+            """), {"product_id": product_id})
+            counts["idea_embeddings"] = result.rowcount
+        else:
+            result = db.execute(text("""
+                DELETE FROM vec_ideas WHERE idea_id IN (
+                    SELECT id FROM ideas WHERE product_id = :product_id
+                )
+            """), {"product_id": product_id})
+            counts["idea_embeddings"] = result.rowcount
+
+        return counts
+
+    @staticmethod
+    def count_product_embeddings(db: Session, product_id: int) -> dict:
+        """
+        Count all embeddings associated with a product (for dry-run preview).
+
+        Returns:
+            Dict with counts per embedding type
+        """
+        counts = {}
+
+        if VectorService.is_postgres(db):
+            r = db.execute(
+                text("SELECT COUNT(*) FROM ci_products WHERE id = :id AND embedding IS NOT NULL"),
+                {"id": product_id}
+            ).scalar()
+            counts["product_chunks"] = r or 0
+        else:
+            counts["product_chunks"] = db.execute(
+                text("SELECT COUNT(*) FROM product_chunks WHERE product_id = :id"),
+                {"id": product_id}
+            ).scalar() or 0
+
+        if VectorService.is_postgres(db):
+            counts["competitor_feature_embeddings"] = db.execute(text("""
+                SELECT COUNT(*) FROM product_competitor_features
+                WHERE embedding IS NOT NULL
+                  AND product_competitor_id IN (
+                    SELECT id FROM product_competitors WHERE product_id = :product_id
+                )
+            """), {"product_id": product_id}).scalar() or 0
+        else:
+            counts["competitor_feature_embeddings"] = db.execute(text("""
+                SELECT COUNT(*) FROM vec_competitor_features WHERE feature_id IN (
+                    SELECT pcf.id FROM product_competitor_features pcf
+                    JOIN product_competitors pc ON pcf.product_competitor_id = pc.id
+                    WHERE pc.product_id = :product_id
+                )
+            """), {"product_id": product_id}).scalar() or 0
+
+        if VectorService.is_postgres(db):
+            counts["product_feature_embeddings"] = db.execute(text("""
+                SELECT COUNT(*) FROM product_features
+                WHERE embedding IS NOT NULL AND product_id = :product_id
+            """), {"product_id": product_id}).scalar() or 0
+        else:
+            counts["product_feature_embeddings"] = db.execute(text("""
+                SELECT COUNT(*) FROM vec_product_features WHERE feature_id IN (
+                    SELECT id FROM product_features WHERE product_id = :product_id
+                )
+            """), {"product_id": product_id}).scalar() or 0
+
+        if VectorService.is_postgres(db):
+            counts["idea_embeddings"] = db.execute(text("""
+                SELECT COUNT(*) FROM ideas
+                WHERE embedding IS NOT NULL AND product_id = :product_id
+            """), {"product_id": product_id}).scalar() or 0
+        else:
+            counts["idea_embeddings"] = db.execute(text("""
+                SELECT COUNT(*) FROM vec_ideas WHERE idea_id IN (
+                    SELECT id FROM ideas WHERE product_id = :product_id
+                )
+            """), {"product_id": product_id}).scalar() or 0
+
+        return counts

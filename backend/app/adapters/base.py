@@ -40,6 +40,10 @@ class NormalizedIdea:
     category: Optional[str] = None
     auto_categorized: bool = False
 
+    # External system tracking (for ideas synced from Aha!, Jira, etc.)
+    external_id: Optional[str] = None
+    external_source: Optional[str] = None
+
     # Additional context
     raw_input: Optional[str] = None  # Original input before normalization
     adaptation_notes: Optional[str] = None  # Notes from AI adaptation
@@ -57,6 +61,8 @@ class NormalizedIdea:
             'submitter_id': self.submitter_id,
             'category': self.category,
             'auto_categorized': self.auto_categorized,
+            'external_id': self.external_id,
+            'external_source': self.external_source,
         }
 
 

@@ -10,17 +10,17 @@ from pydantic import BaseModel, Field, validator
 
 class VoteCreate(BaseModel):
     """
-    Schema for creating or updating a vote.
+    Schema for creating a vote.
 
-    User can upvote (1) or downvote (-1).
+    User can upvote (1) or remove their vote by voting again.
     """
-    vote_value: int = Field(..., description="Vote value: 1 for upvote, -1 for downvote")
+    vote_value: int = Field(..., description="Vote value: must be 1 (upvote)")
 
     @validator('vote_value')
     def validate_vote_value(cls, v):
-        """Ensure vote value is either 1 or -1."""
-        if v not in [1, -1]:
-            raise ValueError('Vote value must be 1 (upvote) or -1 (downvote)')
+        """Ensure vote value is 1 (upvote only)."""
+        if v != 1:
+            raise ValueError('Vote value must be 1 (upvote)')
         return v
 
 
@@ -49,10 +49,8 @@ class VoteCountResponse(BaseModel):
     """
     idea_id: int
     upvotes: int = Field(description="Number of upvotes")
-    downvotes: int = Field(description="Number of downvotes")
-    score: int = Field(description="Net score (upvotes - downvotes)")
     total_votes: int = Field(description="Total number of votes")
-    user_vote: int | None = Field(description="Current user's vote (1, -1, or null)")
+    user_vote: int | None = Field(description="Current user's vote (1 or null)")
 
 
 class VoteActionResponse(BaseModel):

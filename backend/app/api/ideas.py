@@ -15,7 +15,7 @@ Phase 3 additions:
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case
+from sqlalchemy import func
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -26,7 +26,7 @@ from app.database import get_db
 
 class IdeaSortOption(str, Enum):
     """Sort options for ideas list."""
-    MOST_VOTES = "most_votes"      # Highest score first (default for voters)
+    MOST_VOTES = "most_votes"      # Most upvotes first (default for voters)
     PENDING_FIRST = "pending_first"  # Pending/needs_review first, then by votes (default for POs)
     MOST_RECENT = "most_recent"    # Newest first
     MY_IDEAS = "my_ideas"          # User's own ideas first, then by votes
@@ -60,17 +60,13 @@ def get_vote_counts(db: Session, idea_id: int) -> VoteCount:
         VoteCount object with aggregated statistics
     """
     result = db.query(
-        func.sum(case((Vote.vote_value == 1, 1), else_=0)).label('upvotes'),
-        func.sum(case((Vote.vote_value == -1, 1), else_=0)).label('downvotes'),
-        func.sum(Vote.vote_value).label('score'),
         func.count(Vote.id).label('total_votes')
     ).filter(Vote.idea_id == idea_id).first()
 
+    total = int(result.total_votes or 0)
     return VoteCount(
-        upvotes=int(result.upvotes or 0),
-        downvotes=int(result.downvotes or 0),
-        score=int(result.score or 0),
-        total_votes=int(result.total_votes or 0)
+        upvotes=total,
+        total_votes=total
     )
 
 
@@ -152,6 +148,7 @@ def create_idea(
         status=new_idea.status,
         created_at=new_idea.created_at,
         updated_at=new_idea.updated_at,
+        product_id=new_idea.product_id,
         vote_counts=vote_counts,
         user_vote=None  # New idea, user hasn't voted yet
     )
@@ -164,6 +161,7 @@ def list_ideas(
     skip: int = 0,
     limit: int = 100,
     product_id: Optional[int] = None,
+    lifecycle_status_id: Optional[int] = None,
     sort_by: Optional[IdeaSortOption] = None,
     current_user: Optional[User] = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -215,12 +213,11 @@ def list_ideas(
         # Admins see all ideas
         query = db.query(Idea)
     elif is_po and current_user:
-        # POs see all ideas for their products, plus their own submissions and active ideas elsewhere
+        # POs see all ideas for their products, plus their own submissions
         query = db.query(Idea).filter(
             or_(
                 Idea.product_id.in_(owned_product_ids),  # All ideas for owned products
-                Idea.submitter_id == current_user.id,     # Their own submissions anywhere
-                Idea.is_active == True                    # Active ideas from other products
+                Idea.submitter_id == current_user.id,     # Their own submissions
             )
         )
     elif current_user:
@@ -246,6 +243,10 @@ def list_ideas(
             )
 
         query = query.filter(Idea.product_id == product_id)
+
+    # Filter by lifecycle status if specified
+    if lifecycle_status_id is not None:
+        query = query.filter(Idea.lifecycle_status_id == lifecycle_status_id)
 
     ideas = query.all()
 
@@ -288,6 +289,9 @@ def list_ideas(
             is_active=idea.is_active,
             duplicate_of_idea_id=idea.duplicate_of_idea_id,
             duplicate_of_title=duplicate_title,
+            lifecycle_status_id=idea.lifecycle_status_id,
+            lifecycle_status_name=idea.lifecycle_status.name if idea.lifecycle_status else None,
+            lifecycle_status_color=idea.lifecycle_status.color if idea.lifecycle_status else None,
             vote_counts=vote_counts,
             user_vote=user_vote,
             user_vote_timestamp=user_vote_timestamp,
@@ -306,7 +310,7 @@ def list_ideas(
     # Apply sorting
     if effective_sort == IdeaSortOption.MOST_VOTES:
         # Sort by score (highest first)
-        idea_items.sort(key=lambda x: x.vote_counts.score, reverse=True)
+        idea_items.sort(key=lambda x: x.vote_counts.upvotes, reverse=True)
     elif effective_sort == IdeaSortOption.PENDING_FIRST:
         # Pending/needs_review first, then by votes
         # Status priority: pending=0, needs_review=1, others=2
@@ -317,7 +321,7 @@ def list_ideas(
             elif item.status == IdeaStatus.NEEDS_REVIEW:
                 status_priority = 1
             # Secondary sort by votes (negative for descending)
-            return (status_priority, -item.vote_counts.score)
+            return (status_priority, -item.vote_counts.upvotes)
         idea_items.sort(key=pending_sort_key)
     elif effective_sort == IdeaSortOption.MOST_RECENT:
         # Newest first
@@ -327,7 +331,7 @@ def list_ideas(
         user_id = current_user.id if current_user else None
         def my_ideas_sort_key(item):
             is_mine = 0 if item.submitter_id == user_id else 1
-            return (is_mine, -item.vote_counts.score)
+            return (is_mine, -item.vote_counts.upvotes)
         idea_items.sort(key=my_ideas_sort_key)
 
     # Apply pagination
@@ -347,20 +351,22 @@ def get_products_for_ideas(
     db: Session = Depends(get_db)
 ):
     """
-    Get all active products for idea submission/filtering.
+    Get active products for idea submission/filtering.
 
-    This endpoint returns ALL products to all authenticated users,
-    regardless of role. This is used for:
-    - Product dropdown on idea submission page
-    - Product filter on ideas browsing page
-
-    Product Owners see all products here, but only see their own
-    products on the /product-intelligence page.
+    Returns products scoped by role:
+    - ADMIN: all active products
+    - PRODUCT_OWNER: only products they created
+    - VOTER: only products they created (for beta; future: products with explicit access)
 
     Returns:
         List of active products with id and product_name
     """
-    products = db.query(CIProduct).filter(CIProduct.status == "active").all()
+    query = db.query(CIProduct).filter(CIProduct.status == "active")
+
+    if current_user.role != UserRole.ADMIN:
+        query = query.filter(CIProduct.created_by_user_id == current_user.id)
+
+    products = query.all()
 
     return [
         {
@@ -651,6 +657,7 @@ def get_idea(
         status=idea.status,
         created_at=idea.created_at,
         updated_at=idea.updated_at,
+        product_id=idea.product_id,
         vote_counts=vote_counts,
         user_vote=user_vote
     )
@@ -759,10 +766,14 @@ class IdeaDetailResponse(BaseModel):
     submitter_id: Optional[int]
     submitter_username: Optional[str] = None
     review_notes: Optional[str]
+    reviewer_username: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     comments: List[IdeaCommentResponse] = []
     status_history: List[StatusHistoryEntryResponse] = []
+    # Competitive context - only populated for PO/Admin users
+    competitive_context: Optional[dict] = None
 
 
 @router.post("/submit", response_model=JobQueueResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -783,7 +794,7 @@ def submit_idea_with_triage(
 
     Returns a job ID for tracking progress.
     """
-    from app.queue.tasks import submit_and_triage_idea_task
+    from app.utils.celery_utils import send_celery_task as send_task
 
     # Check permission (VIEW is sufficient to submit ideas)
     product = check_product_permission(db, current_user, request.product_id, ProductPermissionLevel.VIEW)
@@ -834,7 +845,7 @@ def submit_idea_with_triage(
 
     # Queue the task
     try:
-        celery_result = submit_and_triage_idea_task.delay(job.id)
+        celery_result = send_task('submit_and_triage_idea_task', job.id)
         queue_service.mark_queued(job.id, celery_result.id)
     except Exception as e:
         queue_service.mark_failure(job.id, f"Failed to queue task: {str(e)}")
@@ -867,7 +878,7 @@ def create_idea_from_feature(
 
     Requires EDIT permission on the product.
     """
-    from app.queue.tasks import submit_and_triage_idea_task
+    from app.utils.celery_utils import send_celery_task as send_task
     from app.models.competitor_intelligence import ProductCompetitorFeature, ProductCompetitor
 
     # Check permission
@@ -921,7 +932,7 @@ def create_idea_from_feature(
 
     # Queue the task
     try:
-        celery_result = submit_and_triage_idea_task.delay(job.id)
+        celery_result = send_task('submit_and_triage_idea_task', job.id)
         queue_service.mark_queued(job.id, celery_result.id)
     except Exception as e:
         queue_service.mark_failure(job.id, f"Failed to queue task: {str(e)}")
@@ -1265,6 +1276,23 @@ def get_idea_detail(
             created_at=record.created_at,
         ))
 
+    # Competitive context is only shown to PO/Admin users
+    is_po_or_admin = current_user.role in [UserRole.ADMIN, UserRole.PRODUCT_OWNER]
+    competitive_context = None
+    if is_po_or_admin and idea.competitive_context:
+        competitive_context = idea.competitive_context
+
+    # Get reviewer info from status history (find last PM review)
+    reviewer_username = None
+    reviewed_at = None
+    for record in status_history_records:
+        if record.changed_by_user_id and not record.is_automated:
+            changed_by_user = db.query(User).filter(User.id == record.changed_by_user_id).first()
+            if changed_by_user:
+                reviewer_username = changed_by_user.username
+                reviewed_at = record.created_at
+            break
+
     return IdeaDetailResponse(
         id=idea.id,
         title=idea.title,
@@ -1287,10 +1315,13 @@ def get_idea_detail(
         submitter_id=idea.submitter_id,
         submitter_username=submitter_username,
         review_notes=idea.review_notes,
+        reviewer_username=reviewer_username,
+        reviewed_at=reviewed_at,
         created_at=idea.created_at,
         updated_at=idea.updated_at,
         comments=comments,
         status_history=status_history,
+        competitive_context=competitive_context,
     )
 
 
@@ -1606,11 +1637,9 @@ def get_triage_recommendation(
 
     # Get vote counts and voter names
     votes = db.query(Vote).filter(Vote.idea_id == idea_id).all()
-    upvotes = [v for v in votes if v.vote_value > 0]
-    downvotes = [v for v in votes if v.vote_value < 0]
 
     # Get voter usernames
-    voter_ids = [v.user_id for v in upvotes]
+    voter_ids = [v.user_id for v in votes]
     voters = []
     if voter_ids:
         voter_users = db.query(User).filter(User.id.in_(voter_ids)).all()
@@ -1673,8 +1702,7 @@ def get_triage_recommendation(
         'similar_ideas': similar_ideas,
         # Source summary for PO context
         'source_summary': {
-            'vote_count': len(upvotes),
-            'downvote_count': len(downvotes),
+            'vote_count': len(votes),
             'voters': voters,
             'competitors_with_feature': competitors_with_feature,
             'competitive_urgency': competitive_urgency,

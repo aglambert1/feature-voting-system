@@ -48,13 +48,6 @@ import type {
   CompetitiveAgentConfigUpdate,
   AgentCompetitor,
   CompetitorFeature,
-  FeatureCluster,
-  FeatureClusterDetail,
-  PricingAnalysis,
-  PositioningAnalysis,
-  MomentumAnalysis,
-  ChangeEvent,
-  FinancialsAnalysis,
   AgentJobResponse,
   CreateIdeasRequest,
   FeatureQueryResponse,
@@ -216,6 +209,7 @@ interface GetIdeasParams {
   limit?: number;
   product_id?: number;
   sort_by?: 'most_votes' | 'pending_first' | 'most_recent' | 'my_ideas';
+  lifecycle_status_id?: number;
 }
 
 /**
@@ -487,8 +481,40 @@ export const getJob = async (jobUuid: string): Promise<QueueJob> => {
 
 /**
  * Get jobs for a product
+ * @param productId - Product ID
+ * @param limit - Maximum number of jobs to return (default 10, max 100)
+ * @param jobTypes - Optional array of job types to filter by
  */
-export const getProductJobs = async (productId: number, limit: number = 10): Promise<QueueJob[]> => {
+export const getProductJobs = async (
+  productId: number,
+  limit: number = 10,
+  jobTypes?: string[]
+): Promise<QueueJob[]> => {
+  // If job types provided, make multiple requests and combine
+  // (API only supports single job_type filter)
+  if (jobTypes && jobTypes.length > 0) {
+    const allJobs: QueueJob[] = [];
+    for (const jobType of jobTypes) {
+      try {
+        const response = await api.get<QueueJob[]>(`/product-intelligence/products/${productId}/jobs`, {
+          params: { limit, job_type: jobType },
+        });
+        allJobs.push(...response.data);
+      } catch {
+        // Ignore errors for individual job types
+      }
+    }
+    // Sort by created_at descending and dedupe
+    const seen = new Set<number>();
+    return allJobs
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .filter(job => {
+        if (seen.has(job.id)) return false;
+        seen.add(job.id);
+        return true;
+      });
+  }
+
   const response = await api.get<QueueJob[]>(`/product-intelligence/products/${productId}/jobs`, {
     params: { limit },
   });
@@ -856,27 +882,6 @@ export const triggerProductReanalysis = async (productId: number): Promise<Agent
   return response.data;
 };
 
-/**
- * Trigger feature clustering only (re-cluster existing features)
- */
-export const triggerFeatureClustering = async (productId: number): Promise<AgentJobResponse> => {
-  const response = await api.post<AgentJobResponse>(
-    `/product-intelligence/agents/${productId}/run-clustering`
-  );
-  return response.data;
-};
-
-/**
- * Trigger full competitive analysis workflow.
- * This runs deep analysis on all enabled competitors, then clustering, then idea generation.
- */
-export const triggerCompetitiveAnalysis = async (productId: number): Promise<AgentJobResponse> => {
-  const response = await api.post<AgentJobResponse>(
-    `/product-intelligence/agents/${productId}/run-competitive-analysis`
-  );
-  return response.data;
-};
-
 // --- Competitor Management ---
 
 /**
@@ -919,17 +924,105 @@ export const disableDeepAnalysis = async (
   return response.data;
 };
 
-// --- Per-Competitor Deep Analysis ---
+/**
+ * Update competitor selection (enable/disable deep analysis)
+ */
+export const updateCompetitorSelection = async (
+  productId: number,
+  competitorId: number,
+  enabled: boolean
+): Promise<{ message: string }> => {
+  if (enabled) {
+    return enableDeepAnalysis(productId, competitorId);
+  } else {
+    return disableDeepAnalysis(productId, competitorId);
+  }
+};
 
 /**
- * Trigger deep analysis for a single competitor
+ * Add a competitor manually
  */
-export const triggerDeepAnalysis = async (
+export const addCompetitorManually = async (
   productId: number,
-  competitorId: number
-): Promise<AgentJobResponse> => {
-  const response = await api.post<AgentJobResponse>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/deep-analysis`
+  competitorName: string,
+  competitorUrl: string
+): Promise<{
+  id: number;
+  competitor_name: string;
+  competitor_url: string;
+  deep_analysis_enabled: boolean;
+  message: string;
+}> => {
+  const response = await api.post(
+    `/product-intelligence/agents/${productId}/competitors/add`,
+    {
+      competitor_name: competitorName,
+      competitor_url: competitorUrl,
+    }
+  );
+  return response.data;
+};
+
+// --- Competitor Alerts ---
+
+export interface CompetitorAlert {
+  id: number;
+  product_id: number;
+  alert_type: 'new_competitor' | 'competitor_disappeared' | 'competitor_change';
+  competitor_id: number | null;
+  competitor_name: string;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+}
+
+/**
+ * Get competitor alerts for a product
+ */
+export const getCompetitorAlerts = async (
+  productId: number,
+  unreadOnly: boolean = false
+): Promise<CompetitorAlert[]> => {
+  const response = await api.get<CompetitorAlert[]>(
+    `/product-intelligence/agents/${productId}/alerts`,
+    { params: { unread_only: unreadOnly } }
+  );
+  return response.data;
+};
+
+/**
+ * Get unread alert count
+ */
+export const getUnreadAlertCount = async (
+  productId: number
+): Promise<{ unread_count: number }> => {
+  const response = await api.get<{ unread_count: number }>(
+    `/product-intelligence/agents/${productId}/alerts/count`
+  );
+  return response.data;
+};
+
+/**
+ * Mark an alert as read
+ */
+export const markAlertRead = async (
+  productId: number,
+  alertId: number
+): Promise<{ message: string }> => {
+  const response = await api.post<{ message: string }>(
+    `/product-intelligence/agents/${productId}/alerts/${alertId}/read`
+  );
+  return response.data;
+};
+
+/**
+ * Mark all alerts as read
+ */
+export const markAllAlertsRead = async (
+  productId: number
+): Promise<{ message: string }> => {
+  const response = await api.post<{ message: string }>(
+    `/product-intelligence/agents/${productId}/alerts/read-all`
   );
   return response.data;
 };
@@ -974,117 +1067,6 @@ export const createIdeasFromFeatures = async (
   const response = await api.post<AgentJobResponse[]>(
     `/product-intelligence/agents/${productId}/competitors/${competitorId}/features/create-ideas`,
     request
-  );
-  return response.data;
-};
-
-// --- Feature Clusters & Intensity ---
-
-/**
- * List feature clusters with intensity scores
- */
-export const getFeatureClusters = async (
-  productId: number,
-  minCompetitors?: number
-): Promise<FeatureCluster[]> => {
-  const response = await api.get<FeatureCluster[]>(
-    `/product-intelligence/agents/${productId}/feature-clusters`,
-    { params: minCompetitors !== undefined ? { min_competitors: minCompetitors } : {} }
-  );
-  return response.data;
-};
-
-/**
- * Get feature cluster details with members
- */
-export const getFeatureClusterDetail = async (
-  productId: number,
-  clusterId: number
-): Promise<FeatureClusterDetail> => {
-  const response = await api.get<FeatureClusterDetail>(
-    `/product-intelligence/agents/${productId}/feature-clusters/${clusterId}`
-  );
-  return response.data;
-};
-
-/**
- * Create an idea from a feature cluster
- */
-export const createIdeaFromCluster = async (
-  productId: number,
-  clusterId: number
-): Promise<AgentJobResponse> => {
-  const response = await api.post<AgentJobResponse>(
-    `/product-intelligence/agents/${productId}/feature-clusters/${clusterId}/create-idea`
-  );
-  return response.data;
-};
-
-// --- Strategic Analysis Results ---
-
-/**
- * Get pricing analysis for a competitor
- */
-export const getPricingAnalysis = async (
-  productId: number,
-  competitorId: number
-): Promise<PricingAnalysis | null> => {
-  const response = await api.get<PricingAnalysis | null>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/pricing`
-  );
-  return response.data;
-};
-
-/**
- * Get positioning analysis for a competitor
- */
-export const getPositioningAnalysis = async (
-  productId: number,
-  competitorId: number
-): Promise<PositioningAnalysis | null> => {
-  const response = await api.get<PositioningAnalysis | null>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/positioning`
-  );
-  return response.data;
-};
-
-/**
- * Get change events for a competitor
- */
-export const getChangeEvents = async (
-  productId: number,
-  competitorId: number,
-  limit: number = 20
-): Promise<ChangeEvent[]> => {
-  const response = await api.get<ChangeEvent[]>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/changes`,
-    { params: { limit } }
-  );
-  return response.data;
-};
-
-/**
- * Get momentum analysis for a competitor
- */
-export const getMomentumAnalysis = async (
-  productId: number,
-  competitorId: number
-): Promise<MomentumAnalysis | null> => {
-  const response = await api.get<MomentumAnalysis | null>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/momentum`
-  );
-  return response.data;
-};
-
-/**
- * Get financials analysis for a competitor
- */
-export const getFinancialsAnalysis = async (
-  productId: number,
-  competitorId: number
-): Promise<FinancialsAnalysis | null> => {
-  const response = await api.get<FinancialsAnalysis | null>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/financials`
   );
   return response.data;
 };
@@ -1270,6 +1252,387 @@ export const exportOpportunitiesJson = async (
   const response = await api.post<FeatureOpportunitiesExport>(
     `/product-intelligence/agents/${productId}/landscape-report/export-json`,
     { opportunity_indices: opportunityIndices }
+  );
+  return response.data;
+};
+
+// ============================================================================
+// INTERNAL FEEDBACK API METHODS (Phase 2 - Internal Discovery Agent)
+// ============================================================================
+
+import type {
+  InternalFeedbackImport,
+  InternalFeedbackThemes,
+  ImportStatusResponse,
+  ActivityImport,
+  ActivityInsights,
+  ActivityImportStatusResponse,
+} from '../types';
+
+/**
+ * Upload internal feedback JSON file
+ */
+export const uploadInternalFeedback = async (
+  productId: number,
+  file: File
+): Promise<InternalFeedbackImport> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await api.post<InternalFeedbackImport>(
+    `/internal-feedback/${productId}/import`,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+  return response.data;
+};
+
+/**
+ * Get all imports for a product
+ */
+export const getInternalFeedbackImports = async (
+  productId: number
+): Promise<InternalFeedbackImport[]> => {
+  const response = await api.get<{ imports: InternalFeedbackImport[]; total: number }>(
+    `/internal-feedback/${productId}/imports`
+  );
+  return response.data.imports;
+};
+
+/**
+ * Get a single import by ID
+ */
+export const getInternalFeedbackImport = async (
+  productId: number,
+  importId: number
+): Promise<InternalFeedbackImport> => {
+  const response = await api.get<InternalFeedbackImport>(
+    `/internal-feedback/${productId}/imports/${importId}`
+  );
+  return response.data;
+};
+
+/**
+ * Get import status (for polling during processing)
+ */
+export const getInternalFeedbackImportStatus = async (
+  productId: number,
+  importId: number
+): Promise<ImportStatusResponse> => {
+  const response = await api.get<ImportStatusResponse>(
+    `/internal-feedback/${productId}/imports/${importId}/status`
+  );
+  return response.data;
+};
+
+/**
+ * Get all extracted themes for a product
+ */
+export const getInternalFeedbackThemes = async (
+  productId: number
+): Promise<InternalFeedbackThemes> => {
+  const response = await api.get<InternalFeedbackThemes>(
+    `/internal-feedback/${productId}/themes`
+  );
+  return response.data;
+};
+
+/**
+ * Delete an import and its themes
+ */
+export const deleteInternalFeedbackImport = async (
+  productId: number,
+  importId: number
+): Promise<void> => {
+  await api.delete(`/internal-feedback/${productId}/imports/${importId}`);
+};
+
+/**
+ * Reprocess an import (re-run theme extraction)
+ */
+export const reprocessInternalFeedback = async (
+  productId: number,
+  importId: number
+): Promise<InternalFeedbackImport> => {
+  const response = await api.post<InternalFeedbackImport>(
+    `/internal-feedback/${productId}/imports/${importId}/reprocess`
+  );
+  return response.data;
+};
+
+// ============================================================================
+// ACTIVITY IMPORT API METHODS (CRM Activity Stream Analysis)
+// ============================================================================
+
+/**
+ * Upload activity data file (JSON or Markdown)
+ */
+export const uploadActivityData = async (
+  productId: number,
+  file: File
+): Promise<ActivityImport> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await api.post<ActivityImport>(
+    `/internal-feedback/${productId}/activity-import`,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+  return response.data;
+};
+
+/**
+ * Get all activity imports for a product
+ */
+export const getActivityImports = async (
+  productId: number
+): Promise<ActivityImport[]> => {
+  const response = await api.get<{ imports: ActivityImport[]; total: number }>(
+    `/internal-feedback/${productId}/activity-imports`
+  );
+  return response.data.imports;
+};
+
+/**
+ * Get activity import status (for polling)
+ */
+export const getActivityImportStatus = async (
+  productId: number,
+  importId: number
+): Promise<ActivityImportStatusResponse> => {
+  const response = await api.get<ActivityImportStatusResponse>(
+    `/internal-feedback/${productId}/activity-imports/${importId}/status`
+  );
+  return response.data;
+};
+
+/**
+ * Get activity insights for a product
+ */
+export const getActivityInsights = async (
+  productId: number
+): Promise<ActivityInsights> => {
+  const response = await api.get<ActivityInsights>(
+    `/internal-feedback/${productId}/activity-insights`
+  );
+  return response.data;
+};
+
+/**
+ * Delete an activity import
+ */
+export const deleteActivityImport = async (
+  productId: number,
+  importId: number
+): Promise<void> => {
+  await api.delete(`/internal-feedback/${productId}/activity-imports/${importId}`);
+};
+
+/**
+ * Reprocess an activity import
+ */
+export const reprocessActivityImport = async (
+  productId: number,
+  importId: number
+): Promise<ActivityImport> => {
+  const response = await api.post<ActivityImport>(
+    `/internal-feedback/${productId}/activity-imports/${importId}/reprocess`
+  );
+  return response.data;
+};
+
+// ============================================================================
+// SYNTHESIS API
+// ============================================================================
+
+import type {
+  SynthesisStatusResponse,
+  SynthesisRun,
+  SynthesisResultsResponse,
+} from '../types';
+
+/**
+ * Get synthesis status and available sources
+ */
+export const getSynthesisStatus = async (
+  productId: number
+): Promise<SynthesisStatusResponse> => {
+  const response = await api.get<SynthesisStatusResponse>(
+    `/synthesis/${productId}/status`
+  );
+  return response.data;
+};
+
+/**
+ * Trigger a new synthesis run
+ */
+export const triggerSynthesis = async (
+  productId: number
+): Promise<SynthesisRun> => {
+  const response = await api.post<SynthesisRun>(
+    `/synthesis/${productId}/run`
+  );
+  return response.data;
+};
+
+/**
+ * Get all synthesis runs for a product
+ */
+export const getSynthesisRuns = async (
+  productId: number
+): Promise<{ runs: SynthesisRun[]; total: number }> => {
+  const response = await api.get<{ runs: SynthesisRun[]; total: number }>(
+    `/synthesis/${productId}/runs`
+  );
+  return response.data;
+};
+
+/**
+ * Get full synthesis results including opportunities
+ */
+export const getSynthesisResults = async (
+  productId: number,
+  runId: number
+): Promise<SynthesisResultsResponse> => {
+  const response = await api.get<SynthesisResultsResponse>(
+    `/synthesis/${productId}/runs/${runId}`
+  );
+  return response.data;
+};
+
+/**
+ * Get the latest completed synthesis results
+ */
+export const getLatestSynthesis = async (
+  productId: number
+): Promise<SynthesisResultsResponse> => {
+  const response = await api.get<SynthesisResultsResponse>(
+    `/synthesis/${productId}/latest`
+  );
+  return response.data;
+};
+
+/**
+ * Helper to trigger file download from blob
+ */
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
+
+/**
+ * Export synthesis results as JSON
+ * Makes authenticated request and triggers download
+ */
+export const exportSynthesisJson = async (
+  productId: number,
+  runId: number,
+  productName?: string
+): Promise<void> => {
+  try {
+    const response = await api.get(
+      `/synthesis/${productId}/runs/${runId}/export/json`,
+      { responseType: 'blob' }
+    );
+
+    const filename = productName
+      ? `synthesis_${productName.replace(/\s+/g, '_')}_${runId}.json`
+      : `synthesis_${productId}_${runId}.json`;
+
+    downloadBlob(response.data, filename);
+  } catch (error) {
+    console.error('Export JSON failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Export synthesis results as CSV
+ * Makes authenticated request and triggers download
+ */
+export const exportSynthesisCsv = async (
+  productId: number,
+  runId: number,
+  productName?: string
+): Promise<void> => {
+  try {
+    const response = await api.get(
+      `/synthesis/${productId}/runs/${runId}/export/csv`,
+      { responseType: 'blob' }
+    );
+
+    const filename = productName
+      ? `synthesis_${productName.replace(/\s+/g, '_')}_${runId}.csv`
+      : `synthesis_${productId}_${runId}.csv`;
+
+    downloadBlob(response.data, filename);
+  } catch (error) {
+    console.error('Export CSV failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Create an idea from a synthesized opportunity
+ */
+export const createIdeaFromOpportunity = async (
+  productId: number,
+  opportunityId: number,
+  additionalDescription?: string
+): Promise<{ idea_id: number; title: string; status: string }> => {
+  const response = await api.post(
+    `/synthesis/${productId}/opportunities/${opportunityId}/create-idea`,
+    { additional_description: additionalDescription }
+  );
+  return response.data;
+};
+
+// --- Idea Lifecycle Status CRUD (Admin) ---
+
+import type { IdeaLifecycleStatus, IdeaFunnelData } from '../types';
+
+export const getLifecycleStatuses = async (): Promise<IdeaLifecycleStatus[]> => {
+  const response = await api.get<IdeaLifecycleStatus[]>('/admin/idea-lifecycle-statuses');
+  return response.data;
+};
+
+export const createLifecycleStatus = async (data: { name: string; color: string }): Promise<IdeaLifecycleStatus> => {
+  const response = await api.post<IdeaLifecycleStatus>('/admin/idea-lifecycle-statuses', data);
+  return response.data;
+};
+
+export const updateLifecycleStatus = async (
+  id: number,
+  data: { name?: string; color?: string; position?: number; is_active?: boolean }
+): Promise<IdeaLifecycleStatus> => {
+  const response = await api.put<IdeaLifecycleStatus>(`/admin/idea-lifecycle-statuses/${id}`, data);
+  return response.data;
+};
+
+export const deleteLifecycleStatus = async (id: number): Promise<void> => {
+  await api.delete(`/admin/idea-lifecycle-statuses/${id}`);
+};
+
+// --- Idea Funnel ---
+
+export const getIdeaFunnel = async (productId: number): Promise<IdeaFunnelData> => {
+  const response = await api.get<IdeaFunnelData>(
+    `/product-intelligence/products/${productId}/idea-funnel`
   );
   return response.data;
 };

@@ -2,7 +2,7 @@
 Vote model for database.
 
 This defines the structure of the 'votes' table in the database.
-Users can upvote (+1) or downvote (-1) ideas.
+Users can upvote (+1) ideas or remove their vote.
 """
 
 from datetime import datetime
@@ -17,7 +17,7 @@ class Vote(Base):
     """
     Vote model representing a user's vote on an idea.
 
-    Each user can only vote once per idea (upvote or downvote).
+    Each user can only vote once per idea (upvote). Voting again removes the vote.
     """
 
     __tablename__ = "votes"
@@ -29,7 +29,7 @@ class Vote(Base):
     idea_id = Column(Integer, ForeignKey("ideas.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    # Vote value: 1 for upvote, -1 for downvote
+    # Vote value: 1 for upvote (only valid value)
     vote_value = Column(Integer, nullable=False)
 
     # Timestamps
@@ -43,7 +43,7 @@ class Vote(Base):
     # Constraints
     __table_args__ = (
         UniqueConstraint('idea_id', 'user_id', name='unique_user_idea_vote'),
-        CheckConstraint('vote_value IN (-1, 1)', name='check_vote_value'),
+        CheckConstraint('vote_value = 1', name='check_vote_value'),
     )
 
     def __repr__(self):

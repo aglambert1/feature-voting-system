@@ -66,9 +66,6 @@ def test_schemas():
     try:
         upvote = VoteCreate(vote_value=1)
         print(f"✓ Upvote created: {upvote.vote_value}")
-
-        downvote = VoteCreate(vote_value=-1)
-        print(f"✓ Downvote created: {downvote.vote_value}")
     except Exception as e:
         print(f"✗ Error: {e}")
     print()
@@ -120,14 +117,10 @@ def test_schemas():
     try:
         vote_count = VoteCount(
             upvotes=10,
-            downvotes=3,
-            score=7,
-            total_votes=13
+            total_votes=10
         )
         print("✓ Vote count created")
         print(f"  Upvotes: {vote_count.upvotes}")
-        print(f"  Downvotes: {vote_count.downvotes}")
-        print(f"  Score: {vote_count.score}")
         print(f"  Total: {vote_count.total_votes}")
     except Exception as e:
         print(f"✗ Error: {e}")

@@ -10,6 +10,7 @@ from typing import Dict, Any, Type, List
 from pydantic import BaseModel, Field, HttpUrl
 from app.agents.base_agent import BaseAgent
 from app.services.search_service import get_search_service
+from app.utils.url import extract_domain
 
 
 class CompetitorResult(BaseModel):
@@ -141,13 +142,28 @@ HONESTY REQUIREMENT:
 
 Always respond with ONLY valid JSON - no explanations, just JSON."""
 
+    def _format_existing_competitors(self, existing: List[Dict[str, str]]) -> str:
+        """Format existing competitors list for the prompt."""
+        if not existing:
+            return ""
+        lines = [f"- {c['name']} ({c['url']})" for c in existing if c.get('name')]
+        if not lines:
+            return ""
+        return (
+            "\n\n**Already Known Competitors (include these in your response with the SAME name, "
+            "do NOT create duplicates with different names):**\n"
+            + "\n".join(lines)
+        )
+
     def build_user_prompt(self, input_data: Dict[str, Any]) -> str:
         product_name = input_data.get('product_name', '')
         product_category = input_data.get('product_category', '')
         core_features = input_data.get('core_features', [])
         target_users = input_data.get('target_users', '')
         search_keywords = input_data.get('competitor_search_keywords', [])
+        existing_competitors = input_data.get('existing_competitors', [])
 
+        existing_section = self._format_existing_competitors(existing_competitors)
         has_search = self.search_service.is_available()
 
         if has_search:
@@ -158,7 +174,7 @@ Always respond with ONLY valid JSON - no explanations, just JSON."""
 **Category:** {product_category}
 **Key Features:** {', '.join(core_features) if core_features else 'Not specified'}
 **Target Users:** {target_users}
-**Suggested Keywords:** {', '.join(search_keywords) if search_keywords else 'Not provided'}
+**Suggested Keywords:** {', '.join(search_keywords) if search_keywords else 'Not provided'}{existing_section}
 
 YOUR TASK:
 1. **Start with knowledge**: Think of well-known competitors you know from training
@@ -179,6 +195,7 @@ REQUIREMENTS:
 - Provide clear, accurate summaries based on what you learn
 - If searches return nothing useful, rely on training knowledge
 - If neither helps, return empty list with honest explanation
+- When re-including already known competitors, use the EXACT SAME name shown above
 
 Return JSON format:
 {{
@@ -199,7 +216,7 @@ Return JSON format:
 **Target Product:** {product_name}
 **Category:** {product_category}
 **Key Features:** {', '.join(core_features) if core_features else 'Not specified'}
-**Target Users:** {target_users}
+**Target Users:** {target_users}{existing_section}
 
 IMPORTANT: Web search is unavailable - use ONLY your training knowledge.
 
@@ -213,6 +230,7 @@ REQUIREMENTS:
 - URLs must be real websites from your knowledge - NO invented URLs
 - If uncertain about ANY detail, EXCLUDE that competitor entirely
 - Focus on well-known products (direct competitors preferred)
+- When re-including already known competitors, use the EXACT SAME name shown above
 
 Return JSON format:
 {{
@@ -343,11 +361,10 @@ Return JSON format:
 
             # Try URL domain match as fallback
             if not match and curr_url and previous:
-                curr_domain = curr_url.split('/')[2] if '/' in curr_url else curr_url
+                curr_domain = extract_domain(curr_url)
                 for prev_comp in previous:
-                    prev_url = prev_comp.get('url', '').lower()
-                    prev_domain = prev_url.split('/')[2] if '/' in prev_url else prev_url
-                    if curr_domain == prev_domain and curr_domain:
+                    prev_domain = extract_domain(prev_comp.get('url', ''))
+                    if curr_domain and curr_domain == prev_domain:
                         match = prev_comp
                         break
 

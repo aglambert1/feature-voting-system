@@ -196,3 +196,64 @@ class LandscapeOpportunityReport(Base):
                 "report_version": self.report_version,
             }
         }
+
+
+class CompetitorAlert(Base):
+    """
+    Tracks alerts for competitor changes.
+
+    Generated during market discovery when:
+    - New competitors are discovered (if alert_on_new_competitors enabled)
+    - Known competitors disappear (if alert_on_disappeared_competitors enabled)
+    """
+    __tablename__ = "competitor_alerts"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_id = Column(
+        Integer,
+        ForeignKey("ci_products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    # Alert type: "new_competitor", "competitor_disappeared", "competitor_change"
+    alert_type = Column(String(50), nullable=False)
+
+    # Reference to competitor (nullable for disappeared competitors)
+    competitor_id = Column(
+        Integer,
+        ForeignKey("product_competitors.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    # Competitor name (stored separately for display even if competitor deleted)
+    competitor_name = Column(String(255), nullable=False)
+
+    # Alert message
+    message = Column(Text, nullable=False)
+
+    # Read status
+    is_read = Column(Boolean, nullable=False, default=False)
+
+    # Timestamps
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    # Relationships
+    product = relationship("CIProduct", backref="competitor_alerts")
+    competitor = relationship("ProductCompetitor", backref="alerts")
+
+    def __repr__(self):
+        return f"<CompetitorAlert(id={self.id}, type={self.alert_type}, competitor={self.competitor_name})>"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses."""
+        return {
+            "id": self.id,
+            "product_id": self.product_id,
+            "alert_type": self.alert_type,
+            "competitor_id": self.competitor_id,
+            "competitor_name": self.competitor_name,
+            "message": self.message,
+            "is_read": self.is_read,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

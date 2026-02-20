@@ -37,11 +37,8 @@ class JobType(str, enum.Enum):
     - REPORT_GENERATION: Generate reports
 
     Agent-Centric Architecture:
-    - DEEP_ANALYSIS: Per-competitor deep analysis
-    - SCHEDULED_DEEP_ANALYSIS: Orchestrates multiple deep_analysis jobs
+    - SCHEDULED_DEEP_ANALYSIS: Orchestrates competitive analysis workflow
     - FEATURE_EXTRACTION_ONLY: Feature extraction only
-    - FEATURE_CLUSTERING: Run feature clustering across competitors
-    - INTENSITY_IDEA_GENERATION: Generate ideas from high-intensity clusters
 
     Two-Step Competitive Analysis (New):
     - FUNCTIONAL_AUDIT: Per-competitor functional feature audit
@@ -61,15 +58,19 @@ class JobType(str, enum.Enum):
     REPORT_GENERATION = "report_generation"
 
     # Agent-Centric Architecture job types
-    DEEP_ANALYSIS = "deep_analysis"
-    SCHEDULED_DEEP_ANALYSIS = "scheduled_deep_analysis"  # Orchestrates multiple deep_analysis jobs
+    SCHEDULED_DEEP_ANALYSIS = "scheduled_deep_analysis"  # Orchestrates V2 competitive analysis workflow
     FEATURE_EXTRACTION_ONLY = "feature_extraction_only"
-    FEATURE_CLUSTERING = "feature_clustering"
-    INTENSITY_IDEA_GENERATION = "intensity_idea_generation"
 
     # New Competitive Reports job types (two-step analysis)
     FUNCTIONAL_AUDIT = "functional_audit"  # Per-competitor functional audit
     LANDSCAPE_SYNTHESIS = "landscape_synthesis"  # Cross-competitor landscape synthesis
+
+    # Internal Discovery job types (three-source synthesis)
+    INTERNAL_DISCOVERY = "internal_discovery"  # Process uploaded internal feedback
+    OPPORTUNITY_SYNTHESIS = "opportunity_synthesis"  # Three-source synthesis
+
+    # Activity Analysis job types (CRM activity stream analysis)
+    ACTIVITY_INSIGHT = "activity_insight"  # Analyze CRM activity streams for product insights
 
     # DEPRECATED: These job types are no longer used in the new two-step analysis system
     # Kept for backwards compatibility with existing job records

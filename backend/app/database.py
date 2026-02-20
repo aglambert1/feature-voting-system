@@ -5,6 +5,7 @@ This file configures SQLAlchemy to connect to the database and
 provides a way to get database sessions for handling requests.
 """
 
+import logging
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -12,13 +13,16 @@ from sqlalchemy.engine import Engine
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 # Create the database engine
 # The engine is the starting point for any SQLAlchemy application
-# connect_args is needed for SQLite (not needed for PostgreSQL)
+# check_same_thread is only needed for SQLite (not needed for PostgreSQL)
+_connect_args = {"check_same_thread": False} if "sqlite" in settings.database_url else {}
 engine = create_engine(
     settings.database_url,
-    connect_args={"check_same_thread": False}  # Only needed for SQLite
+    connect_args=_connect_args
 )
 
 # SessionLocal is a factory for creating database sessions
@@ -54,10 +58,12 @@ def configure_sqlite(dbapi_conn, connection_record):
             import sqlite_vec
             ext_path = sqlite_vec.loadable_path()
             dbapi_conn.load_extension(ext_path)
-            print("✓ Loaded sqlite-vec extension")
+            logger.debug("Loaded sqlite-vec extension")
         except Exception as e:
-            print(f"✗ Failed to load sqlite-vec: {e}")
-            print("  (Vector search will not be available)")
+            logger.warning("Failed to load sqlite-vec: %s (Vector search will not be available)", e)
+
+        # Enable foreign key constraint enforcement (off by default in SQLite)
+        dbapi_conn.execute("PRAGMA foreign_keys = ON")
 
 
 def get_db():
@@ -97,6 +103,7 @@ def init_db():
     import app.models.competitor_intelligence  # noqa: F401
     import app.models.queue  # noqa: F401
     import app.models.competitive_agent  # noqa: F401
+    import app.models.idea_lifecycle_status  # noqa: F401
 
     # Create standard tables
     Base.metadata.create_all(bind=engine)
@@ -107,14 +114,14 @@ def init_db():
         if 'postgresql' in str(engine.url):
             # PostgreSQL: Enable pgvector extension
             db.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            print("✓ pgvector extension enabled")
+            logger.info("pgvector extension enabled")
 
             # Add embedding column to ci_products if not exists
             # Note: This will error if column already exists, which is fine
             try:
                 db.execute(text("ALTER TABLE ci_products ADD COLUMN embedding vector(384)"))
                 db.commit()
-                print("✓ Added embedding column to ci_products table")
+                logger.info("Added embedding column to ci_products table")
             except Exception as e:
                 db.rollback()
                 # Column likely already exists, which is fine
@@ -128,7 +135,7 @@ def init_db():
                     embedding FLOAT[384]
                 )
             """))
-            print("✓ sqlite-vec vec_ideas virtual table created")
+            logger.info("sqlite-vec vec_ideas virtual table created")
 
             # SQLite: Create vec_products virtual table for product embeddings
             # Note: vec0 uses first column as primary key automatically
@@ -150,7 +157,7 @@ def init_db():
                     UNIQUE(product_id, chunk_index)
                 )
             """))
-            print("✓ sqlite-vec vec_products virtual table created")
+            logger.info("sqlite-vec vec_products virtual table created")
 
             # SQLite: Create vec_competitor_features virtual table for competitor feature embeddings
             db.execute(text("""
@@ -160,7 +167,7 @@ def init_db():
                     embedding FLOAT[384]
                 )
             """))
-            print("✓ sqlite-vec vec_competitor_features virtual table created")
+            logger.info("sqlite-vec vec_competitor_features virtual table created")
 
             # SQLite: Create vec_product_features virtual table for product's own feature embeddings
             db.execute(text("""
@@ -170,12 +177,11 @@ def init_db():
                     embedding FLOAT[384]
                 )
             """))
-            print("✓ sqlite-vec vec_product_features virtual table created")
+            logger.info("sqlite-vec vec_product_features virtual table created")
 
         db.commit()
     except Exception as e:
-        print(f"Vector extension setup: {e}")
-        print("  (Vector search may not be available)")
+        logger.warning("Vector extension setup: %s (Vector search may not be available)", e)
     finally:
         db.close()
 
@@ -196,6 +202,11 @@ def create_initial_admin():
     from app.models.user import User, UserRole
     from app.utils.security import hash_password
 
+    # Skip bootstrap admin creation if no password is configured
+    if not settings.admin_password:
+        logger.info("No ADMIN_PASSWORD set — skipping bootstrap admin creation")
+        return
+
     db = SessionLocal()
     try:
         # Check if the bootstrap admin user exists
@@ -205,13 +216,13 @@ def create_initial_admin():
 
         if bootstrap_admin:
             if bootstrap_admin.is_active:
-                print(f"✓ Bootstrap admin user exists and is active: {settings.admin_username}")
+                logger.info("Bootstrap admin user exists and is active: %s", settings.admin_username)
             else:
                 # Reactivate the bootstrap admin
                 bootstrap_admin.is_active = True
                 bootstrap_admin.role = UserRole.ADMIN  # Ensure they're still admin
                 db.commit()
-                print(f"✓ Reactivated bootstrap admin user: {settings.admin_username}")
+                logger.info("Reactivated bootstrap admin user: %s", settings.admin_username)
         else:
             # Check if ANY active admin exists
             any_active_admin = db.query(User).filter(
@@ -220,8 +231,8 @@ def create_initial_admin():
             ).first()
 
             if any_active_admin:
-                print(f"✓ Active admin exists: {any_active_admin.username}")
-                print(f"  (Bootstrap admin '{settings.admin_username}' not created)")
+                logger.info("Active admin exists: %s (bootstrap admin '%s' not created)",
+                            any_active_admin.username, settings.admin_username)
             else:
                 # No active admin exists - create bootstrap admin
                 admin_user = User(
@@ -234,10 +245,9 @@ def create_initial_admin():
                 )
                 db.add(admin_user)
                 db.commit()
-                print(f"✓ Created bootstrap admin user: {settings.admin_username}")
-                print(f"  No other active admin found - bootstrap admin is required")
+                logger.info("Created bootstrap admin user: %s (no other active admin found)", settings.admin_username)
     except Exception as e:
-        print(f"✗ Error managing bootstrap admin user: {e}")
+        logger.error("Error managing bootstrap admin user: %s", e)
         db.rollback()
     finally:
         db.close()

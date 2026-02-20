@@ -5,7 +5,7 @@ This agent analyzes product descriptions and extracts structured information
 for competitive analysis, including features, target users, and search keywords.
 """
 
-from typing import Dict, Any, Type
+from typing import Dict, Any, Optional, Type
 from pydantic import BaseModel, Field
 
 from app.agents.base_agent import BaseAgent
@@ -190,6 +190,40 @@ Example format:
 Note: The example above shows only 3 detailed_features for brevity. Real products typically have 20-100+ features. Extract ALL of them - do not limit yourself to a small number.
 """
         return prompt
+
+    def build_concise_user_prompt(self, input_data: Dict[str, Any]) -> Optional[str]:
+        """Build a concise prompt that limits output size for truncation recovery."""
+        product_name = input_data.get('product_name', '')
+        product_description = input_data.get('product_description', '')
+        source_type = input_data.get('source_type', 'text')
+
+        return f"""Analyze the following product and extract structured data.
+
+CRITICAL CONSTRAINT: A previous analysis was cut off because the response was too long.
+You MUST follow these HARD LIMITS exactly — exceeding them will cause a system failure:
+
+1. detailed_features: EXACTLY 20 items. Not 21, not 30, not "up to 20". Exactly 20.
+2. Each description: MAXIMUM 10 words. Count them.
+3. Each source_reference: MAXIMUM 4 words.
+4. No markdown, no explanatory text — raw JSON only.
+
+Pick the 20 most competitively important features. Omit the rest entirely.
+
+Product Name: {product_name if product_name else "(extract from description)"}
+Source Type: {source_type}
+Product Description:
+{product_description}
+
+Return a JSON object with these fields:
+- product_name (string)
+- product_category (string)
+- core_features (list of 5-7 strings - high-level strategic features)
+- detailed_features (list of EXACTLY 20 objects, each with: name, description, category, confidence, source_reference)
+- target_users (string, max 30 words)
+- value_propositions (list of 2-4 strings)
+- competitor_search_keywords (list of 5-10 strings)
+
+Return ONLY the JSON object."""
 
     def get_output_schema(self) -> Type[BaseModel]:
         """Return the output schema."""

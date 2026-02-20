@@ -1,4 +1,5 @@
 aiohappyeyeballs==2.6.1
+alembic==1.17.2
 aiohttp==3.13.2
 aiosignal==1.4.0
 annotated-types==0.7.0
@@ -96,6 +97,9 @@ beautifulsoup4==4.12.3
 lxml==5.1.0
 markdownify==0.11.6
 python-magic==0.4.27
+
+# Rate limiting
+slowapi==0.1.9
 
 # Queue/Task dependencies (Celery + Redis)
 celery[redis]==5.4.0

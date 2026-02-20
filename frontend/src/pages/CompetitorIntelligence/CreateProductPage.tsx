@@ -97,8 +97,10 @@ export default function CreateProductPage() {
       console.log('[CreateProduct] Product created:', response.data.id);
       const productId = response.data.id;
 
-      // Navigate to analyze page
-      navigate(`/product-intelligence/products/${productId}/analyze`);
+      // Navigate to analyze page with auto-analyze flag
+      navigate(`/product-intelligence/products/${productId}/analyze`, {
+        state: { autoAnalyze: true }
+      });
     } catch (err: any) {
       setError(err.message || err.data?.detail || 'Failed to create product');
     } finally {

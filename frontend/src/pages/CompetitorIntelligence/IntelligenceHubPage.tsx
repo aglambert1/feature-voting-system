@@ -1,11 +1,17 @@
 /**
- * IntelligenceHubPage
+ * IntelligenceHubPage (Competitive Intelligence)
  *
- * Main container for the V2 competitive intelligence system.
+ * Main container for the Competitive Discovery Agent results.
+ * This page displays outputs from the Competitive Discovery Agent.
+ *
  * Tab structure:
  * - Competitor Reports: Functional audit reports per competitor
- * - Landscape Analysis: Cross-competitor synthesis with opportunities
+ * - Landscape Analysis: Cross-competitor feature landscape
  * - Settings: Agent configuration
+ *
+ * Note: The "Opportunity Synthesis Agent" (three-source synthesis) will be
+ * a separate page that combines data from this system with customer ideas
+ * and internal feedback.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -188,7 +194,7 @@ export default function IntelligenceHubPage() {
             {product.product_name}
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Competitive Intelligence Hub
+            Competitive Intelligence · Discovery Agent Results
           </p>
         </div>
 

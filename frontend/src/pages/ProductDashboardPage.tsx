@@ -13,7 +13,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import Navigation from '../components/Navigation';
 import ReviewQueueCard from '../components/ReviewQueueCard';
-import MonitoringConfigPanel from '../components/MonitoringConfigPanel';
 import JobStatusCard from '../components/JobStatusCard';
 import {
   getReviewQueueStats,
@@ -22,8 +21,12 @@ import {
   triggerMonitoring,
   getTriageSettings,
   updateTriageSettings,
+  getIdeaFunnel,
+  getCompetitorAlerts,
+  markAllAlertsRead,
 } from '../services/api';
-import type { PMReviewQueueStats, MonitoringConfig, QueueJob, ApiError, TriageSettings } from '../types';
+import type { CompetitorAlert } from '../services/api';
+import type { PMReviewQueueStats, MonitoringConfig, QueueJob, ApiError, TriageSettings, IdeaFunnelData } from '../types';
 import { JobStatus } from '../types';
 
 const ProductDashboardPage = () => {
@@ -35,13 +38,17 @@ const ProductDashboardPage = () => {
   const [recentJobs, setRecentJobs] = useState<QueueJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [showMonitoringConfig, setShowMonitoringConfig] = useState(false);
   const [triggeringMonitoring, setTriggeringMonitoring] = useState(false);
 
   // Triage automation state
   const [triageSettings, setTriageSettings] = useState<TriageSettings | null>(null);
   const [savingTriageSettings, setSavingTriageSettings] = useState(false);
   const [triageError, setTriageError] = useState('');
+
+  // Funnel and alert digest state
+  const [funnelData, setFunnelData] = useState<IdeaFunnelData | null>(null);
+  const [alerts, setAlerts] = useState<CompetitorAlert[]>([]);
+  const [dismissingAlerts, setDismissingAlerts] = useState(false);
 
   const numProductId = productId ? parseInt(productId) : null;
 
@@ -52,17 +59,21 @@ const ProductDashboardPage = () => {
     setError('');
 
     try {
-      const [statsData, configData, jobsData, triageData] = await Promise.all([
+      const [statsData, configData, jobsData, triageData, funnelResult, alertsResult] = await Promise.all([
         getReviewQueueStats(numProductId),
         getMonitoringConfig(numProductId),
         getProductJobs(numProductId, 5),
         getTriageSettings(numProductId),
+        getIdeaFunnel(numProductId).catch(() => null),
+        getCompetitorAlerts(numProductId, true).catch(() => []),
       ]);
 
       setStats(statsData);
       setMonitoringConfig(configData);
       setRecentJobs(jobsData);
       setTriageSettings(triageData);
+      setFunnelData(funnelResult);
+      setAlerts(alertsResult.slice(0, 5));
     } catch (err) {
       setError((err as ApiError).message);
     } finally {
@@ -103,6 +114,19 @@ const ProductDashboardPage = () => {
       setError((err as ApiError).message);
     } finally {
       setTriggeringMonitoring(false);
+    }
+  };
+
+  const handleDismissAllAlerts = async () => {
+    if (!numProductId) return;
+    setDismissingAlerts(true);
+    try {
+      await markAllAlertsRead(numProductId);
+      setAlerts([]);
+    } catch (err) {
+      console.error('Failed to dismiss alerts:', err);
+    } finally {
+      setDismissingAlerts(false);
     }
   };
 
@@ -262,7 +286,7 @@ const ProductDashboardPage = () => {
                   title="Ideas"
                   count={stats?.by_type?.idea || 0}
                   icon="ideas"
-                  linkTo={`/ideas?product=${productId}`}
+                  linkTo={`/ideas?product=${productId}&from=dashboard`}
                 />
                 <ReviewQueueCard
                   title="Competitive Alerts"
@@ -279,25 +303,143 @@ const ProductDashboardPage = () => {
               </div>
             </div>
 
+            {/* Idea Funnel */}
+            {funnelData && funnelData.total_submitted > 0 && (
+              <div className="mb-8">
+                <h2 className="text-lg font-medium text-gray-900 mb-4">Idea Lifecycle Funnel</h2>
+                <div className="bg-white border border-gray-200 rounded-lg p-6">
+                  {/* Funnel Bar */}
+                  <div className="mb-4">
+                    <div className="flex rounded-lg overflow-hidden h-10">
+                      {(() => {
+                        const total = funnelData.total_submitted || 1;
+                        const segments = [
+                          { key: 'pending', label: 'Pending', count: funnelData.status_counts.pending || 0, color: '#F59E0B' },
+                          { key: 'needs_review', label: 'Needs Review', count: funnelData.status_counts.needs_review || 0, color: '#3B82F6' },
+                          { key: 'accepted', label: 'Accepted', count: funnelData.status_counts.accepted || 0, color: '#10B981' },
+                          ...Object.entries(funnelData.lifecycle_counts).map(([slug, count]) => ({
+                            key: slug,
+                            label: slug.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+                            count,
+                            color: slug === 'on_roadmap' ? '#3B82F6' : slug === 'delivered' ? '#10B981' : '#8B5CF6',
+                          })),
+                          { key: 'rejected', label: 'Rejected', count:
+                            (funnelData.status_counts.duplicate || 0) +
+                            (funnelData.status_counts.feature_exists || 0) +
+                            (funnelData.status_counts.not_appropriate || 0) +
+                            (funnelData.status_counts.merged || 0),
+                            color: '#9CA3AF' },
+                        ].filter(s => s.count > 0);
+
+                        return segments.map(seg => (
+                          <div
+                            key={seg.key}
+                            className="flex items-center justify-center text-xs font-medium text-white min-w-[40px]"
+                            style={{
+                              backgroundColor: seg.color,
+                              width: `${Math.max((seg.count / total) * 100, 5)}%`,
+                            }}
+                            title={`${seg.label}: ${seg.count}`}
+                          >
+                            {seg.count}
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Legend */}
+                  <div className="flex flex-wrap gap-4 text-sm">
+                    {[
+                      { label: 'Pending', count: funnelData.status_counts.pending || 0, color: '#F59E0B' },
+                      { label: 'Needs Review', count: funnelData.status_counts.needs_review || 0, color: '#3B82F6' },
+                      { label: 'Accepted', count: funnelData.status_counts.accepted || 0, color: '#10B981' },
+                      ...Object.entries(funnelData.lifecycle_counts).map(([slug, count]) => ({
+                        label: slug.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+                        count,
+                        color: slug === 'on_roadmap' ? '#3B82F6' : slug === 'delivered' ? '#10B981' : '#8B5CF6',
+                      })),
+                      { label: 'Rejected/Duplicate', count:
+                        (funnelData.status_counts.duplicate || 0) +
+                        (funnelData.status_counts.feature_exists || 0) +
+                        (funnelData.status_counts.not_appropriate || 0) +
+                        (funnelData.status_counts.merged || 0),
+                        color: '#9CA3AF' },
+                    ].map(item => (
+                      <div key={item.label} className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
+                        <span className="text-gray-600">{item.label}: <strong>{item.count}</strong></span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Triage Stats */}
+                  <div className="mt-4 pt-4 border-t border-gray-100 text-sm text-gray-500">
+                    Total submitted: {funnelData.total_submitted}
+                    <span className="mx-2">|</span>
+                    Auto-triaged: {funnelData.auto_triaged_count}
+                    <span className="mx-2">|</span>
+                    Manual: {funnelData.manual_triaged_count}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Alert Digest */}
+            {alerts.length > 0 && (
+              <div className="mb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-medium text-gray-900">Unread Alerts</h2>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleDismissAllAlerts}
+                      disabled={dismissingAlerts}
+                      className="text-sm text-gray-500 hover:text-gray-700 disabled:opacity-50"
+                    >
+                      {dismissingAlerts ? 'Dismissing...' : 'Dismiss All'}
+                    </button>
+                    <Link
+                      to={`/product-intelligence/products/${productId}/intelligence?tab=competitor-reports`}
+                      className="text-sm text-blue-600 hover:text-blue-800"
+                    >
+                      View all alerts →
+                    </Link>
+                  </div>
+                </div>
+                <div className="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
+                  {alerts.map((alert) => (
+                    <div key={alert.id} className="flex items-start gap-3 p-4">
+                      <span className={`mt-0.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                        alert.alert_type === 'new_competitor' ? 'bg-green-500'
+                        : alert.alert_type === 'competitor_disappeared' ? 'bg-red-500'
+                        : 'bg-orange-500'
+                      }`} />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-gray-900">{alert.competitor_name}</span>
+                        <p className="text-sm text-gray-500 truncate">{alert.message}</p>
+                      </div>
+                      <span className="text-xs text-gray-400 whitespace-nowrap">
+                        {formatDate(alert.created_at)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Agent Status */}
             <div className="mb-8">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-medium text-gray-900">Agent Status</h2>
-                <button
-                  onClick={() => setShowMonitoringConfig(!showMonitoringConfig)}
-                  className="text-sm text-blue-600 hover:text-blue-700"
-                >
-                  {showMonitoringConfig ? 'Hide Config' : 'Configure'}
-                </button>
               </div>
 
-              {/* Monitoring Status Card */}
+              {/* Competitive Discovery Agent Card */}
               <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
                     <span className={`inline-block w-3 h-3 rounded-full ${getMonitoringStatusColor()}`}></span>
                     <div>
-                      <div className="font-medium text-gray-900">Competitive Monitor</div>
+                      <div className="font-medium text-gray-900">Competitive Discovery Agent</div>
                       <div className="text-sm text-gray-500">
                         {getMonitoringStatusText()}
                         {monitoringConfig?.last_monitored_at && (
@@ -316,13 +458,27 @@ const ProductDashboardPage = () => {
                 </div>
               </div>
 
-              {/* Monitoring Config Panel */}
-              {showMonitoringConfig && (
-                <MonitoringConfigPanel
-                  productId={numProductId}
-                  onConfigChange={(config) => setMonitoringConfig(config)}
-                />
-              )}
+              {/* Opportunity Synthesis Agent Card */}
+              <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <span className="inline-block w-3 h-3 rounded-full bg-gray-400"></span>
+                    <div>
+                      <div className="font-medium text-gray-900">Opportunity Synthesis Agent</div>
+                      <div className="text-sm text-gray-500">
+                        Coming soon · Combines competitive, customer, and internal signals
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    disabled={true}
+                    className="px-3 py-1.5 text-sm text-gray-400 border border-gray-300 rounded cursor-not-allowed"
+                  >
+                    Run Synthesis
+                  </button>
+                </div>
+              </div>
+
             </div>
 
             {/* Idea Triage Automation */}
@@ -458,7 +614,7 @@ const ProductDashboardPage = () => {
                   View Comparison
                 </Link>
                 <Link
-                  to={`/ideas?product=${productId}`}
+                  to={`/ideas?product=${productId}&from=dashboard`}
                   className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50"
                 >
                   Review Ideas

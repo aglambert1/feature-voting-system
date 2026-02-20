@@ -20,6 +20,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    user: root  # Override non-root user for local dev volume mounts
     command: celery -A app.queue worker --loglevel=info --concurrency=4
     volumes:
       - ./backend:/app
@@ -28,6 +29,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - BRAVE_API_KEY=${BRAVE_API_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=true
     depends_on:
       redis:
         condition: service_healthy
@@ -37,12 +40,15 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    user: root  # Override non-root user for local dev volume mounts
     command: celery -A app.queue beat --loglevel=info
     volumes:
       - ./backend:/app
     environment:
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./feature_voting.db}
       - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=true
     depends_on:
       redis:
         condition: service_healthy
@@ -54,6 +60,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    user: root  # Override non-root user for local dev volume mounts
     command: celery -A app.queue flower --port=5555
     ports:
       - "5555:5555"
@@ -61,6 +68,8 @@ services:
       - ./backend:/app
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=true
     depends_on:
       redis:
         condition: service_healthy

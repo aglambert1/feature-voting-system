@@ -313,11 +313,6 @@ export default function IdeaResponseModal({
                             <span className="text-sm text-gray-500 ml-1">
                               upvotes
                             </span>
-                            {recommendation.source_summary.downvote_count > 0 && (
-                              <span className="text-sm text-red-500 ml-2">
-                                ({recommendation.source_summary.downvote_count} down)
-                              </span>
-                            )}
                           </div>
                         </button>
 

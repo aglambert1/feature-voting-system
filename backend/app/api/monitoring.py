@@ -439,70 +439,9 @@ def get_snapshot(
 
 
 # =============================================================================
-# Manual Monitoring Trigger
+# Manual Monitoring Trigger (DEPRECATED)
 # =============================================================================
 
-@router.post("/trigger/{product_id}", response_model=MonitoringTriggerResponse)
-def trigger_monitoring(
-    product_id: int,
-    force_full: bool = Query(False, description="Force full analysis instead of differential"),
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Manually trigger a monitoring run for a product.
-
-    Queues a competitive monitoring job that will:
-    - Check all tracked competitors for changes
-    - Create snapshots of current state
-    - Generate alerts for significant changes
-
-    Requires EDIT permission on the product.
-    """
-    check_product_permission(db, current_user, product_id, ProductPermissionLevel.EDIT)
-
-    # Import here to avoid circular imports
-    from app.queue.tasks import monitor_competitors_task
-    from app.models.queue import QueueJob, JobType, JobStatus
-
-    # Create queue job
-    job = QueueJob(
-        job_type=JobType.COMPETITIVE_MONITORING,
-        status=JobStatus.PENDING,
-        product_id=product_id,
-        user_id=current_user.id,
-        input_data={
-            "product_id": product_id,
-            "force_full": force_full,
-            "triggered_by": current_user.id,
-        }
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-
-    # Queue the Celery task
-    try:
-        result = monitor_competitors_task.delay(
-            job_id=job.id,
-            product_id=product_id,
-            force_full=force_full
-        )
-        job.celery_task_id = result.id
-        job.status = JobStatus.QUEUED
-        job.queued_at = datetime.utcnow()
-        db.commit()
-    except Exception as e:
-        job.status = JobStatus.FAILURE
-        job.error_message = str(e)
-        db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to queue monitoring task: {e}"
-        )
-
-    return MonitoringTriggerResponse(
-        job_uuid=job.job_uuid,
-        status=job.status.value,
-        message=f"Monitoring job queued for product {product_id}"
-    )
+# DEPRECATED: trigger_monitoring endpoint has been removed.
+# Competitive monitoring is now handled by the V2 functional audit workflow.
+# Use POST /{product_id}/run-competitive-analysis-v2 in competitive_agents.py

@@ -5,18 +5,27 @@ This is the entry point for the FastAPI backend.
 It sets up the app, configures CORS, includes routes, and initializes the database.
 """
 
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from jose import jwt, JWTError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
+from app.logging_config import setup_logging
 from app.database import init_db, create_initial_admin
-from app.api import auth, ideas, votes, submissions, products, sessions, pm_review, monitoring, competitive_agents
+from app.api import auth, ideas, votes, submissions, products, pm_review, monitoring, competitive_agents, internal_feedback, synthesis, admin
 from app.utils.security import create_access_token
+
+setup_logging(debug=settings.debug)
+logger = logging.getLogger(__name__)
 
 # Token refresh threshold: refresh token if it's older than this many minutes
 # This creates a sliding window - any activity within 30 min of last activity keeps you logged in
@@ -87,6 +96,31 @@ class SlidingSessionMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def _seed_lifecycle_statuses():
+    """Seed default idea lifecycle statuses if they don't exist."""
+    from app.database import SessionLocal
+    from app.models.idea_lifecycle_status import IdeaLifecycleStatus
+
+    db = SessionLocal()
+    try:
+        existing = db.query(IdeaLifecycleStatus).count()
+        if existing == 0:
+            defaults = [
+                IdeaLifecycleStatus(name="On Roadmap", slug="on_roadmap", color="#3B82F6", position=1, is_default=True),
+                IdeaLifecycleStatus(name="Delivered", slug="delivered", color="#10B981", position=2, is_default=True),
+            ]
+            db.add_all(defaults)
+            db.commit()
+            logger.info("Seeded default idea lifecycle statuses: On Roadmap, Delivered")
+        else:
+            logger.info("Idea lifecycle statuses already exist (%d)", existing)
+    except Exception as e:
+        logger.error("Error seeding lifecycle statuses: %s", e)
+        db.rollback()
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -101,25 +135,33 @@ async def lifespan(app: FastAPI):
     - Cleans up model from memory
     """
     # Startup
-    print("Starting up application...")
+    logger.info("Starting up application...")
+
+    # Validate production configuration before anything else
+    if not settings.debug:
+        settings.validate_for_production()
+    else:
+        logger.warning("Running in DEBUG mode — not for production use")
+
     init_db()
     create_initial_admin()
+    _seed_lifecycle_statuses()
 
     # Load SentenceTransformer model ONCE (not on every request)
     try:
-        print("Loading SentenceTransformer model (all-MiniLM-L6-v2)...")
+        logger.info("Loading SentenceTransformer model (all-MiniLM-L6-v2)...")
         from sentence_transformers import SentenceTransformer
         app.state.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        print("✓ Model loaded successfully (384 dimensions)")
+        logger.info("Model loaded successfully (384 dimensions)")
     except Exception as e:
-        print(f"✗ Failed to load embedding model: {e}")
-        print("  (Semantic search will not be available)")
+        logger.error("Failed to load embedding model: %s", e)
+        logger.warning("Semantic search will not be available")
         app.state.embedding_model = None
 
     yield
 
     # Shutdown
-    print("Shutting down application...")
+    logger.info("Shutting down application...")
     if hasattr(app.state, 'embedding_model'):
         del app.state.embedding_model
 
@@ -130,10 +172,16 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="A feature voting system for prioritizing product ideas",
-    docs_url="/docs",  # Swagger UI documentation
-    redoc_url="/redoc",  # ReDoc documentation
-    lifespan=lifespan  # Application lifecycle management
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
+    openapi_url="/openapi.json" if settings.debug else None,
+    lifespan=lifespan
 )
+
+# Configure rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # Configure CORS (Cross-Origin Resource Sharing)
@@ -143,14 +191,24 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,  # Which websites can access this API
     allow_credentials=True,  # Allow cookies and authorization headers
-    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
     expose_headers=["X-New-Access-Token"],  # Expose token refresh header to browser
 )
 
 # Add sliding session middleware for automatic token refresh
 # This must be added AFTER CORSMiddleware so CORS headers are processed first
 app.add_middleware(SlidingSessionMiddleware)
+
+
+# Global exception handler — log full traceback, return generic error to client
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 
 # Include routers from different modules
@@ -161,10 +219,12 @@ app.include_router(votes.router)
 app.include_router(submissions.router)
 app.include_router(products.router)
 app.include_router(products.jobs_router)  # Queue-based job endpoints
-app.include_router(sessions.router)
 app.include_router(pm_review.router)  # Phase 4: PM Review Queue
 app.include_router(monitoring.router)  # Phase 4: Competitive Monitoring
 app.include_router(competitive_agents.router)  # Agent-centric competitive intelligence
+app.include_router(internal_feedback.router)  # Internal feedback import and themes
+app.include_router(synthesis.router)  # Opportunity synthesis
+app.include_router(admin.router)  # Admin endpoints (cost tracking, etc.)
 
 
 @app.get("/")
@@ -187,16 +247,26 @@ def root():
 @app.get("/health")
 def health_check():
     """
-    Health check endpoint.
+    Health check endpoint with database connectivity check.
 
-    Useful for monitoring and deployment systems to check if the API is running.
-
-    Returns:
-        Status information
+    Returns status "healthy" if DB is reachable, "degraded" otherwise.
     """
+    from app.database import SessionLocal
+    from sqlalchemy import text
+
+    db_status = "connected"
+    try:
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
+    except Exception:
+        db_status = "unreachable"
+
+    status = "healthy" if db_status == "connected" else "degraded"
     return {
-        "status": "healthy",
-        "service": settings.app_name
+        "status": status,
+        "service": settings.app_name,
+        "database": db_status,
     }
 
 

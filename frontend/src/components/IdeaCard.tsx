@@ -3,7 +3,7 @@
  *
  * Displays a single idea with:
  * - Title and descriptions (what, why, use_case)
- * - Vote counts (score, upvotes, downvotes)
+ * - Vote counts (upvotes)
  * - VoteButtons component
  * - Expandable details with status history
  * - Timestamp
@@ -197,6 +197,16 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
                 </span>
               )}
 
+              {/* Lifecycle Status Badge */}
+              {idea.lifecycle_status_name && (
+                <span
+                  className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white"
+                  style={{ backgroundColor: idea.lifecycle_status_color || '#6B7280' }}
+                >
+                  {idea.lifecycle_status_name}
+                </span>
+              )}
+
               {/* Product Badge */}
               {idea.product_name && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
@@ -328,6 +338,48 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {/* Competitive Context - PO mode only */}
+                {showPOControls && ideaDetail?.competitive_context && (
+                  <div className="border-t border-indigo-200 pt-3 mt-3 bg-indigo-50 -mx-3 px-3 pb-3 rounded-b">
+                    <h4 className="text-sm font-semibold text-indigo-900 mb-2 flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                      </svg>
+                      Competitive Context
+                    </h4>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-medium ${
+                        ideaDetail.competitive_context.priority_level === 'critical' ? 'bg-red-100 text-red-800' :
+                        ideaDetail.competitive_context.priority_level === 'high' ? 'bg-orange-100 text-orange-800' :
+                        ideaDetail.competitive_context.priority_level === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {ideaDetail.competitive_context.priority_level === 'critical' ? '🔴' :
+                         ideaDetail.competitive_context.priority_level === 'high' ? '🟠' :
+                         ideaDetail.competitive_context.priority_level === 'medium' ? '🟡' : '⚪'}
+                        {' '}{Math.round(ideaDetail.competitive_context.priority_score * 100)}% priority
+                      </span>
+                      <span className="text-indigo-700">
+                        {ideaDetail.competitive_context.competitors_with_feature.length}/{ideaDetail.competitive_context.total_competitors_analyzed} competitors
+                      </span>
+                    </div>
+                    {ideaDetail.competitive_context.competitors_with_feature.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {ideaDetail.competitive_context.competitors_with_feature.slice(0, 4).map((competitor, idx) => (
+                          <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-indigo-100 text-indigo-800">
+                            {competitor}
+                          </span>
+                        ))}
+                        {ideaDetail.competitive_context.competitors_with_feature.length > 4 && (
+                          <span className="text-xs text-indigo-500">
+                            +{ideaDetail.competitive_context.competitors_with_feature.length - 4} more
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

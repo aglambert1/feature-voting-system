@@ -24,8 +24,9 @@ from app.schemas.submission import (
     SubmissionWithIdeaResponse,
     SubmissionResponse
 )
-from app.services.llm_service import llm_service
+from app.services.llm_service import llm_service, set_llm_context, clear_llm_context
 from app.services.permission_service import PermissionService
+from app.models.cost_tracking import OperationType
 from app.services.vector_service import VectorService
 from app.services.queue_service import QueueService
 from app.utils.security import get_current_active_user
@@ -105,11 +106,22 @@ async def structure_freeform_text(
                 for feat in detailed_features
             ]
 
-        # Call LLM service to structure the text with product context
-        structured_data = llm_service.structure_idea(
-            freeform_text=request.freeform_text,
-            product_context=product_context
+        # Set LLM context for cost tracking
+        set_llm_context(
+            operation_type=OperationType.IDEA_STRUCTURING,
+            user_id=current_user.id,
+            product_id=request.product_id,
+            db=db,
         )
+
+        try:
+            # Call LLM service to structure the text with product context
+            structured_data = llm_service.structure_idea(
+                freeform_text=request.freeform_text,
+                product_context=product_context
+            )
+        finally:
+            clear_llm_context()
 
         # Return structured response
         return SubmissionStructureResponse(
@@ -250,7 +262,7 @@ async def submit_idea(
 
     # Queue triage job to run agent analysis in background
     try:
-        from app.queue.tasks import triage_idea_task
+        from app.utils.celery_utils import send_celery_task as send_task
 
         queue_service = QueueService(db)
         job = queue_service.create_job(
@@ -264,7 +276,7 @@ async def submit_idea(
         )
 
         # Queue the triage task
-        celery_result = triage_idea_task.delay(job.id)
+        celery_result = send_task('triage_idea_task', job.id)
         queue_service.mark_queued(job.id, celery_result.id)
         print(f"✓ Queued triage job {job.id} for idea {new_idea.id}")
     except Exception as e:
