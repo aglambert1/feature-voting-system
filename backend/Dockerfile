@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN groupadd --system appuser && useradd --system --gid appuser appuser
+# Create non-root user with home directory for model cache
+RUN groupadd --system appuser && useradd --system --gid appuser --create-home appuser
 
 # Copy requirements first for better caching
 COPY requirements.txt .
