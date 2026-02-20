@@ -41,6 +41,13 @@ def test_product_analyzer_agent_successful_execution(db_session, mock_llm_servic
     "product_name": "Test CRM",
     "product_category": "CRM Software",
     "core_features": ["Contact Management", "Sales Pipeline", "Reporting", "Email Integration", "Mobile App"],
+    "detailed_features": [
+        {"name": "Contact Management", "description": "Manage customer contacts and accounts", "category": "Core", "confidence": 0.95, "source_reference": "product description"},
+        {"name": "Sales Pipeline", "description": "Track deals through sales stages", "category": "Sales", "confidence": 0.95, "source_reference": "product description"},
+        {"name": "Reporting Dashboard", "description": "Visual reports and analytics", "category": "Analytics", "confidence": 0.90, "source_reference": "product description"},
+        {"name": "Email Integration", "description": "Sync with email providers", "category": "Integration", "confidence": 0.85, "source_reference": "product description"},
+        {"name": "Mobile App", "description": "Access CRM on mobile devices", "category": "Platform", "confidence": 0.80, "source_reference": "product description"}
+    ],
     "target_users": "Small to medium-sized B2B companies with 10-100 employees",
     "value_propositions": ["Easy to use", "Affordable pricing"],
     "competitor_search_keywords": ["crm software", "contact management", "sales pipeline", "customer relationship management", "small business crm"]
@@ -78,6 +85,13 @@ def test_product_analyzer_output_schema():
         "product_name": "Test Product",
         "product_category": "Software",
         "core_features": ["Feature 1", "Feature 2", "Feature 3"],
+        "detailed_features": [
+            {"name": "Feature 1", "description": "First feature", "category": "Core", "confidence": 0.9, "source_reference": "desc"},
+            {"name": "Feature 2", "description": "Second feature", "category": "Core", "confidence": 0.9, "source_reference": "desc"},
+            {"name": "Feature 3", "description": "Third feature", "category": "Core", "confidence": 0.85, "source_reference": "desc"},
+            {"name": "Feature 4", "description": "Fourth feature", "category": "UI", "confidence": 0.8, "source_reference": "desc"},
+            {"name": "Feature 5", "description": "Fifth feature", "category": "API", "confidence": 0.75, "source_reference": "desc"},
+        ],
         "target_users": "Developers",
         "value_propositions": ["Fast", "Reliable"],
         "competitor_search_keywords": ["software", "tool", "platform"]
@@ -86,6 +100,7 @@ def test_product_analyzer_output_schema():
     output = ProductAnalysisOutput(**valid_data)
     assert output.product_name == "Test Product"
     assert len(output.core_features) == 3
+    assert len(output.detailed_features) == 5
     assert len(output.competitor_search_keywords) == 3
 
 

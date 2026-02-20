@@ -231,11 +231,30 @@ def test_agent_handles_llm_service_error(echo_agent, mock_llm_service):
 
 def test_agent_with_session_and_product_ids(db_session, mock_llm_service):
     """Test agent with session_id and product_id."""
+    from app.models.user import User, UserRole
+    from app.models.competitor_intelligence import CIProduct, CompetitorAnalysisSession
+
+    # Create FK targets so the log insert succeeds
+    user = User(email="agent_test@example.com", username="agenttest", hashed_password="h", role=UserRole.VOTER)
+    db_session.add(user)
+    db_session.flush()
+
+    product = CIProduct(product_name="Agent Test Product", product_description="For agent test", created_by_user_id=user.id, status="active")
+    db_session.add(product)
+    db_session.flush()
+
+    session_obj = CompetitorAnalysisSession(
+        product_id=product.id, user_id=user.id, session_number=1,
+        product_source_type="manual", status="completed"
+    )
+    db_session.add(session_obj)
+    db_session.commit()
+
     agent = EchoAgent(
         db=db_session,
         llm_service=mock_llm_service,
-        session_id=123,
-        product_id=456
+        session_id=session_obj.id,
+        product_id=product.id
     )
 
     mock_llm_service.call_agent.return_value = {
@@ -247,8 +266,8 @@ def test_agent_with_session_and_product_ids(db_session, mock_llm_service):
 
     # Verify log has session_id and product_id
     log = db_session.query(AgentExecutionLog).first()
-    assert log.session_id == 123
-    assert log.product_id == 456
+    assert log.session_id == session_obj.id
+    assert log.product_id == product.id
 
 
 def test_agent_increases_temperature_on_validation_error(echo_agent, mock_llm_service):

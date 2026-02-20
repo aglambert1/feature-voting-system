@@ -95,11 +95,21 @@ class TestQueueService:
 
     def test_create_job(self, queue_service, db_session):
         """Test creating a new job."""
+        # Create a product and user so FK constraints are satisfied
+        from app.models.competitor_intelligence import CIProduct
+        from app.models.user import User, UserRole
+        user = User(email="qtest@example.com", username="qtest", hashed_password="h", role=UserRole.VOTER)
+        db_session.add(user)
+        db_session.flush()
+        product = CIProduct(product_name="Queue Test Product", product_description="For queue tests", created_by_user_id=user.id, status="active")
+        db_session.add(product)
+        db_session.commit()
+
         job = queue_service.create_job(
             job_type=JobType.PRODUCT_ANALYSIS,
             input_data={"product_name": "Test Product"},
-            product_id=1,
-            user_id=1,
+            product_id=product.id,
+            user_id=user.id,
         )
 
         assert job.id is not None
@@ -107,8 +117,8 @@ class TestQueueService:
         assert job.job_type == JobType.PRODUCT_ANALYSIS
         assert job.status == JobStatus.PENDING
         assert job.input_data == {"product_name": "Test Product"}
-        assert job.product_id == 1
-        assert job.user_id == 1
+        assert job.product_id == product.id
+        assert job.user_id == user.id
 
     def test_get_job(self, queue_service, db_session):
         """Test retrieving a job by ID."""
@@ -212,28 +222,41 @@ class TestQueueService:
 
     def test_get_active_jobs(self, queue_service, db_session):
         """Test getting active jobs."""
+        # Create a real product so FK constraints are satisfied
+        from app.models.competitor_intelligence import CIProduct
+        from app.models.user import User, UserRole
+        user = db_session.query(User).filter(User.username == "qtest").first()
+        if not user:
+            user = User(email="qtest2@example.com", username="qtest2", hashed_password="h", role=UserRole.VOTER)
+            db_session.add(user)
+            db_session.flush()
+        product = CIProduct(product_name="Active Jobs Test Product", product_description="For active jobs test", created_by_user_id=user.id, status="active")
+        db_session.add(product)
+        db_session.commit()
+        test_product_id = product.id
+
         # Create jobs with different statuses
         pending = queue_service.create_job(
             job_type=JobType.PRODUCT_ANALYSIS,
             input_data={},
-            product_id=1,
+            product_id=test_product_id,
         )
         running = queue_service.create_job(
             job_type=JobType.PRODUCT_ANALYSIS,
             input_data={},
-            product_id=1,
+            product_id=test_product_id,
         )
         queue_service.mark_running(running.id)
 
         completed = queue_service.create_job(
             job_type=JobType.PRODUCT_ANALYSIS,
             input_data={},
-            product_id=1,
+            product_id=test_product_id,
         )
         queue_service.mark_success(completed.id)
 
         # Get active jobs
-        active = queue_service.get_active_jobs(product_id=1)
+        active = queue_service.get_active_jobs(product_id=test_product_id)
 
         assert len(active) == 2
         active_ids = [j.id for j in active]
