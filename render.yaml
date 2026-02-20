@@ -37,10 +37,10 @@ services:
       - key: ADMIN_PASSWORD
         sync: false
 
-  # Celery worker for background tasks
+  # Celery worker for background tasks (paid plan required)
   - type: worker
     name: feature-iq-worker
-    plan: free
+    plan: starter
     runtime: docker
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
