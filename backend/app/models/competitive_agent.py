@@ -3,23 +3,15 @@ Competitive Agent models for the restructured competitive intelligence system.
 
 This module defines database models for:
 1. CompetitiveAgentConfig - Unified configuration for competitive analysis agent
-2. FeatureCluster - Groups similar features across competitors
-3. FeatureClusterMember - Links features to clusters
-4. CompetitorPricingAnalysis - Pricing analysis results
-5. CompetitorPositioningAnalysis - Positioning/messaging analysis results
-6. CompetitorChangeEvent - Tracked competitor changes
-7. CompetitorMomentumAnalysis - Growth and momentum signals
-8. CompetitorFinancialsAnalysis - Financial data analysis
 
-The Competitive Analysis Agent uses these models to store analysis results
-and configuration. Feature clusters drive competitive intensity calculations
-and auto-idea generation.
+The Competitive Analysis Agent uses these models to store configuration.
+Analysis results are stored in CompetitorFunctionalReport and
+LandscapeOpportunityReport (see competitive_reports.py).
 """
 
-from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, ForeignKey,
-    JSON, Enum, Boolean, Float
+    Column, Integer, String, DateTime, ForeignKey,
+    Enum, Boolean, Float
 )
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -125,112 +117,3 @@ class CompetitiveAgentConfig(Base):
         }
 
 
-class FeatureCluster(Base):
-    """
-    Groups semantically similar features across competitors.
-
-    Used for competitive intensity calculation and auto-idea generation.
-    When multiple competitors have similar features, we cluster them and
-    calculate competitive intensity (unique competitor count per cluster).
-    """
-    __tablename__ = "feature_clusters"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    product_id = Column(
-        Integer,
-        ForeignKey("ci_products.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
-
-    cluster_name = Column(String(255), nullable=False)  # AI-generated representative name
-    cluster_description = Column(Text, nullable=True)  # AI-generated summary of what this cluster represents
-    centroid_embedding = Column(JSON, nullable=True)   # Average embedding for similarity matching
-
-    # Intensity metrics
-    competitor_count = Column(Integer, nullable=False, default=0)  # Number of unique competitors with this feature
-    feature_count = Column(Integer, nullable=False, default=0)     # Total features in cluster
-
-    # Idea generation tracking
-    idea_generated = Column(Boolean, nullable=False, default=False)
-    generated_idea_id = Column(Integer, ForeignKey("ideas.id"), nullable=True)
-
-    # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    # Relationships
-    members = relationship("FeatureClusterMember", back_populates="cluster", cascade="all, delete-orphan")
-    generated_idea = relationship("Idea", foreign_keys=[generated_idea_id])
-    product = relationship("CIProduct", backref="feature_clusters")
-
-    def __repr__(self):
-        return f"<FeatureCluster(id={self.id}, name='{self.cluster_name}', intensity={self.competitor_count})>"
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary for API responses."""
-        return {
-            "id": self.id,
-            "product_id": self.product_id,
-            "cluster_name": self.cluster_name,
-            "cluster_description": self.cluster_description,
-            "competitor_count": self.competitor_count,
-            "feature_count": self.feature_count,
-            "idea_generated": self.idea_generated,
-            "generated_idea_id": self.generated_idea_id,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-        }
-
-
-class FeatureClusterMember(Base):
-    """
-    Links a competitor feature to a cluster.
-
-    V2 Architecture: Stores feature data directly from CompetitorFunctionalReport
-    instead of referencing ProductCompetitorFeature table.
-
-    Tracks similarity score for each feature's membership in the cluster.
-    """
-    __tablename__ = "feature_cluster_members"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    cluster_id = Column(
-        Integer,
-        ForeignKey("feature_clusters.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
-    # V2: Store feature key instead of FK to ProductCompetitorFeature
-    feature_key = Column(String(100), nullable=False, index=True)  # "{competitor_id}_{hash}"
-
-    # V2: Store feature data directly (denormalized from functional reports)
-    competitor_id = Column(Integer, ForeignKey("product_competitors.id"), nullable=False)
-    feature_name = Column(String(500), nullable=False)
-    feature_description = Column(Text, nullable=True)
-    feature_category = Column(String(200), nullable=True)
-    mapping_status = Column(String(50), nullable=True)  # Gap, Parity, Differentiator
-    source_report_id = Column(Integer, ForeignKey("competitor_functional_reports.id"), nullable=True)
-
-    similarity_score = Column(Float, nullable=True)  # Similarity to cluster centroid
-    added_at = Column(DateTime, server_default=func.now(), nullable=False)
-
-    # Relationships
-    cluster = relationship("FeatureCluster", back_populates="members")
-    competitor = relationship("ProductCompetitor")
-    source_report = relationship("CompetitorFunctionalReport")
-
-    def __repr__(self):
-        return f"<FeatureClusterMember(cluster_id={self.cluster_id}, feature_key={self.feature_key})>"
-
-
-# NOTE: The following models have been deprecated and removed:
-# - CompetitorPricingAnalysis
-# - CompetitorPositioningAnalysis
-# - CompetitorChangeEvent
-# - CompetitorMomentumAnalysis
-# - CompetitorFinancialsAnalysis
-#
-# They have been replaced by the new two-step analysis system:
-# - CompetitorFunctionalReport (in competitive_reports.py)
-# - LandscapeOpportunityReport (in competitive_reports.py)

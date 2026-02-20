@@ -25,8 +25,9 @@ from app.models.competitor_intelligence import ProductPermissionLevel, CIProduct
 from app.models.queue import QueueJob, JobType, JobStatus
 from app.services.product_service import ProductService
 from app.services.queue_service import QueueService
-from app.services.llm_service import llm_service
+from app.services.llm_service import llm_service, set_llm_context, clear_llm_context
 from app.services.document_parsing_service import DocumentParsingService
+from app.models.cost_tracking import OperationType
 from app.services.vector_service import VectorService
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
 
@@ -720,7 +721,10 @@ def query_product_features(
         feature_exists=feature_exists,
         confidence=confidence,
         matched_features=matched_features,
-        similar_features=similar_features
+        similar_features=similar_features,
+        db=db,
+        user_id=current_user.id,
+        product_id=product_id
     )
 
     return FeatureQueryResponse(
@@ -740,7 +744,10 @@ def _generate_feature_query_response(
     feature_exists: bool,
     confidence: float,
     matched_features: List[MatchedFeature],
-    similar_features: List[MatchedFeature]
+    similar_features: List[MatchedFeature],
+    db: Session = None,
+    user_id: int = None,
+    product_id: int = None
 ) -> str:
     """
     Generate a conversational response for the feature query.
@@ -787,14 +794,26 @@ Confidence: {confidence:.0%}
 Provide a helpful response about whether this feature exists in {product_name}."""
 
     try:
-        result = llm_service.call_agent(
-            agent_name="feature_query_responder",
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.3,  # Lower temperature for more consistent responses
-            max_tokens=300
-        )
-        return result["content"].strip()
+        # Set LLM context for cost tracking
+        if db and user_id:
+            set_llm_context(
+                operation_type=OperationType.PRODUCT_ANALYSIS,
+                user_id=user_id,
+                product_id=product_id,
+                db=db,
+            )
+
+        try:
+            result = llm_service.call_agent(
+                agent_name="feature_query_responder",
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.3,  # Lower temperature for more consistent responses
+                max_tokens=300
+            )
+            return result["content"].strip()
+        finally:
+            clear_llm_context()
     except Exception as e:
         print(f"[API] Error generating feature query response: {e}")
         # Fallback to simple response if LLM fails
@@ -913,37 +932,78 @@ def update_product(
             )
 
 
-@router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_product(
+@router.get("/{product_id}/delete-preview")
+def get_delete_preview(
     product_id: int,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
-    Delete a product (hard delete).
+    Preview what would be deleted if this product were removed.
 
-    This will cascade delete all related data:
-    - Analysis sessions
-    - Competitors
-    - Features
-    - Generated ideas
-    - Permissions
+    Returns counts of related rows, file paths, and embedding counts
+    without making any changes. Requires ADMIN permission.
+    """
+    from app.services.permission_service import PermissionService
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.ADMIN
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User {current_user.id} does not have ADMIN permission for product {product_id}"
+        )
 
+    service = ProductService(db)
+    preview = service.get_delete_preview(product_id)
+    if preview is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+    return preview
+
+
+@router.delete("/{product_id}")
+def delete_product(
+    product_id: int,
+    dry_run: bool = Query(False, description="Preview deletion without making changes"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a product and all associated data (hard delete).
+
+    Deletes all related data including:
+    - Competitors and their features
+    - Analysis sessions and reports
+    - Ideas, votes, and submissions
+    - Synthesis runs and opportunities
+    - Internal feedback imports
+    - Vector embeddings
+    - File-based competitive reports
+
+    Preserves (with null product_id):
+    - Queue job history
+    - LLM usage/cost logs
+    - Agent execution logs
+
+    Use `?dry_run=true` to preview what would be deleted.
     Requires ADMIN permission on the product.
-
-    Raises:
-        403: If user lacks ADMIN permission
-        404: If product not found
     """
     service = ProductService(db)
 
     try:
-        success = service.delete_product(product_id, current_user.id)
-        if not success:
+        result = service.delete_product(product_id, current_user.id, dry_run=dry_run)
+        if result is False:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Product not found"
             )
+        if dry_run:
+            return result
         return None
     except PermissionError as e:
         raise HTTPException(
@@ -2090,6 +2150,85 @@ def get_product_pending_counts(
         ideas_needs_review=ideas_needs_review,
         competitive_alerts=competitive_alerts,
     )
+
+
+@router.get("/{product_id}/idea-funnel")
+def get_idea_funnel(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get idea funnel data for a product.
+
+    Returns counts by triage status, lifecycle status, and triage method
+    for building a visual funnel on the dashboard.
+
+    Requires VIEW permission on the product.
+    """
+    from sqlalchemy import func as sql_func
+    from app.services.permission_service import PermissionService
+    from app.models.idea import Idea, IdeaStatus
+    from app.models.idea_status_history import IdeaStatusHistory
+    from app.models.idea_lifecycle_status import IdeaLifecycleStatus
+
+    # Check permission
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.VIEW
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User does not have VIEW permission for product {product_id}"
+        )
+
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Product {product_id} not found")
+
+    # Count ideas by triage status
+    status_rows = db.query(Idea.status, sql_func.count(Idea.id)).filter(
+        Idea.product_id == product_id
+    ).group_by(Idea.status).all()
+
+    status_counts = {row[0].value: row[1] for row in status_rows}
+    total_submitted = sum(status_counts.values())
+
+    # Count ideas by lifecycle status
+    lifecycle_rows = db.query(
+        IdeaLifecycleStatus.slug, sql_func.count(Idea.id)
+    ).join(
+        Idea, Idea.lifecycle_status_id == IdeaLifecycleStatus.id
+    ).filter(
+        Idea.product_id == product_id
+    ).group_by(IdeaLifecycleStatus.slug).all()
+
+    lifecycle_counts = {row[0]: row[1] for row in lifecycle_rows}
+
+    # Count auto-triaged vs manual-triaged
+    # Get idea IDs for this product
+    product_idea_ids = db.query(Idea.id).filter(Idea.product_id == product_id).subquery()
+
+    auto_triaged = db.query(sql_func.count(IdeaStatusHistory.id)).filter(
+        IdeaStatusHistory.idea_id.in_(product_idea_ids),
+        IdeaStatusHistory.change_source == 'agent_triage'
+    ).scalar() or 0
+
+    manual_triaged = db.query(sql_func.count(IdeaStatusHistory.id)).filter(
+        IdeaStatusHistory.idea_id.in_(product_idea_ids),
+        IdeaStatusHistory.change_source == 'po_response'
+    ).scalar() or 0
+
+    return {
+        "product_id": product_id,
+        "total_submitted": total_submitted,
+        "status_counts": status_counts,
+        "lifecycle_counts": lifecycle_counts,
+        "auto_triaged_count": auto_triaged,
+        "manual_triaged_count": manual_triaged,
+    }
 
 
 @router.get("/{product_id}/triage-settings", response_model=TriageSettingsResponse)

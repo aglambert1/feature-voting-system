@@ -53,6 +53,10 @@ celery_app.conf.update(
     broker_connection_retry=True,  # Retry failed connections
     broker_connection_timeout=10,  # Connection timeout in seconds
 
+    # Task timeout settings
+    task_soft_time_limit=900,   # Default: 15 min soft limit (raises SoftTimeLimitExceeded)
+    task_time_limit=1500,       # Default: 25 min hard kill (backstop if soft limit fails)
+
     # Worker settings
     worker_prefetch_multiplier=1,  # One task at a time per worker for fairness
     worker_concurrency=1 if sys.platform == 'darwin' else 4,  # Solo on macOS

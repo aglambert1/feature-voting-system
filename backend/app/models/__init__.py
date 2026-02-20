@@ -6,6 +6,7 @@ Import all models here to make them available throughout the app.
 
 from app.models.user import User, UserRole, ProductAccessMode
 from app.models.idea import Idea, SourceType, IdeaStatus
+from app.models.idea_lifecycle_status import IdeaLifecycleStatus
 from app.models.idea_comment import IdeaComment
 from app.models.idea_status_history import IdeaStatusHistory
 from app.models.vote import Vote
@@ -37,8 +38,6 @@ from app.models.pm_review import (
 from app.models.competitive_agent import (
     AgentMode,
     CompetitiveAgentConfig,
-    FeatureCluster,
-    FeatureClusterMember,
 )
 from app.models.competitive_reports import (
     CompetitorFunctionalReport,
@@ -61,10 +60,14 @@ from app.models.synthesis import (
     SynthesisStatus,
     SourceType as SynthesisSourceType,
 )
+from app.models.cost_tracking import (
+    LLMUsageLog,
+    OperationType,
+)
 
 __all__ = [
     "User", "UserRole", "ProductAccessMode",
-    "Idea", "SourceType", "IdeaStatus", "IdeaComment", "IdeaStatusHistory",
+    "Idea", "SourceType", "IdeaStatus", "IdeaLifecycleStatus", "IdeaComment", "IdeaStatusHistory",
     "Vote", "Submission", "PasswordResetToken",
     "CIProduct", "CompetitorAnalysisSession", "ProductCompetitor", "SessionCompetitor",
     "ProductCompetitorFeature", "CompetitorFeature", "CompetitorGeneratedIdea", "AgentExecutionLog",
@@ -72,9 +75,10 @@ __all__ = [
     "QueueJob", "JobType", "JobStatus", "JobPriority",
     "PMReviewQueue", "CompetitorSnapshot", "MonitoringConfig",
     "ReviewQueueType", "ReviewQueueStatus", "ReviewQueuePriority", "AlertType",
-    "AgentMode", "CompetitiveAgentConfig", "FeatureCluster", "FeatureClusterMember",
+    "AgentMode", "CompetitiveAgentConfig",
     "CompetitorFunctionalReport", "LandscapeOpportunityReport",
     "InternalFeedbackImport", "WinLossTheme", "SupportTheme", "ImportStatus",
     "ActivityImport", "DealActivityInsight", "SupportActivityInsight",
     "SynthesisRun", "SynthesizedOpportunity", "SynthesisStatus", "SynthesisSourceType",
+    "LLMUsageLog", "OperationType",
 ]

@@ -9,9 +9,83 @@ and providing agent execution capabilities.
 import time
 import json
 from typing import Dict, Any, Optional, List, Callable
+from contextvars import ContextVar
 from anthropic import Anthropic, APIError, APITimeoutError, RateLimitError
 
 from app.config import settings
+from app.models.cost_tracking import OperationType
+
+
+# Context variable for tracking LLM call metadata
+# Set before making LLM calls to associate costs with users/products/jobs
+llm_context: ContextVar[dict] = ContextVar("llm_context", default={})
+
+
+def set_llm_context(
+    operation_type: OperationType,
+    user_id: Optional[int] = None,
+    product_id: Optional[int] = None,
+    job_id: Optional[str] = None,
+    db=None,
+) -> None:
+    """
+    Set context for LLM cost tracking.
+
+    Call this before making LLM calls to associate the cost with
+    a specific user, product, and operation type.
+
+    Args:
+        operation_type: The type of LLM operation being performed
+        user_id: Optional user ID who triggered the call
+        product_id: Optional product ID for context
+        job_id: Optional job UUID for linking to background jobs
+        db: Optional database session for logging (if not provided, logging is deferred)
+    """
+    llm_context.set({
+        "operation_type": operation_type,
+        "user_id": user_id,
+        "product_id": product_id,
+        "job_id": job_id,
+        "db": db,
+    })
+
+
+def clear_llm_context() -> None:
+    """Clear the LLM context after calls are complete."""
+    llm_context.set({})
+
+
+def get_llm_context() -> dict:
+    """Get the current LLM context."""
+    return llm_context.get()
+
+
+def _log_llm_usage(model: str, input_tokens: int, output_tokens: int) -> None:
+    """
+    Log LLM usage to the database if context is set.
+
+    This is called internally after each LLM API call to record the usage.
+    """
+    ctx = llm_context.get()
+    if not ctx or not ctx.get("db"):
+        return
+
+    try:
+        from app.services.cost_tracking_service import CostTrackingService
+
+        tracker = CostTrackingService(ctx["db"])
+        tracker.log_usage(
+            operation_type=ctx.get("operation_type", OperationType.OTHER),
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            user_id=ctx.get("user_id"),
+            product_id=ctx.get("product_id"),
+            job_id=ctx.get("job_id"),
+        )
+    except Exception as e:
+        # Don't let logging failures break the main operation
+        print(f"Warning: Failed to log LLM usage: {e}")
 
 
 class LLMService:
@@ -156,6 +230,13 @@ Example format:
                 ]
             )
 
+            # Log usage for cost tracking
+            _log_llm_usage(
+                model=self.model,
+                input_tokens=message.usage.input_tokens,
+                output_tokens=message.usage.output_tokens,
+            )
+
             # Extract the response text
             response_text = message.content[0].text.strip()
 
@@ -269,9 +350,18 @@ Example format:
             # Calculate tokens used
             tokens_used = message.usage.input_tokens + message.usage.output_tokens
 
+            # Log usage for cost tracking
+            _log_llm_usage(
+                model=message.model,
+                input_tokens=message.usage.input_tokens,
+                output_tokens=message.usage.output_tokens,
+            )
+
             return {
                 "content": content,
                 "tokens_used": tokens_used,
+                "input_tokens": message.usage.input_tokens,
+                "output_tokens": message.usage.output_tokens,
                 "model": message.model,
                 "stop_reason": message.stop_reason
             }
@@ -415,6 +505,13 @@ Example format:
 
                 # Track tokens
                 total_tokens += response.usage.input_tokens + response.usage.output_tokens
+
+                # Log usage for cost tracking (log each API call in the tool loop)
+                _log_llm_usage(
+                    model=response.model,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                )
 
                 # Check stop reason
                 if response.stop_reason == "end_turn":

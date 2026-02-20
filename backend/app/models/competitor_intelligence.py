@@ -94,7 +94,7 @@ class CIProduct(Base):
     # Relationships
     sessions = relationship("CompetitorAnalysisSession", back_populates="product", cascade="all, delete-orphan")
     competitors = relationship("ProductCompetitor", back_populates="product", cascade="all, delete-orphan")
-    generated_ideas = relationship("CompetitorGeneratedIdea", back_populates="product")
+    generated_ideas = relationship("CompetitorGeneratedIdea", back_populates="product", cascade="all, delete-orphan")
     agent_logs = relationship("AgentExecutionLog", back_populates="product")
     permissions = relationship("ProductPermission", back_populates="product", cascade="all, delete-orphan")
     analysis_history = relationship("ProductAnalysisHistory", back_populates="product", cascade="all, delete-orphan")
@@ -326,11 +326,8 @@ class CompetitorGeneratedIdea(Base):
     """
     DEPRECATED: This model is part of the legacy session-based workflow.
 
-    In V2, ideas are generated from:
-    - LandscapeOpportunityReport.opportunities
-    - FeatureCluster with intensity above threshold
-
-    Use the idea normalization pipeline (IdeaNormalizerService) to create ideas.
+    In V2, ideas are generated from LandscapeOpportunityReport.opportunities
+    via the idea normalization pipeline (IdeaNormalizerService).
     The database should be reinitialized to drop this table.
     """
     __tablename__ = "competitor_generated_ideas"
@@ -338,7 +335,7 @@ class CompetitorGeneratedIdea(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     feature_id = Column(Integer, ForeignKey("competitor_features.id", ondelete="CASCADE"), nullable=False, index=True)
     session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=False, index=True)
-    product_id = Column(Integer, ForeignKey("ci_products.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
     idea_what = Column(Text, nullable=False)
     idea_why = Column(Text, nullable=False)
     idea_use_case = Column(Text, nullable=False)
@@ -369,7 +366,7 @@ class AgentExecutionLog(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), index=True)
-    product_id = Column(Integer, ForeignKey("ci_products.id"), index=True)
+    product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="SET NULL"), index=True)
     agent_name = Column(String(100), nullable=False, index=True)
     stage = Column(String(50), nullable=False)
     input_data = Column(JSON)

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from app.database import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.competitor_intelligence import CIProduct
 from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
 from app.models.competitive_reports import LandscapeOpportunityReport
@@ -78,6 +78,26 @@ class CreateIdeaResponse(BaseModel):
 
 
 # ============================================================================
+# Helpers
+# ============================================================================
+
+def verify_product_access(db: Session, product_id: int, user: User) -> CIProduct:
+    """Verify product exists and user has ownership access."""
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+    if user.role != UserRole.ADMIN and product.created_by_user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this product"
+        )
+    return product
+
+
+# ============================================================================
 # API Endpoints
 # ============================================================================
 
@@ -99,13 +119,8 @@ async def get_synthesis_status(
     - Available internal feedback themes
     - Previous synthesis run (if any)
     """
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
+    # Verify product exists and user has access
+    product = verify_product_access(db, product_id, current_user)
 
     sources = SynthesisSourcesAvailable()
 
@@ -184,13 +199,8 @@ async def trigger_synthesis(
 
     Returns the synthesis run record. Processing happens in the background.
     """
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
+    # Verify product exists and user has access
+    product = verify_product_access(db, product_id, current_user)
 
     # Check that at least one source has data
     has_competitive = db.query(LandscapeOpportunityReport).filter(
@@ -260,13 +270,8 @@ async def list_synthesis_runs(
     current_user: User = Depends(get_current_active_user)
 ):
     """List all synthesis runs for a product."""
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
+    # Verify product exists and user has access
+    product = verify_product_access(db, product_id, current_user)
 
     # Get total count
     total = db.query(SynthesisRun).filter(
@@ -327,13 +332,8 @@ async def get_latest_synthesis(
     current_user: User = Depends(get_current_active_user)
 ):
     """Get the latest completed synthesis results."""
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
+    # Verify product exists and user has access
+    product = verify_product_access(db, product_id, current_user)
 
     synthesis_run = db.query(SynthesisRun).filter(
         SynthesisRun.product_id == product_id,
@@ -386,7 +386,7 @@ async def export_synthesis_json(
             detail="Synthesis run not found"
         )
 
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    product = verify_product_access(db, product_id, current_user)
 
     opportunities = db.query(SynthesizedOpportunity).filter(
         SynthesizedOpportunity.synthesis_run_id == run_id
@@ -440,7 +440,7 @@ async def export_synthesis_csv(
             detail="Synthesis run not found"
         )
 
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    product = verify_product_access(db, product_id, current_user)
 
     opportunities = db.query(SynthesizedOpportunity).filter(
         SynthesizedOpportunity.synthesis_run_id == run_id
@@ -521,6 +521,8 @@ async def create_idea_from_opportunity(
     current_user: User = Depends(get_product_owner_or_admin)
 ):
     """Create an idea from a synthesized opportunity."""
+    verify_product_access(db, product_id, current_user)
+
     opportunity = db.query(SynthesizedOpportunity).filter(
         SynthesizedOpportunity.id == opportunity_id,
         SynthesizedOpportunity.product_id == product_id

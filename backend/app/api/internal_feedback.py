@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 from datetime import datetime
 
 from app.database import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.competitor_intelligence import CIProduct
 from app.models.internal_feedback import (
     InternalFeedbackImport,
@@ -71,6 +71,26 @@ class ImportStatusResponse(BaseModel):
 
 
 # ============================================================================
+# Helpers
+# ============================================================================
+
+def verify_product_access(db: Session, product_id: int, user: User) -> CIProduct:
+    """Verify product exists and user has ownership access."""
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+    if user.role != UserRole.ADMIN and product.created_by_user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this product"
+        )
+    return product
+
+
+# ============================================================================
 # API Endpoints
 # ============================================================================
 
@@ -95,13 +115,8 @@ async def upload_internal_feedback(
     Returns the import record. Theme extraction will be triggered
     automatically in the background.
     """
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
+    # Verify product exists and user has access
+    product = verify_product_access(db, product_id, current_user)
 
     # Validate file type
     if not file.filename.endswith('.json'):
@@ -203,13 +218,8 @@ async def list_imports(
     current_user: User = Depends(get_current_active_user)
 ):
     """List all internal feedback imports for a product."""
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
+    # Verify product exists and user has access
+    product = verify_product_access(db, product_id, current_user)
 
     # Get total count
     total = db.query(InternalFeedbackImport).filter(
@@ -332,13 +342,8 @@ async def get_themes(
     If import_id is provided, returns themes from that specific import.
     Otherwise, returns themes from the most recent completed import.
     """
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
+    # Verify product exists and user has access
+    product = verify_product_access(db, product_id, current_user)
 
     # Find the import to get themes from
     if import_id:
@@ -605,13 +610,8 @@ async def upload_activity_data(
     Returns the import record. Activity insight extraction will be
     triggered automatically in the background.
     """
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
+    # Verify product exists and user has access
+    product = verify_product_access(db, product_id, current_user)
 
     # Validate file type
     filename = file.filename or "upload.json"
@@ -719,13 +719,8 @@ async def list_activity_imports(
     current_user: User = Depends(get_current_active_user)
 ):
     """List all activity imports for a product."""
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
+    # Verify product exists and user has access
+    product = verify_product_access(db, product_id, current_user)
 
     # Get total count
     total = db.query(ActivityImport).filter(
@@ -812,13 +807,8 @@ async def get_activity_insights(
     If import_id is provided, returns insights from that specific import.
     Otherwise, returns insights from the most recent completed import.
     """
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
+    # Verify product exists and user has access
+    product = verify_product_access(db, product_id, current_user)
 
     # Find the import to get insights from
     if import_id:

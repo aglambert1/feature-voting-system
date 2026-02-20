@@ -11,7 +11,7 @@ for asynchronous execution. Each task:
 
 import traceback
 from typing import Dict, Any, Optional, List
-from celery import shared_task, group, chain
+from celery import shared_task
 from datetime import datetime, timedelta
 
 from app.database import SessionLocal
@@ -26,6 +26,7 @@ from app.services.queue_service import QueueService
 from app.services.llm_service import LLMService
 from app.agents.product_analyzer import ProductAnalyzerAgent
 from app.agents.competitor_researcher import CompetitorResearcherAgent
+from app.utils.url import normalize_url, extract_domain
 # DEPRECATED: FeatureExtractorAgent import removed - using V2 functional audit workflow
 
 
@@ -39,7 +40,7 @@ def get_db():
         raise
 
 
-@shared_task(bind=True, name='app.queue.tasks.analyze_product_task')
+@shared_task(bind=True, name='app.queue.tasks.analyze_product_task', soft_time_limit=300)
 def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
     """
     Background task to analyze a product using ProductAnalyzerAgent.
@@ -91,7 +92,9 @@ def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
         agent = ProductAnalyzerAgent(
             db=db,
             llm_service=llm_service,
-            product_id=product_id
+            product_id=product_id,
+            user_id=user_id,
+            job_id=job.job_uuid
         )
 
         # Build input for agent
@@ -104,8 +107,8 @@ def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
         # Update progress
         queue_service.update_progress(job_id, 30.0, "Running AI analysis...")
 
-        # Execute agent
-        result = agent.execute(agent_input)
+        # Execute agent (higher token limit for complex product analyses)
+        result = agent.execute(agent_input, max_tokens=16000)
 
         # Update progress
         queue_service.update_progress(job_id, 70.0, "Saving analysis results...")
@@ -170,6 +173,10 @@ def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
             'competitor_keywords': result.get('competitor_search_keywords', []),
         }
 
+        # Propagate any truncation recovery warnings
+        if result.get('_warnings'):
+            output_data['warnings'] = result['_warnings']
+
         # Mark job as success
         queue_service.mark_success(job_id, output_data)
 
@@ -196,7 +203,7 @@ def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
             db.close()
 
 
-@shared_task(bind=True, name='app.queue.tasks.health_check')
+@shared_task(bind=True, name='app.queue.tasks.health_check', soft_time_limit=60)
 def health_check(self) -> Dict[str, Any]:
     """
     Simple health check task for testing Celery connectivity.
@@ -211,7 +218,7 @@ def health_check(self) -> Dict[str, Any]:
     }
 
 
-@shared_task(bind=True, name='app.queue.tasks.discover_competitors_task')
+@shared_task(bind=True, name='app.queue.tasks.discover_competitors_task', soft_time_limit=600)
 def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
     """
     Background task to discover competitors using CompetitorResearcherAgent.
@@ -263,8 +270,15 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
         agent = CompetitorResearcherAgent(
             db=db,
             llm_service=llm_service,
-            product_id=product_id
+            product_id=product_id,
+            user_id=user_id,
+            job_id=job.job_uuid
         )
+
+        # Load existing competitors for this product (for dedup + LLM context)
+        existing_competitors = db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id == product_id,
+        ).all()
 
         # Build input from product analysis
         analysis = product.structured_product_data
@@ -274,6 +288,11 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
             'core_features': analysis.get('core_features', []),
             'target_users': analysis.get('target_users', ''),
             'competitor_search_keywords': analysis.get('competitor_search_keywords', []),
+            'existing_competitors': [
+                {'name': c.competitor_name, 'url': c.competitor_url or ''}
+                for c in existing_competitors
+                if c.status == 'active'
+            ],
         }
 
         # Update progress
@@ -296,24 +315,36 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
         competitor_ids = []
         new_competitor_names = []  # Track newly discovered competitors for alerts
 
+        # Build lookup indexes from existing competitors (in Python, DB-agnostic)
+        name_index = {c.competitor_name.lower(): c for c in existing_competitors}
+        domain_index = {}
+        for c in existing_competitors:
+            domain = extract_domain(c.competitor_url or '')
+            if domain:
+                domain_index[domain] = c
+
         for comp_data in competitors:
-            # Check if competitor already exists for this product
-            existing = db.query(ProductCompetitor).filter(
-                ProductCompetitor.product_id == product_id,
-                ProductCompetitor.competitor_name == comp_data.get('name')
-            ).first()
+            discovered_name = comp_data.get('name', '')
+            discovered_url = comp_data.get('url', '')
+
+            # Match by name (case-insensitive) first, then by URL domain
+            existing = name_index.get(discovered_name.lower())
+            if not existing:
+                discovered_domain = extract_domain(discovered_url)
+                if discovered_domain:
+                    existing = domain_index.get(discovered_domain)
 
             if existing:
                 # Update existing competitor
-                existing.competitor_url = comp_data.get('url', existing.competitor_url)
+                existing.competitor_url = discovered_url or existing.competitor_url
                 existing.status = 'active'
                 competitor_ids.append(existing.id)
             else:
                 # Create new competitor
                 new_competitor = ProductCompetitor(
                     product_id=product_id,
-                    competitor_name=comp_data.get('name'),
-                    competitor_url=comp_data.get('url'),
+                    competitor_name=discovered_name,
+                    competitor_url=discovered_url,
                     first_discovered_session_id=None,  # Queue-based, no session
                     status='active'
                 )
@@ -324,6 +355,11 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
                     'id': new_competitor.id,
                     'name': new_competitor.competitor_name
                 })
+                # Add to indexes so later items in this batch also dedup
+                name_index[discovered_name.lower()] = new_competitor
+                new_domain = extract_domain(discovered_url)
+                if new_domain:
+                    domain_index[new_domain] = new_competitor
 
         # Create alerts for newly discovered competitors
         if alert_on_new and new_competitor_names:
@@ -385,7 +421,7 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
 # Phase 3: Idea Normalization and Triage Tasks
 # ============================================================================
 
-@shared_task(bind=True, name='app.queue.tasks.normalize_idea_task')
+@shared_task(bind=True, name='app.queue.tasks.normalize_idea_task', soft_time_limit=300)
 def normalize_idea_task(self, job_id: int) -> Dict[str, Any]:
     """
     Background task to normalize an idea from any source.
@@ -500,7 +536,7 @@ def normalize_idea_task(self, job_id: int) -> Dict[str, Any]:
             db.close()
 
 
-@shared_task(bind=True, name='app.queue.tasks.triage_idea_task')
+@shared_task(bind=True, name='app.queue.tasks.triage_idea_task', soft_time_limit=300)
 def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
     """
     Background task to triage an idea.
@@ -544,6 +580,8 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         idea = db.query(Idea).filter(Idea.id == idea_id).first()
         if not idea:
             raise ValueError(f"Idea {idea_id} not found")
+
+        user_id = job.user_id
 
         # Check if this is a competitor-sourced idea
         is_competitor_idea = idea.source_type == SourceType.COMPETITOR_AUTOMATED
@@ -685,7 +723,9 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         agent = IdeaTriageAgent(
             db=db,
             llm_service=llm_service,
-            product_id=idea.product_id
+            product_id=idea.product_id,
+            user_id=user_id,
+            job_id=job.job_uuid
         )
         triage_result = agent.execute(agent_input)
 
@@ -877,7 +917,7 @@ def _get_existing_categories(db, product_id: int) -> list:
     return [r[0] for r in results if r[0]]
 
 
-@shared_task(bind=True, name='app.queue.tasks.submit_and_triage_idea_task')
+@shared_task(bind=True, name='app.queue.tasks.submit_and_triage_idea_task', soft_time_limit=600)
 def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
     """
     Combined task for submitting and triaging an idea in one step.
@@ -1010,7 +1050,9 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         agent = IdeaTriageAgent(
             db=db,
             llm_service=llm_service,
-            product_id=idea.product_id
+            product_id=idea.product_id,
+            user_id=user_id,
+            job_id=job.job_uuid
         )
         triage_result = agent.execute(agent_input)
 
@@ -1164,7 +1206,7 @@ def _calculate_next_run(schedule: str) -> datetime:
         return now + timedelta(weeks=1)
 
 
-@shared_task(bind=True, name='app.queue.tasks.check_scheduled_tasks')
+@shared_task(bind=True, name='app.queue.tasks.check_scheduled_tasks', soft_time_limit=300)
 def check_scheduled_tasks(self) -> Dict[str, Any]:
     """
     Master scheduler task - runs hourly via Celery Beat.
@@ -1172,7 +1214,7 @@ def check_scheduled_tasks(self) -> Dict[str, Any]:
     Checks CompetitiveAgentConfig for each product and queues work if due:
     - Product analysis (if scheduled mode and next_run <= now)
     - Competitor discovery (if scheduled mode and next_run <= now)
-    - Deep analysis (if scheduled mode and next_run <= now)
+    - V2 competitive analysis (if scheduled mode and next_run <= now)
 
     Returns:
         Dictionary with queued jobs summary
@@ -1256,11 +1298,11 @@ def check_scheduled_tasks(self) -> Dict[str, Any]:
                         'job_id': job.id
                     })
 
-                # Check Deep Analysis
+                # Check Competitive Analysis (V2 functional audit + landscape synthesis)
                 if (config.deep_analysis_mode == AgentMode.SCHEDULED
                         and config.deep_analysis_next_run
                         and config.deep_analysis_next_run <= now):
-                    print(f"[check_scheduled_tasks] Product {product_id}: Deep analysis due")
+                    print(f"[check_scheduled_tasks] Product {product_id}: V2 competitive analysis due")
                     job = queue_service.create_job(
                         job_type=JobType.SCHEDULED_DEEP_ANALYSIS,
                         input_data={'product_id': product_id, 'scheduled': True},
@@ -1269,7 +1311,7 @@ def check_scheduled_tasks(self) -> Dict[str, Any]:
                     )
                     db.commit()
 
-                    scheduled_deep_analysis_task.delay(job.id)
+                    run_competitive_analysis_v2.delay(job.id)
 
                     config.deep_analysis_last_run = now
                     config.deep_analysis_next_run = _calculate_next_run(
@@ -1306,514 +1348,11 @@ def check_scheduled_tasks(self) -> Dict[str, Any]:
             db.close()
 
 
-# ============================================================================
-# Agent-Centric Architecture Tasks (Chunk 5)
-# ============================================================================
-
-@shared_task(bind=True, name='app.queue.tasks.deep_analysis_task')
-def deep_analysis_task(self, job_id: int) -> Dict[str, Any]:
-    """
-    DEPRECATED: This task is deprecated in V2.
-    Use functional_audit_task and landscape_synthesis_task instead.
-
-    This task now returns a deprecation error.
-    """
-    from app.models.competitive_agent import CompetitiveAgentConfig
-
-    # DEPRECATED: Strategic analysis models have been removed in V2
-    # Return a deprecation error immediately
-    db = None
-    try:
-        db = get_db()
-        queue_service = QueueService(db)
-        queue_service.mark_failure(
-            job_id,
-            "DEPRECATED: deep_analysis_task is no longer supported. Use functional_audit_task instead.",
-            None
-        )
-        return {
-            'status': 'deprecated',
-            'message': 'This task is deprecated. Use V2 functional audit workflow instead.'
-        }
-    except Exception as e:
-        print(f"[deep_analysis_task] Deprecation error: {e}")
-        raise
-    finally:
-        if db:
-            db.close()
-
-
-# NOTE: The old deep_analysis_task implementation has been removed.
-# Strategic analysis models (pricing, positioning, momentum, changes, financials)
-# have been deprecated and replaced by V2 functional audit workflow.
-# See functional_audit_task and landscape_synthesis_task below.
-
-
-# DEPRECATED: _run_feature_extraction has been removed in V2.
-# Feature extraction is now handled by the functional audit workflow.
-
-# DEPRECATED: The following helper functions have been removed in V2:
-# - _run_pricing_analysis
-# - _run_positioning_analysis
-# - _run_changes_tracking
-# - _run_momentum_analysis
-# - _run_financials_analysis
-# These used models that no longer exist (CompetitorPricingAnalysis, etc.)
-# Use functional_audit_task for the new V2 workflow.
-
-
-@shared_task(bind=True, name='app.queue.tasks.feature_clustering_task')
-def feature_clustering_task(self, job_id: int) -> Dict[str, Any]:
-    """
-    DEPRECATED: Use landscape_synthesis_task instead.
-
-    Background task to run feature clustering for a product.
-    This task has been superseded by the V2 landscape synthesis workflow
-    which generates ideas based on priority scores rather than cluster counts.
-
-    This task:
-    1. Gets all competitor features with embeddings
-    2. Runs agglomerative clustering
-    3. Creates/updates FeatureCluster records
-    4. Calculates competitive intensity
-
-    Args:
-        job_id: QueueJob ID to process
-
-    Returns:
-        Dictionary with clustering results
-    """
-    from app.services.feature_clustering_service import FeatureClusteringService
-
-    db = None
-    try:
-        db = get_db()
-        queue_service = QueueService(db)
-
-        # Mark job as running
-        job = queue_service.mark_running(job_id)
-        if not job:
-            raise ValueError(f"Job {job_id} not found")
-
-        product_id = job.product_id
-        if not product_id:
-            raise ValueError("Product ID is required")
-
-        input_data = job.input_data or {}
-        similarity_threshold = input_data.get('similarity_threshold', 0.75)
-
-        # Update progress
-        queue_service.update_progress(job_id, 10.0, "Initializing clustering service...")
-
-        # Run clustering
-        clustering_service = FeatureClusteringService(db)
-
-        queue_service.update_progress(job_id, 20.0, "Running feature clustering...")
-        result = clustering_service.cluster_features(
-            product_id=product_id,
-            similarity_threshold=similarity_threshold
-        )
-
-        # Update progress
-        queue_service.update_progress(job_id, 90.0, "Finalizing...")
-
-        output_data = {
-            'product_id': product_id,
-            'clusters_created': result.clusters_created,
-            'clusters_updated': result.clusters_updated,
-            'features_clustered': result.features_clustered,
-            'high_intensity_clusters': result.high_intensity_clusters,
-            'execution_time_ms': result.execution_time_ms
-        }
-
-        # Mark success
-        queue_service.mark_success(job_id, output_data)
-
-        return output_data
-
-    except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[feature_clustering_task] Error: {error_msg}")
-
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
-
-        raise
-
-    finally:
-        if db:
-            db.close()
-
-
-@shared_task(bind=True, name='app.queue.tasks.intensity_idea_generation_task')
-def intensity_idea_generation_task(self, job_id: int) -> Dict[str, Any]:
-    """
-    DEPRECATED: Use landscape_synthesis_task instead.
-
-    Background task to generate ideas from high-intensity feature clusters.
-    This task has been superseded by the V2 landscape synthesis workflow
-    which generates ideas directly from feature_opportunities based on
-    priority scores rather than cluster competitor counts.
-
-    This task:
-    1. Gets high-intensity clusters (meeting threshold)
-    2. For each cluster, generates an idea using IntensityIdeaGeneratorAgent
-    3. Creates Idea records with traceability to source clusters
-    4. Optionally chains to triage for dedup and recommendations
-
-    Args:
-        job_id: QueueJob ID to process
-
-    Returns:
-        Dictionary with generation results
-    """
-    from app.services.feature_clustering_service import FeatureClusteringService
-
-    db = None
-    try:
-        db = get_db()
-        queue_service = QueueService(db)
-        llm_service = LLMService()
-
-        # Mark job as running
-        job = queue_service.mark_running(job_id)
-        if not job:
-            raise ValueError(f"Job {job_id} not found")
-
-        product_id = job.product_id
-        if not product_id:
-            raise ValueError("Product ID is required")
-
-        input_data = job.input_data or {}
-        threshold = input_data.get('threshold')
-        chain_triage = input_data.get('chain_triage', True)
-
-        # Update progress
-        queue_service.update_progress(job_id, 10.0, "Loading high-intensity clusters...")
-
-        # Generate ideas
-        clustering_service = FeatureClusteringService(db)
-
-        queue_service.update_progress(job_id, 20.0, "Generating ideas from clusters...")
-        results = clustering_service.generate_ideas_for_high_intensity_clusters(
-            product_id=product_id,
-            threshold=threshold,
-            llm_service=llm_service
-        )
-
-        # Chain to triage if requested
-        if chain_triage:
-            queue_service.update_progress(job_id, 80.0, "Queueing triage for generated ideas...")
-
-            for result in results:
-                if result.get('status') == 'generated' and result.get('idea_id'):
-                    # Create triage job
-                    triage_job = queue_service.create_job(
-                        job_type=JobType.IDEA_TRIAGE,
-                        input_data={'idea_id': result['idea_id']},
-                        product_id=product_id,
-                        user_id=job.user_id,
-                        parent_job_id=job.id,
-                    )
-                    db.commit()
-
-                    # Queue the triage task
-                    triage_idea_task.delay(triage_job.id)
-
-                    result['triage_job_id'] = triage_job.id
-
-        # Update progress
-        queue_service.update_progress(job_id, 95.0, "Finalizing...")
-
-        output_data = {
-            'product_id': product_id,
-            'ideas_generated': len([r for r in results if r.get('status') == 'generated']),
-            'ideas_skipped': len([r for r in results if r.get('status') == 'skipped']),
-            'errors': len([r for r in results if r.get('status') == 'error']),
-            'results': results
-        }
-
-        # Mark success
-        queue_service.mark_success(job_id, output_data)
-
-        return output_data
-
-    except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[intensity_idea_generation_task] Error: {error_msg}")
-
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
-
-        raise
-
-    finally:
-        if db:
-            db.close()
-
-
-@shared_task(bind=True, name='app.queue.tasks.scheduled_deep_analysis_task')
-def scheduled_deep_analysis_task(self, job_id: int) -> Dict[str, Any]:
-    """
-    Run scheduled deep analysis for a product.
-
-    This task:
-    1. Finds all competitors with deep_analysis_enabled=True
-    2. Queues deep_analysis_task for each (parallel via chord)
-    3. After all complete, runs clustering and intensity idea generation
-
-    Args:
-        job_id: QueueJob ID to process
-
-    Returns:
-        Dictionary indicating chord was dispatched
-    """
-    from celery import chord
-    from app.models.competitive_agent import CompetitiveAgentConfig
-
-    db = None
-    try:
-        db = get_db()
-        queue_service = QueueService(db)
-
-        # Mark job as running
-        job = queue_service.mark_running(job_id)
-        if not job:
-            raise ValueError(f"Job {job_id} not found")
-
-        product_id = job.product_id
-        if not product_id:
-            raise ValueError("Product ID is required")
-
-        # Get enabled competitors
-        competitors = db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.status == 'active',
-            ProductCompetitor.deep_analysis_enabled == True
-        ).all()
-
-        if not competitors:
-            output_data = {
-                'product_id': product_id,
-                'message': 'No competitors enabled for deep analysis',
-                'competitors_processed': 0
-            }
-            queue_service.mark_success(job_id, output_data)
-            return output_data
-
-        # Update progress
-        queue_service.update_progress(
-            job_id, 10.0,
-            f"Creating deep analysis jobs for {len(competitors)} competitors..."
-        )
-
-        # Create child jobs for each competitor
-        child_job_ids = []
-        for competitor in competitors:
-            child_job = queue_service.create_job(
-                job_type=JobType.DEEP_ANALYSIS,
-                input_data={'competitor_id': competitor.id},
-                product_id=product_id,
-                user_id=job.user_id,
-                parent_job_id=job_id,
-            )
-            child_job_ids.append(child_job.id)
-
-        db.commit()
-
-        # Update progress
-        queue_service.update_progress(
-            job_id, 20.0,
-            f"Dispatching {len(child_job_ids)} deep analysis tasks..."
-        )
-
-        # Use chord: group of deep analysis tasks -> callback to aggregate and cluster
-        analysis_chord = chord(
-            [deep_analysis_task.s(child_id) for child_id in child_job_ids],
-            aggregate_deep_analysis_results.s(job_id, child_job_ids, product_id)
-        )
-
-        # Dispatch the chord
-        chord_result = analysis_chord.apply_async()
-
-        db.commit()
-
-        return {
-            'status': 'chord_dispatched',
-            'parent_job_id': job_id,
-            'child_job_ids': child_job_ids,
-            'chord_id': chord_result.id if chord_result else None,
-        }
-
-    except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[scheduled_deep_analysis_task] Error: {error_msg}")
-
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
-
-        raise
-
-    finally:
-        if db:
-            db.close()
-
-
-@shared_task(bind=True, name='app.queue.tasks.aggregate_deep_analysis_results')
-def aggregate_deep_analysis_results(
-    self,
-    results: List[Dict],
-    parent_job_id: int,
-    child_job_ids: List[int],
-    product_id: int
-) -> Dict[str, Any]:
-    """
-    DEPRECATED: Use aggregate_functional_audits + landscape_synthesis_task instead.
-
-    Callback task to aggregate results from parallel deep analysis.
-    This task uses the old V1 deep_analysis_task workflow.
-    The V2 workflow (functional_audit_task + landscape_synthesis_task) now
-    generates ideas directly based on priority scores.
-
-    After all deep analysis tasks complete, this:
-    1. Aggregates results
-    2. Runs feature clustering
-    3. Generates ideas from high-intensity clusters
-    4. Marks parent job as complete
-
-    Args:
-        results: List of results from each deep analysis task
-        parent_job_id: Parent QueueJob ID to update
-        child_job_ids: List of child job IDs that were processed
-        product_id: Product ID
-
-    Returns:
-        Aggregated results
-    """
-    from app.services.feature_clustering_service import FeatureClusteringService
-
-    db = None
-    try:
-        db = get_db()
-        queue_service = QueueService(db)
-        llm_service = LLMService()
-
-        # Get parent job
-        job = queue_service.get_job(parent_job_id)
-        if not job:
-            raise ValueError(f"Parent job {parent_job_id} not found")
-
-        # Aggregate deep analysis results
-        successful = 0
-        total_features = 0
-        for r in results:
-            if r and r.get('analyses_completed'):
-                successful += 1
-                if 'feature_extraction' in r.get('analyses_completed', []):
-                    total_features += r.get('feature_extraction', {}).get('features_extracted', 0)
-
-        # Update progress
-        queue_service.update_progress(
-            parent_job_id, 70.0,
-            f"Running feature clustering across {total_features} features..."
-        )
-
-        # Run clustering
-        clustering_service = FeatureClusteringService(db)
-        cluster_result = clustering_service.cluster_features(product_id=product_id)
-
-        # Update progress
-        queue_service.update_progress(
-            parent_job_id, 85.0,
-            "Generating ideas from high-intensity clusters..."
-        )
-
-        # Generate ideas
-        idea_results = clustering_service.generate_ideas_for_high_intensity_clusters(
-            product_id=product_id,
-            llm_service=llm_service
-        )
-
-        # Chain to triage for all generated ideas (duplicate + feature exists detection)
-        queue_service.update_progress(
-            parent_job_id, 90.0,
-            "Queueing triage for generated ideas..."
-        )
-
-        triage_jobs_created = 0
-        for result in idea_results:
-            if result.get('status') == 'generated' and result.get('idea_id'):
-                # Create triage job for each generated idea
-                triage_job = queue_service.create_job(
-                    job_type=JobType.IDEA_TRIAGE,
-                    input_data={'idea_id': result['idea_id']},
-                    product_id=product_id,
-                    parent_job_id=parent_job_id,
-                )
-                db.commit()
-
-                # Queue the triage task
-                triage_idea_task.delay(triage_job.id)
-
-                result['triage_job_id'] = triage_job.id
-                triage_jobs_created += 1
-
-        output_data = {
-            'product_id': product_id,
-            'competitors_analyzed': len(child_job_ids),
-            'successful_analyses': successful,
-            'total_features_extracted': total_features,
-            'clusters_created': cluster_result.clusters_created,
-            'high_intensity_clusters': cluster_result.high_intensity_clusters,
-            'ideas_generated': len([r for r in idea_results if r.get('status') == 'generated']),
-            'triage_jobs_created': triage_jobs_created,
-            'child_job_ids': child_job_ids,
-        }
-
-        # Mark parent job as success
-        queue_service.mark_success(parent_job_id, output_data)
-
-        return output_data
-
-    except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[aggregate_deep_analysis_results] Error: {error_msg}")
-
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(parent_job_id, error_msg, error_tb)
-            except Exception:
-                pass
-
-        raise
-
-    finally:
-        if db:
-            db.close()
-
-
 # =============================================================================
 # V2 Competitive Analysis Tasks (Functional Audit + Landscape Synthesis)
 # =============================================================================
 
-@shared_task(bind=True, name='app.queue.tasks.functional_audit_task', max_retries=2, default_retry_delay=60)
+@shared_task(bind=True, name='app.queue.tasks.functional_audit_task', max_retries=2, default_retry_delay=60, soft_time_limit=900)
 def functional_audit_task(self, job_id: int):
     """
     Run a functional audit for a single competitor.
@@ -1889,7 +1428,13 @@ def functional_audit_task(self, job_id: int):
 
         # Initialize LLM service and agent
         llm_service = LLMService()
-        agent = CompetitorFunctionalAuditAgent(db=db, llm_service=llm_service)
+        agent = CompetitorFunctionalAuditAgent(
+            db=db,
+            llm_service=llm_service,
+            product_id=product_id,
+            user_id=job.user_id,
+            job_id=job.job_uuid
+        )
 
         # Run the audit
         agent_input = {
@@ -1973,7 +1518,7 @@ def functional_audit_task(self, job_id: int):
             db.close()
 
 
-@shared_task(bind=True, name='app.queue.tasks.landscape_synthesis_task', max_retries=2, default_retry_delay=60)
+@shared_task(bind=True, name='app.queue.tasks.landscape_synthesis_task', max_retries=2, default_retry_delay=60, soft_time_limit=900)
 def landscape_synthesis_task(self, job_id: int):
     """
     Run landscape synthesis across all competitor functional reports.
@@ -2066,7 +1611,13 @@ def landscape_synthesis_task(self, job_id: int):
 
         # Initialize LLM service and agent
         llm_service = LLMService()
-        agent = LandscapeOpportunitySynthesizerAgent(db=db, llm_service=llm_service)
+        agent = LandscapeOpportunitySynthesizerAgent(
+            db=db,
+            llm_service=llm_service,
+            product_id=product_id,
+            user_id=job.user_id,
+            job_id=job.job_uuid
+        )
 
         # Run the synthesis
         agent_input = {
@@ -2283,7 +1834,7 @@ def landscape_synthesis_task(self, job_id: int):
             db.close()
 
 
-@shared_task(bind=True, name='app.queue.tasks.aggregate_functional_audits')
+@shared_task(bind=True, name='app.queue.tasks.aggregate_functional_audits', soft_time_limit=1200)
 def aggregate_functional_audits(self, audit_results: list, parent_job_id: int):
     """
     Callback task after all functional audits complete.
@@ -2360,7 +1911,7 @@ def aggregate_functional_audits(self, audit_results: list, parent_job_id: int):
             db.close()
 
 
-@shared_task(bind=True, name='app.queue.tasks.run_competitive_analysis_v2')
+@shared_task(bind=True, name='app.queue.tasks.run_competitive_analysis_v2', soft_time_limit=900)
 def run_competitive_analysis_v2(self, job_id: int):
     """
     Orchestrate the V2 competitive analysis workflow.
@@ -2466,7 +2017,7 @@ def run_competitive_analysis_v2(self, job_id: int):
 # Internal Discovery Task (Three-Source Synthesis)
 # =============================================================================
 
-@shared_task(bind=True, name='app.queue.tasks.internal_discovery_task', max_retries=2, default_retry_delay=60)
+@shared_task(bind=True, name='app.queue.tasks.internal_discovery_task', max_retries=2, default_retry_delay=60, soft_time_limit=600)
 def internal_discovery_task(self, job_id: int):
     """
     Process uploaded internal feedback data to extract themes.
@@ -2501,6 +2052,7 @@ def internal_discovery_task(self, job_id: int):
             raise ValueError(f"Job {job_id} not found")
 
         queue_service.mark_running(job_id)
+        user_id = job.user_id
 
         # Extract job parameters
         input_data = job.input_data or {}
@@ -2524,7 +2076,9 @@ def internal_discovery_task(self, job_id: int):
         agent = InternalDiscoveryAgent(
             db=db,
             llm_service=llm_service,
-            product_id=import_record.product_id
+            product_id=import_record.product_id,
+            user_id=user_id,
+            job_id=job.job_uuid
         )
 
         # Run the agent
@@ -2623,7 +2177,7 @@ def internal_discovery_task(self, job_id: int):
             db.close()
 
 
-@shared_task(bind=True, name='app.queue.tasks.activity_insight_task')
+@shared_task(bind=True, name='app.queue.tasks.activity_insight_task', soft_time_limit=600)
 def activity_insight_task(self, job_id: int):
     """
     Process CRM activity data to extract product insights.
@@ -2657,6 +2211,7 @@ def activity_insight_task(self, job_id: int):
             raise ValueError(f"Job {job_id} not found")
 
         queue_service.mark_running(job_id)
+        user_id = job.user_id
         queue_service.update_progress(job_id, 10.0, "Loading activity data...")
 
         # Extract job parameters
@@ -2682,7 +2237,9 @@ def activity_insight_task(self, job_id: int):
         agent = ActivityInsightAgent(
             db=db,
             llm_service=llm_service,
-            product_id=import_record.product_id
+            product_id=import_record.product_id,
+            user_id=user_id,
+            job_id=job.job_uuid
         )
 
         queue_service.update_progress(job_id, 30.0, "Analyzing deal activities...")
@@ -2788,7 +2345,7 @@ def activity_insight_task(self, job_id: int):
             db.close()
 
 
-@shared_task(bind=True, name='app.queue.tasks.opportunity_synthesis_task')
+@shared_task(bind=True, name='app.queue.tasks.opportunity_synthesis_task', soft_time_limit=900)
 def opportunity_synthesis_task(self, job_id: int):
     """
     Synthesize opportunities from competitive, customer, and internal sources.
@@ -2829,6 +2386,7 @@ def opportunity_synthesis_task(self, job_id: int):
         input_data = job.input_data or {}
         synthesis_run_id = input_data.get('synthesis_run_id')
         product_id = job.product_id
+        user_id = job.user_id
 
         if not synthesis_run_id:
             raise ValueError("synthesis_run_id is required in input_data")
@@ -2947,7 +2505,9 @@ def opportunity_synthesis_task(self, job_id: int):
         agent = OpportunitySynthesisAgent(
             db=db,
             llm_service=llm_service,
-            product_id=product_id
+            product_id=product_id,
+            user_id=user_id,
+            job_id=job.job_uuid
         )
 
         # Run the agent with higher max_tokens for complex JSON output

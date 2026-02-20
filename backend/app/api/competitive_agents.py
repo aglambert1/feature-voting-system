@@ -2,11 +2,10 @@
 Competitive Agents API endpoints.
 
 This module provides REST API endpoints for the agent-centric competitive
-intelligence system. Replaces the session-based workflow with:
+intelligence system:
 - Configuration management for CompetitiveAgentConfig
-- Per-competitor deep analysis triggers
-- Feature cluster and intensity endpoints
-- Strategic analysis results endpoints
+- V2 competitive analysis (functional audit + landscape synthesis)
+- Competitor management and feature review
 - Manual feature-to-idea workflow
 """
 
@@ -18,11 +17,11 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.database import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.queue import JobType, JobStatus
 from app.models.competitor_intelligence import CIProduct, ProductCompetitor
 from app.models.competitive_agent import (
-    CompetitiveAgentConfig, AgentMode, FeatureCluster, FeatureClusterMember
+    CompetitiveAgentConfig, AgentMode
 )
 from app.models.competitive_reports import (
     CompetitorFunctionalReport, LandscapeOpportunityReport, CompetitorAlert
@@ -30,6 +29,7 @@ from app.models.competitive_reports import (
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.services.queue_service import QueueService
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
+from app.utils.url import extract_domain
 
 # Thread-safe task dispatch (see app/utils/celery_utils.py for explanation)
 from app.utils.celery_utils import send_celery_task as send_task
@@ -148,37 +148,6 @@ class CompetitorAlertResponse(BaseModel):
     message: str
     is_read: bool
     created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class FeatureClusterResponse(BaseModel):
-    """Response schema for feature cluster."""
-    id: int
-    product_id: int
-    cluster_name: Optional[str]
-    cluster_description: Optional[str]
-    competitor_count: int
-    feature_count: int
-    idea_generated: bool
-    generated_idea_id: Optional[int]
-
-    class Config:
-        from_attributes = True
-
-
-class ClusterDetailResponse(BaseModel):
-    """Detailed response for a feature cluster including members."""
-    id: int
-    product_id: int
-    cluster_name: Optional[str]
-    cluster_description: Optional[str]
-    competitor_count: int
-    feature_count: int
-    idea_generated: bool
-    generated_idea_id: Optional[int]
-    members: List[dict]
 
     class Config:
         from_attributes = True
@@ -390,14 +359,22 @@ def get_or_create_config(db: Session, product_id: int) -> CompetitiveAgentConfig
 
 
 def verify_product_access(db: Session, product_id: int, user: User) -> CIProduct:
-    """Verify product exists and user has access."""
+    """Verify product exists and user has ownership access.
+
+    Admin users can access any product. Product Owners can only access
+    products they created. Returns 403 if the user lacks access.
+    """
     product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Product {product_id} not found"
         )
-    # Note: Could add permission check here based on ProductPermission
+    if user.role != UserRole.ADMIN and product.created_by_user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this product"
+        )
     return product
 
 
@@ -710,149 +687,6 @@ def trigger_product_reanalysis(
     )
 
 
-@router.post("/{product_id}/run-clustering", response_model=JobResponse)
-def trigger_feature_clustering(
-    product_id: int,
-    current_user: User = Depends(get_product_owner_or_admin),
-    db: Session = Depends(get_db)
-):
-    """Trigger feature clustering and intensity idea generation."""
-    verify_product_access(db, product_id, current_user)
-
-    # Get config for threshold
-    config = get_or_create_config(db, product_id)
-
-    queue_service = QueueService(db)
-
-    # Check for existing active job of this type for this product
-    active_jobs = queue_service.get_active_jobs(product_id=product_id)
-    existing_clustering = next(
-        (j for j in active_jobs if j.job_type == JobType.FEATURE_CLUSTERING),
-        None
-    )
-    if existing_clustering:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Feature clustering already in progress (job {existing_clustering.job_uuid})"
-        )
-
-    job = queue_service.create_job(
-        job_type=JobType.FEATURE_CLUSTERING,
-        input_data={
-            'similarity_threshold': config.intensity_similarity_threshold,
-        },
-        product_id=product_id,
-        user_id=current_user.id,
-        auto_commit=False,  # Don't commit until Celery dispatch succeeds
-    )
-
-    # Queue the task - if this fails, rollback the job creation
-    try:
-        result = send_task('feature_clustering_task', job.id)
-        job.celery_task_id = result.id
-        job.status = JobStatus.QUEUED
-        job.queued_at = datetime.utcnow()
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
-        )
-
-    return JobResponse(
-        job_id=job.id,
-        job_uuid=job.job_uuid,
-        job_type=job.job_type.value,
-        status=job.status.value,
-        message=f"Feature clustering queued for product {product_id}"
-    )
-
-
-@router.post("/{product_id}/run-competitive-analysis", response_model=JobResponse)
-def trigger_competitive_analysis(
-    product_id: int,
-    current_user: User = Depends(get_product_owner_or_admin),
-    db: Session = Depends(get_db)
-):
-    """
-    Trigger full competitive analysis workflow.
-
-    This runs the complete analysis pipeline:
-    1. Deep analysis (feature extraction + strategic analysis) for all enabled competitors
-    2. Feature clustering across all extracted features
-    3. Idea generation from high-intensity clusters
-
-    Use this endpoint for the "Run Now" button on the Competitive Analysis Agent.
-    Use /run-clustering if you only want to re-cluster existing features.
-    """
-    verify_product_access(db, product_id, current_user)
-
-    queue_service = QueueService(db)
-
-    # Check for existing active competitive analysis job
-    active_jobs = queue_service.get_active_jobs(product_id=product_id)
-    existing_analysis = next(
-        (j for j in active_jobs if j.job_type in [
-            JobType.SCHEDULED_DEEP_ANALYSIS,
-            JobType.DEEP_ANALYSIS,
-            JobType.FEATURE_CLUSTERING
-        ]),
-        None
-    )
-    if existing_analysis:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Competitive analysis already in progress (job {existing_analysis.job_uuid})"
-        )
-
-    # Check if there are competitors enabled for deep analysis
-    enabled_competitors = db.query(ProductCompetitor).filter(
-        ProductCompetitor.product_id == product_id,
-        ProductCompetitor.status == 'active',
-        ProductCompetitor.deep_analysis_enabled == True
-    ).count()
-
-    if enabled_competitors == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No competitors are enabled for deep analysis. Enable at least one competitor first."
-        )
-
-    job = queue_service.create_job(
-        job_type=JobType.SCHEDULED_DEEP_ANALYSIS,
-        input_data={
-            'triggered_by': 'manual',
-            'competitors_enabled': enabled_competitors,
-        },
-        product_id=product_id,
-        user_id=current_user.id,
-        auto_commit=False,  # Don't commit until Celery dispatch succeeds
-    )
-
-    # Queue the task - if this fails, rollback the job creation
-    try:
-        result = send_task('scheduled_deep_analysis_task', job.id)
-        job.celery_task_id = result.id
-        job.status = JobStatus.QUEUED
-        job.queued_at = datetime.utcnow()
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
-        )
-
-    return JobResponse(
-        job_id=job.id,
-        job_uuid=job.job_uuid,
-        job_type=job.job_type.value,
-        status=job.status.value,
-        message=f"Competitive analysis started for {enabled_competitors} competitors"
-    )
-
-
 # ============================================================================
 # Competitor Management
 # ============================================================================
@@ -953,28 +787,26 @@ def add_competitor_manually(
     """
     verify_product_access(db, product_id, current_user)
 
-    # Check uniqueness within product - name OR URL must be unique
-    existing_name = db.query(ProductCompetitor).filter(
+    # Check uniqueness within product - compare in Python for DB-agnostic behavior
+    active_competitors = db.query(ProductCompetitor).filter(
         ProductCompetitor.product_id == product_id,
-        ProductCompetitor.competitor_name == request.competitor_name,
         ProductCompetitor.status == 'active'
-    ).first()
-    if existing_name:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"A competitor named '{request.competitor_name}' already exists for this product"
-        )
+    ).all()
 
-    existing_url = db.query(ProductCompetitor).filter(
-        ProductCompetitor.product_id == product_id,
-        ProductCompetitor.competitor_url == request.competitor_url,
-        ProductCompetitor.status == 'active'
-    ).first()
-    if existing_url:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"A competitor with URL '{request.competitor_url}' already exists for this product"
-        )
+    request_name_lower = request.competitor_name.lower()
+    request_domain = extract_domain(request.competitor_url)
+
+    for existing in active_competitors:
+        if existing.competitor_name.lower() == request_name_lower:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"A competitor named '{existing.competitor_name}' already exists for this product"
+            )
+        if request_domain and extract_domain(existing.competitor_url or '') == request_domain:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"A competitor with URL '{existing.competitor_url}' already exists for this product"
+            )
 
     # Create the competitor
     competitor = ProductCompetitor(
@@ -999,67 +831,6 @@ def add_competitor_manually(
 
 
 # ============================================================================
-# Per-Competitor Deep Analysis
-# ============================================================================
-
-@router.post("/{product_id}/competitors/{competitor_id}/deep-analysis", response_model=JobResponse)
-def trigger_deep_analysis(
-    product_id: int,
-    competitor_id: int,
-    current_user: User = Depends(get_product_owner_or_admin),
-    db: Session = Depends(get_db)
-):
-    """Trigger deep analysis for a single competitor."""
-    competitor = verify_competitor_access(db, product_id, competitor_id, current_user)
-
-    queue_service = QueueService(db)
-
-    # Check for existing active deep analysis job for this specific competitor
-    active_jobs = queue_service.get_active_jobs(product_id=product_id)
-    existing_analysis = next(
-        (j for j in active_jobs
-         if j.job_type == JobType.DEEP_ANALYSIS
-         and j.input_data.get('competitor_id') == competitor_id),
-        None
-    )
-    if existing_analysis:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Deep analysis already in progress for this competitor (job {existing_analysis.job_uuid})"
-        )
-
-    job = queue_service.create_job(
-        job_type=JobType.DEEP_ANALYSIS,
-        input_data={'competitor_id': competitor_id},
-        product_id=product_id,
-        user_id=current_user.id,
-        auto_commit=False,  # Don't commit until Celery dispatch succeeds
-    )
-
-    # Queue the task - if this fails, rollback the job creation
-    try:
-        result = send_task('deep_analysis_task', job.id)
-        job.celery_task_id = result.id
-        job.status = JobStatus.QUEUED
-        job.queued_at = datetime.utcnow()
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
-        )
-
-    return JobResponse(
-        job_id=job.id,
-        job_uuid=job.job_uuid,
-        job_type=job.job_type.value,
-        status=job.status.value,
-        message=f"Deep analysis queued for competitor {competitor_id}"
-    )
-
-
-# ============================================================================
 # Per-Competitor Feature Review
 # ============================================================================
 
@@ -1077,7 +848,6 @@ def list_competitor_features(
     instead of ProductCompetitorFeature table.
     """
     from app.models.competitive_reports import CompetitorFunctionalReport
-    import hashlib
 
     verify_competitor_access(db, product_id, competitor_id, current_user)
 
@@ -1093,24 +863,6 @@ def list_competitor_features(
             if not feature_name:
                 continue
 
-            # Generate feature key for cluster lookup
-            feature_key = f"{competitor_id}_{hashlib.md5(feature_name.encode()).hexdigest()[:8]}"
-
-            # Check if feature is in a cluster
-            member = db.query(FeatureClusterMember).filter(
-                FeatureClusterMember.feature_key == feature_key
-            ).first()
-
-            cluster_id = None
-            cluster_name = None
-            if member:
-                cluster = db.query(FeatureCluster).filter(
-                    FeatureCluster.id == member.cluster_id
-                ).first()
-                if cluster:
-                    cluster_id = cluster.id
-                    cluster_name = cluster.cluster_name
-
             result.append(FeatureResponse(
                 id=idx + 1,  # Sequential ID since we don't have DB IDs
                 product_competitor_id=competitor_id,
@@ -1118,8 +870,6 @@ def list_competitor_features(
                 feature_description=feature_data.get('functional_description', ''),
                 feature_category=feature_data.get('feature_category', ''),
                 status=feature_data.get('mapping_status', 'Gap'),  # Gap, Parity, etc.
-                cluster_id=cluster_id,
-                cluster_name=cluster_name
             ))
 
     return result
@@ -1307,152 +1057,6 @@ def create_ideas_from_features(
         send_task('triage_idea_task', resp.job_id)
 
     return results
-
-
-# ============================================================================
-# Feature Clusters & Intensity
-# ============================================================================
-
-@router.get("/{product_id}/feature-clusters", response_model=List[FeatureClusterResponse])
-def list_feature_clusters(
-    product_id: int,
-    min_competitors: Optional[int] = Query(None, description="Minimum competitor count filter"),
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """List feature clusters with intensity scores."""
-    verify_product_access(db, product_id, current_user)
-
-    query = db.query(FeatureCluster).filter(
-        FeatureCluster.product_id == product_id
-    )
-
-    if min_competitors is not None:
-        query = query.filter(FeatureCluster.competitor_count >= min_competitors)
-
-    clusters = query.order_by(FeatureCluster.competitor_count.desc()).all()
-
-    return [FeatureClusterResponse(
-        id=c.id,
-        product_id=c.product_id,
-        cluster_name=c.cluster_name,
-        cluster_description=c.cluster_description,
-        competitor_count=c.competitor_count,
-        feature_count=c.feature_count,
-        idea_generated=c.idea_generated,
-        generated_idea_id=c.generated_idea_id
-    ) for c in clusters]
-
-
-@router.get("/{product_id}/feature-clusters/{cluster_id}", response_model=ClusterDetailResponse)
-def get_feature_cluster(
-    product_id: int,
-    cluster_id: int,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """Get cluster details with member features."""
-    verify_product_access(db, product_id, current_user)
-
-    cluster = db.query(FeatureCluster).filter(
-        FeatureCluster.id == cluster_id,
-        FeatureCluster.product_id == product_id
-    ).first()
-
-    if not cluster:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Cluster {cluster_id} not found"
-        )
-
-    # Get members with feature details (V2: data stored directly on member)
-    members = db.query(
-        FeatureClusterMember, ProductCompetitor
-    ).join(
-        ProductCompetitor,
-        FeatureClusterMember.competitor_id == ProductCompetitor.id
-    ).filter(
-        FeatureClusterMember.cluster_id == cluster_id
-    ).all()
-
-    member_data = []
-    for member, competitor in members:
-        member_data.append({
-            'feature_key': member.feature_key,
-            'feature_name': member.feature_name,
-            'feature_description': member.feature_description,
-            'feature_category': member.feature_category,
-            'mapping_status': member.mapping_status,
-            'competitor_id': competitor.id,
-            'competitor_name': competitor.competitor_name,
-            'similarity_score': member.similarity_score
-        })
-
-    return ClusterDetailResponse(
-        id=cluster.id,
-        product_id=cluster.product_id,
-        cluster_name=cluster.cluster_name,
-        cluster_description=cluster.cluster_description,
-        competitor_count=cluster.competitor_count,
-        feature_count=cluster.feature_count,
-        idea_generated=cluster.idea_generated,
-        generated_idea_id=cluster.generated_idea_id,
-        members=member_data
-    )
-
-
-@router.post("/{product_id}/feature-clusters/{cluster_id}/create-idea", response_model=JobResponse)
-def create_idea_from_cluster(
-    product_id: int,
-    cluster_id: int,
-    current_user: User = Depends(get_product_owner_or_admin),
-    db: Session = Depends(get_db)
-):
-    """Manually create an idea from a feature cluster."""
-    verify_product_access(db, product_id, current_user)
-
-    cluster = db.query(FeatureCluster).filter(
-        FeatureCluster.id == cluster_id,
-        FeatureCluster.product_id == product_id
-    ).first()
-
-    if not cluster:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Cluster {cluster_id} not found"
-        )
-
-    if cluster.idea_generated:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Idea already generated for cluster {cluster_id}"
-        )
-
-    # Queue intensity idea generation for this cluster
-    queue_service = QueueService(db)
-    job = queue_service.create_job(
-        job_type=JobType.INTENSITY_IDEA_GENERATION,
-        input_data={
-            'cluster_id': cluster_id,
-            'threshold': 1,  # Force generate for this specific cluster
-            'chain_triage': True
-        },
-        product_id=product_id,
-        user_id=current_user.id
-    )
-    db.commit()
-
-    result = send_task('intensity_idea_generation_task', job.id)
-    job.celery_task_id = result.id
-    db.commit()
-
-    return JobResponse(
-        job_id=job.id,
-        job_uuid=job.job_uuid,
-        job_type=job.job_type.value,
-        status=job.status.value,
-        message=f"Idea generation queued for cluster {cluster_id}"
-    )
 
 
 # ============================================================================

@@ -9,13 +9,11 @@ V2 Architecture:
 - CompetitiveAgent: Discovers competitors and runs functional audits
 - SynthesisAgent: Synthesizes opportunities across sources
 - InternalDiscoveryAgent: Extracts themes from internal feedback
-- IntensityIdeaGeneratorAgent: Generates ideas from feature clusters
 """
 
 from app.agents.base_agent import BaseAgent, AgentExecutionError
 from app.agents.test_agents import EchoAgent, StructuredOutputAgent
 from app.agents.product_analyzer import ProductAnalyzerAgent
-from app.agents.intensity_idea_generator import IntensityIdeaGeneratorAgent
 
 __all__ = [
     "BaseAgent",
@@ -23,5 +21,4 @@ __all__ = [
     "EchoAgent",
     "StructuredOutputAgent",
     "ProductAnalyzerAgent",
-    "IntensityIdeaGeneratorAgent",
 ]

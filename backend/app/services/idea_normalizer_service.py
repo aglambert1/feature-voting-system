@@ -201,6 +201,8 @@ class IdeaNormalizerService:
             submitter_id=normalized.submitter_id,
             category=normalized.category,
             auto_categorized=normalized.auto_categorized,
+            external_id=normalized.external_id,
+            external_source=normalized.external_source,
             status=status,
             is_active=is_active,
         )

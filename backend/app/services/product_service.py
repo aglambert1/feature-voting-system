@@ -8,9 +8,11 @@ triggering product analysis. Analysis is now a separate, independent operation.
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from pathlib import Path
+import logging
 import shutil
 import hashlib
 import json
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -22,6 +24,9 @@ from app.models.user import User
 from app.agents.product_analyzer import ProductAnalyzerAgent
 from app.services.llm_service import LLMService
 from app.services.permission_service import PermissionService
+from app.services.vector_service import VectorService
+
+logger = logging.getLogger(__name__)
 
 
 class ProductService:
@@ -368,22 +373,112 @@ class ProductService:
 
         return product
 
+    def get_delete_preview(self, product_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Build a preview of what would be deleted for a product.
+
+        Returns None if product not found. Otherwise returns a dict with
+        product info, row counts per table, file paths, and embedding counts.
+        """
+        product = self.db.query(CIProduct).filter(CIProduct.id == product_id).first()
+        if not product:
+            return None
+
+        # Count rows in all related tables
+        table_counts = {}
+        count_queries = [
+            ("competitors", "SELECT COUNT(*) FROM product_competitors WHERE product_id = :pid"),
+            ("competitor_features", """
+                SELECT COUNT(*) FROM product_competitor_features
+                WHERE product_competitor_id IN (
+                    SELECT id FROM product_competitors WHERE product_id = :pid
+                )
+            """),
+            ("analysis_sessions", "SELECT COUNT(*) FROM competitor_analysis_sessions WHERE product_id = :pid"),
+            ("product_features", "SELECT COUNT(*) FROM product_features WHERE product_id = :pid"),
+            ("analysis_history", "SELECT COUNT(*) FROM product_analysis_history WHERE product_id = :pid"),
+            ("permissions", "SELECT COUNT(*) FROM product_permissions WHERE product_id = :pid"),
+            ("generated_ideas", "SELECT COUNT(*) FROM competitor_generated_ideas WHERE product_id = :pid"),
+            ("ideas", "SELECT COUNT(*) FROM ideas WHERE product_id = :pid"),
+            ("functional_reports", "SELECT COUNT(*) FROM competitor_functional_reports WHERE product_id = :pid"),
+            ("landscape_reports", "SELECT COUNT(*) FROM landscape_opportunity_reports WHERE product_id = :pid"),
+            ("synthesis_runs", "SELECT COUNT(*) FROM synthesis_runs WHERE product_id = :pid"),
+            ("internal_feedback_imports", "SELECT COUNT(*) FROM internal_feedback_imports WHERE product_id = :pid"),
+            ("activity_imports", "SELECT COUNT(*) FROM activity_imports WHERE product_id = :pid"),
+        ]
+
+        for name, query in count_queries:
+            try:
+                table_counts[name] = self.db.execute(
+                    text(query), {"pid": product_id}
+                ).scalar() or 0
+            except Exception:
+                table_counts[name] = -1  # table may not exist
+
+        # Count preserved records (SET NULL, not deleted)
+        preserved_counts = {}
+        preserved_queries = [
+            ("queue_jobs", "SELECT COUNT(*) FROM queue_jobs WHERE product_id = :pid"),
+            ("llm_usage_logs", "SELECT COUNT(*) FROM llm_usage_logs WHERE product_id = :pid"),
+            ("agent_execution_logs", "SELECT COUNT(*) FROM agent_execution_logs WHERE product_id = :pid"),
+        ]
+        for name, query in preserved_queries:
+            try:
+                preserved_counts[name] = self.db.execute(
+                    text(query), {"pid": product_id}
+                ).scalar() or 0
+            except Exception:
+                preserved_counts[name] = -1
+
+        # Count vector embeddings
+        try:
+            embedding_counts = VectorService.count_product_embeddings(self.db, product_id)
+        except Exception:
+            embedding_counts = {}
+
+        # Check for file-based reports
+        reports_dir = Path(__file__).parent.parent.parent / "data" / "competitive_reports" / str(product_id)
+        file_info = {
+            "reports_directory": str(reports_dir),
+            "directory_exists": reports_dir.exists(),
+        }
+        if reports_dir.exists():
+            report_runs = [d.name for d in reports_dir.iterdir() if d.is_dir()]
+            file_info["report_runs"] = len(report_runs)
+
+        return {
+            "product": {
+                "id": product.id,
+                "name": product.product_name,
+                "status": product.status,
+                "created_at": str(product.created_at),
+            },
+            "will_delete": table_counts,
+            "will_preserve_with_null_product_id": preserved_counts,
+            "embeddings": embedding_counts,
+            "files": file_info,
+        }
+
     def delete_product(
         self,
         product_id: int,
-        user_id: int
-    ) -> bool:
+        user_id: int,
+        dry_run: bool = False
+    ) -> Dict[str, Any] | bool:
         """
-        Delete a product.
+        Delete a product and all associated data.
 
-        Requires ADMIN permission. Cascades to delete all related data.
+        Requires ADMIN permission. When dry_run=True, returns a preview
+        of what would be deleted without making changes.
 
         Args:
             product_id: Product ID
             user_id: User deleting the product
+            dry_run: If True, return preview without deleting
 
         Returns:
-            True if deleted, False if not found
+            - dry_run=True: Dict with deletion preview, or False if not found
+            - dry_run=False: True if deleted, False if not found
 
         Raises:
             PermissionError: If user lacks ADMIN permission
@@ -398,10 +493,30 @@ class ProductService:
                 f"User {user_id} does not have ADMIN permission for product {product_id}"
             )
 
-        product = self.db.query(CIProduct).filter(CIProduct.id == product_id).first()
-        if not product:
+        preview = self.get_delete_preview(product_id)
+        if preview is None:
             return False
 
+        if dry_run:
+            return preview
+
+        # 1. Delete vector embeddings (not covered by cascades)
+        try:
+            VectorService.delete_all_product_embeddings(self.db, product_id)
+        except Exception as e:
+            logger.warning("Failed to delete vector embeddings for product %d: %s", product_id, e)
+
+        # 2. Delete file-based reports
+        reports_dir = Path(__file__).parent.parent.parent / "data" / "competitive_reports" / str(product_id)
+        if reports_dir.exists():
+            try:
+                shutil.rmtree(reports_dir)
+                logger.info("Deleted report files at %s", reports_dir)
+            except Exception as e:
+                logger.warning("Failed to delete report files for product %d: %s", product_id, e)
+
+        # 3. Delete the product (ORM cascade + DB-level CASCADE handle related rows)
+        product = self.db.query(CIProduct).filter(CIProduct.id == product_id).first()
         self.db.delete(product)
         self.db.commit()
         return True

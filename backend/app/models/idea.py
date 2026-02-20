@@ -9,7 +9,7 @@ Phase 3 Enhancement: Unified idea model with consolidated status.
 """
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, ForeignKey, Boolean, Float, JSON
+from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, ForeignKey, Boolean, Float, JSON, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 import enum
@@ -25,11 +25,13 @@ class SourceType(str, enum.Enum):
     - COMPETITOR_AUTOMATED: Extracted from competitor feature
     - CRM_IMPORT: Imported from CRM system (future)
     - SUPPORT_TICKET: Extracted from support ticket (future)
+    - EXTERNAL_SUBMISSION: Synced from external idea system (Aha!, Jira, etc.)
     """
     CUSTOMER_SUBMISSION = "customer_submission"
     COMPETITOR_AUTOMATED = "competitor_automated"
     CRM_IMPORT = "crm_import"
     SUPPORT_TICKET = "support_ticket"
+    EXTERNAL_SUBMISSION = "external_submission"
 
     # Legacy value mapping
     @classmethod
@@ -104,6 +106,11 @@ class Idea(Base):
     # For competitor ideas: {"competitor_id": 123, "feature_id": 456, "competitor_name": "..."}
     # For CRM imports: {"crm_id": "...", "crm_type": "salesforce", "opportunity_id": "..."}
     # For support tickets: {"ticket_id": "...", "customer_email": "...", "ticket_subject": "..."}
+    # For external submissions: {"external_url": "https://app.aha.io/ideas/...", "workflow_status": "..."}
+
+    # External system tracking (for ideas synced from Aha!, Jira, etc.)
+    external_id = Column(String(255), nullable=True, index=True)
+    external_source = Column(String(100), nullable=True, index=True)  # e.g., "aha", "jira", "productboard"
 
     submitter_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Null for automated ideas
     product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -141,9 +148,11 @@ class Idea(Base):
     # Queue job reference (for tracking)
     triage_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
 
-    # Competitive intensity traceability (for ideas generated from feature clusters)
-    source_cluster_id = Column(Integer, ForeignKey("feature_clusters.id"), nullable=True)
+    # Competitive source traceability
     source_feature_ids = Column(JSON, nullable=True)  # [feature_id, ...] for tracing back to source features
+
+    # Lifecycle status (post-acceptance stages like "On Roadmap", "Delivered")
+    lifecycle_status_id = Column(Integer, ForeignKey("idea_lifecycle_statuses.id"), nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
@@ -158,7 +167,11 @@ class Idea(Base):
     triage_job = relationship("QueueJob", foreign_keys=[triage_job_id])
     comments = relationship("IdeaComment", back_populates="idea", cascade="all, delete-orphan", order_by="IdeaComment.created_at")
     status_history = relationship("IdeaStatusHistory", back_populates="idea", cascade="all, delete-orphan", order_by="IdeaStatusHistory.created_at")
-    source_cluster = relationship("FeatureCluster", foreign_keys=[source_cluster_id])
+    lifecycle_status = relationship("IdeaLifecycleStatus", foreign_keys=[lifecycle_status_id])
+
+    __table_args__ = (
+        UniqueConstraint('external_id', 'external_source', 'product_id', name='unique_external_idea'),
+    )
 
     def __repr__(self):
         return f"<Idea(id={self.id}, title='{self.title}', source='{self.source_type}', status='{self.status}')>"
@@ -205,7 +218,11 @@ class Idea(Base):
             "competitive_context": self.competitive_context,
             "auto_response_text": self.auto_response_text,
             "review_notes": self.review_notes,
-            "source_cluster_id": self.source_cluster_id,
             "source_feature_ids": self.source_feature_ids,
+            "external_id": self.external_id,
+            "external_source": self.external_source,
+            "lifecycle_status_id": self.lifecycle_status_id,
+            "lifecycle_status_name": self.lifecycle_status.name if self.lifecycle_status else None,
+            "lifecycle_status_color": self.lifecycle_status.color if self.lifecycle_status else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

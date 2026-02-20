@@ -2,7 +2,7 @@
 Voting API endpoints.
 
 This file contains the endpoint for voting on ideas:
-- POST /ideas/{idea_id}/vote - Vote on an idea (upvote or downvote)
+- POST /ideas/{idea_id}/vote - Vote on an idea (upvote toggle)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -95,19 +95,14 @@ def vote_on_idea(
 
     # Calculate updated vote counts
     result = db.query(
-        func.count(Vote.id).label('total_votes'),
-        func.sum(Vote.vote_value).label('score')
+        func.count(Vote.id).label('total_votes')
     ).filter(Vote.idea_id == idea_id).first()
 
-    # Score is now just the count of upvotes (no downvotes)
     total_votes = int(result.total_votes or 0)
-    score = int(result.score or 0)  # This equals total_votes since all votes are +1
 
     vote_counts = VoteCountResponse(
         idea_id=idea_id,
         upvotes=total_votes,
-        downvotes=0,  # No downvotes anymore
-        score=score,
         total_votes=total_votes,
         user_vote=user_vote_value
     )

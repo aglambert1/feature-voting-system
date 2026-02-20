@@ -32,8 +32,6 @@ class VoteCount(BaseModel):
     Contains aggregated vote counts for an idea.
     """
     upvotes: int = Field(default=0, description="Number of upvotes")
-    downvotes: int = Field(default=0, description="Number of downvotes")
-    score: int = Field(default=0, description="Net score (upvotes - downvotes)")
     total_votes: int = Field(default=0, description="Total number of votes")
 
 
@@ -60,7 +58,7 @@ class IdeaResponse(BaseModel):
     vote_counts: VoteCount
 
     # User's vote on this idea (if authenticated)
-    user_vote: Optional[int] = Field(None, description="Current user's vote: 1, -1, or null")
+    user_vote: Optional[int] = Field(None, description="Current user's vote: 1 or null")
 
     class Config:
         from_attributes = True
@@ -87,6 +85,11 @@ class IdeaListItem(BaseModel):
     is_active: Optional[bool] = None
     duplicate_of_idea_id: Optional[int] = None
     duplicate_of_title: Optional[str] = None
+
+    # Lifecycle status (post-acceptance stage)
+    lifecycle_status_id: Optional[int] = None
+    lifecycle_status_name: Optional[str] = None
+    lifecycle_status_color: Optional[str] = None
 
     # Submitter info (for "My Ideas" sorting)
     submitter_id: Optional[int] = None
