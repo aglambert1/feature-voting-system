@@ -5,6 +5,7 @@ services:
   # Backend API
   - type: web
     name: feature-iq-api
+    plan: free
     runtime: docker
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
@@ -39,6 +40,7 @@ services:
   # Celery worker for background tasks
   - type: worker
     name: feature-iq-worker
+    plan: free
     runtime: docker
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
