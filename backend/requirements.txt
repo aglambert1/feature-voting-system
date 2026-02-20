@@ -87,6 +87,7 @@ zstandard==0.25.0
 # Vector search dependencies
 sqlite-vec==0.1.1
 sentence-transformers==2.7.0
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.2.0
 
 # Document parsing dependencies
