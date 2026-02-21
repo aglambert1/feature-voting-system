@@ -8,7 +8,7 @@
 
 This document outlines requirements for implementing Retrieval-Augmented Generation (RAG) capabilities to enhance the feature voting system with AI-generated insights and analysis.
 
-**Current State**: The system has vector similarity search using sentence-transformers and sqlite-vec/pgvector for duplicate detection during idea submission.
+**Current State**: The system has vector similarity search using Voyage AI embeddings (voyage-3.5-lite, 1024 dims) and sqlite-vec/pgvector for duplicate detection during idea submission.
 
 **Future State**: Extend vector search with LLM-powered generation to provide context-aware insights, analysis, and recommendations for product owners and users.
 
