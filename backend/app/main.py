@@ -129,10 +129,6 @@ async def lifespan(app: FastAPI):
     Startup:
     - Initializes database tables
     - Creates initial admin user
-    - Loads SentenceTransformer model for embeddings
-
-    Shutdown:
-    - Cleans up model from memory
     """
     # Startup
     logger.info("Starting up application...")
@@ -147,23 +143,10 @@ async def lifespan(app: FastAPI):
     create_initial_admin()
     _seed_lifecycle_statuses()
 
-    # Load SentenceTransformer model ONCE (not on every request)
-    try:
-        logger.info("Loading SentenceTransformer model (all-MiniLM-L6-v2)...")
-        from sentence_transformers import SentenceTransformer
-        app.state.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        logger.info("Model loaded successfully (384 dimensions)")
-    except Exception as e:
-        logger.error("Failed to load embedding model: %s", e)
-        logger.warning("Semantic search will not be available")
-        app.state.embedding_model = None
-
     yield
 
     # Shutdown
     logger.info("Shutting down application...")
-    if hasattr(app.state, 'embedding_model'):
-        del app.state.embedding_model
 
 
 # Create the FastAPI application instance

@@ -19,6 +19,7 @@ Common patterns - verify against source if unsure:
 
 **Services** (`backend/app/services/`):
 - `QueueService` → `mark_running()`, `mark_success()`, `mark_failure()`, `get_job()`
+- `embedding_service` → `generate_embedding(text, input_type)`, `generate_embeddings_batch(texts, input_type)` — Voyage AI API, 1024 dims, input_type: "document" or "query"
 
 **Celery Tasks** (`backend/app/queue/tasks.py`):
 - Use `@shared_task` decorator (not `@celery_app.task`)

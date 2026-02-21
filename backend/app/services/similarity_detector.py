@@ -15,25 +15,8 @@ import sqlite_vec
 import enum
 
 from app.services.vector_service import VectorService
+from app.services.embedding_service import generate_embedding as _generate_embedding
 from app.models.idea import Idea, IdeaStatus
-
-# Module-level embedding model (lazy-loaded)
-_embedding_model = None
-
-
-def get_embedding_model():
-    """Get or load the embedding model."""
-    global _embedding_model
-    if _embedding_model is None:
-        try:
-            from sentence_transformers import SentenceTransformer
-            print("Loading SentenceTransformer model for similarity detection...")
-            _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-            print(f"✓ Embedding model loaded ({_embedding_model.get_sentence_embedding_dimension()} dimensions)")
-        except Exception as e:
-            print(f"✗ Failed to load embedding model: {e}")
-            raise
-    return _embedding_model
 
 
 class CompetitiveUrgency(str, enum.Enum):
@@ -132,27 +115,19 @@ class SimilarityDetectorService:
 
     def __init__(self, db: Session):
         self.db = db
-        self._model = None
 
-    @property
-    def embedding_model(self):
-        """Get the embedding model (lazy-loaded)."""
-        if self._model is None:
-            self._model = get_embedding_model()
-        return self._model
-
-    def generate_embedding(self, text: str) -> List[float]:
+    def generate_embedding(self, text: str, input_type: str = "document") -> List[float]:
         """
-        Generate embedding for text using SentenceTransformer.
+        Generate embedding for text via Voyage AI API.
 
         Args:
             text: Text to embed (idea title + description)
+            input_type: "document" for storage, "query" for search
 
         Returns:
-            384-dimensional embedding vector
+            1024-dimensional embedding vector
         """
-        embedding = self.embedding_model.encode(text, show_progress_bar=False)
-        return embedding.tolist()
+        return _generate_embedding(text, input_type=input_type)
 
     def _distance_to_similarity(self, distance: float) -> float:
         """
@@ -686,10 +661,8 @@ class SimilarityDetectorService:
             # Generate embedding for core feature
             feature_embedding = self.generate_embedding(feature_name)
 
-            # Calculate cosine similarity directly
-            similarity = float(np.dot(idea_embedding, feature_embedding) / (
-                np.linalg.norm(idea_embedding) * np.linalg.norm(feature_embedding)
-            ))
+            # Voyage embeddings are L2-normalized, so dot product = cosine similarity
+            similarity = float(np.dot(idea_embedding, feature_embedding))
 
             if similarity >= similarity_threshold:
                 # Determine source URL from product source

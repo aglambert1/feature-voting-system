@@ -26,6 +26,8 @@ services:
         sync: false  # Set manually in dashboard
       - key: BRAVE_API_KEY
         sync: false
+      - key: VOYAGE_API_KEY
+        sync: false
       - key: DEBUG
         value: "false"
       - key: ALLOWED_ORIGINS
@@ -63,6 +65,8 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: BRAVE_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
         sync: false
       - key: DEBUG
         value: "false"

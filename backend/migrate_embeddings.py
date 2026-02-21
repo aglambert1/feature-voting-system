@@ -10,12 +10,13 @@ Usage:
     python migrate_embeddings.py
 
 Prerequisites:
-    - sentence-transformers installed (pip install sentence-transformers)
+    - voyageai installed (pip install voyageai)
+    - VOYAGE_API_KEY set in .env
     - sqlite-vec extension loaded
     - Database with existing ideas
 
 Process:
-    1. Loads SentenceTransformer model (all-MiniLM-L6-v2)
+    1. Calls Voyage AI API to generate embeddings (voyage-3.5-lite, 1024 dimensions)
     2. Fetches all active ideas from database
     3. Generates embeddings for each idea (title + what + why)
     4. Stores embeddings in vec_ideas virtual table
@@ -28,10 +29,10 @@ Safety:
     - Progress reporting
 """
 
-from sentence_transformers import SentenceTransformer
 from sqlalchemy import text
 from app.database import SessionLocal
 from app.models.idea import Idea, IdeaStatus
+from app.services.embedding_service import generate_embedding
 
 
 def migrate_embeddings():
@@ -41,26 +42,20 @@ def migrate_embeddings():
     This function:
     - Creates vec_ideas virtual table if not exists
     - Fetches all active ideas
-    - Generates embeddings using the same text combination as submission endpoint
+    - Generates embeddings using Voyage AI API
     - Stores embeddings in database
     - Reports progress and statistics
     """
     db = SessionLocal()
-    model = None
 
     try:
-        # Load SentenceTransformer model
-        print("Loading SentenceTransformer model (all-MiniLM-L6-v2)...")
-        model = SentenceTransformer('all-MiniLM-L6-v2')
-        print("✓ Model loaded successfully (384 dimensions)\n")
-
         # Ensure vec_ideas table exists
         print("Checking vec_ideas virtual table...")
         db.execute(text("""
             CREATE VIRTUAL TABLE IF NOT EXISTS vec_ideas
             USING vec0(
                 idea_id INTEGER PRIMARY KEY,
-                embedding FLOAT[384]
+                embedding FLOAT[1024]
             )
         """))
         db.commit()
@@ -88,13 +83,13 @@ def migrate_embeddings():
                 # title + what + why (exclude use_case for brevity)
                 combined_text = f"{idea.title}. {idea.what_description} {idea.why_description}"
 
-                # Generate embedding
-                embedding = model.encode(combined_text, show_progress_bar=False)
+                # Generate embedding via Voyage AI API
+                embedding = generate_embedding(combined_text, input_type="document")
 
                 # Store embedding (INSERT OR REPLACE for idempotency)
                 db.execute(
                     text("INSERT OR REPLACE INTO vec_ideas(idea_id, embedding) VALUES (:id, :emb)"),
-                    {"id": idea.id, "emb": embedding.tolist()}
+                    {"id": idea.id, "emb": embedding}
                 )
 
                 success_count += 1
@@ -127,9 +122,6 @@ def migrate_embeddings():
         raise
     finally:
         db.close()
-        # Clean up model from memory
-        if model:
-            del model
 
 
 if __name__ == "__main__":

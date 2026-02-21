@@ -5,8 +5,7 @@ This module sets up the Celery app with Redis as the message broker
 and result backend. Tasks are auto-discovered from the tasks module.
 
 NOTE: On macOS, Celery must be started with --pool=solo or --pool=threads
-to avoid SIGABRT crashes when loading PyTorch/SentenceTransformers models.
-The default 'fork' pool is incompatible with these libraries on macOS.
+to avoid SIGABRT crashes. The default 'fork' pool can cause issues on macOS.
 
 Example:
     celery -A app.queue worker --loglevel=info --pool=solo

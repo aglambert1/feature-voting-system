@@ -35,7 +35,7 @@ class VectorService:
         Args:
             db: SQLAlchemy database session
             idea_id: ID of the idea
-            embedding: Embedding vector (384 dimensions for all-MiniLM-L6-v2)
+            embedding: Embedding vector (1024 dimensions for voyage-3.5-lite)
 
         Note:
             - PostgreSQL: Updates idea.embedding column directly
@@ -148,7 +148,7 @@ class VectorService:
         Args:
             db: SQLAlchemy database session
             product_id: ID of the product
-            embedding: Embedding vector (384 dimensions for all-MiniLM-L6-v2)
+            embedding: Embedding vector (1024 dimensions for voyage-3.5-lite)
             chunk_index: Index of chunk (0 for single embedding)
             chunk_text: Text content of this chunk (optional, for reference)
 
@@ -324,7 +324,7 @@ class VectorService:
         Args:
             db: SQLAlchemy database session
             feature_id: ID of the ProductCompetitorFeature
-            embedding: Embedding vector (384 dimensions for all-MiniLM-L6-v2)
+            embedding: Embedding vector (1024 dimensions for voyage-3.5-lite)
         """
         if VectorService.is_postgres(db):
             # PostgreSQL: Update feature embedding column
@@ -436,7 +436,7 @@ class VectorService:
         Args:
             db: SQLAlchemy database session
             feature_id: ID of the ProductFeature
-            embedding: Embedding vector (384 dimensions for all-MiniLM-L6-v2)
+            embedding: Embedding vector (1024 dimensions for voyage-3.5-lite)
         """
         if VectorService.is_postgres(db):
             # PostgreSQL: Update feature embedding column
