@@ -119,7 +119,7 @@ def init_db():
             # Add embedding column to ci_products if not exists
             # Note: This will error if column already exists, which is fine
             try:
-                db.execute(text("ALTER TABLE ci_products ADD COLUMN embedding vector(384)"))
+                db.execute(text("ALTER TABLE ci_products ADD COLUMN embedding vector(1024)"))
                 db.commit()
                 logger.info("Added embedding column to ci_products table")
             except Exception as e:
@@ -132,7 +132,7 @@ def init_db():
                 CREATE VIRTUAL TABLE IF NOT EXISTS vec_ideas
                 USING vec0(
                     idea_id INTEGER PRIMARY KEY,
-                    embedding FLOAT[384]
+                    embedding FLOAT[1024]
                 )
             """))
             logger.info("sqlite-vec vec_ideas virtual table created")
@@ -142,7 +142,7 @@ def init_db():
             db.execute(text("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS vec_products
                 USING vec0(
-                    embedding FLOAT[384]
+                    embedding FLOAT[1024]
                 )
             """))
 
@@ -164,7 +164,7 @@ def init_db():
                 CREATE VIRTUAL TABLE IF NOT EXISTS vec_competitor_features
                 USING vec0(
                     feature_id INTEGER PRIMARY KEY,
-                    embedding FLOAT[384]
+                    embedding FLOAT[1024]
                 )
             """))
             logger.info("sqlite-vec vec_competitor_features virtual table created")
@@ -174,7 +174,7 @@ def init_db():
                 CREATE VIRTUAL TABLE IF NOT EXISTS vec_product_features
                 USING vec0(
                     feature_id INTEGER PRIMARY KEY,
-                    embedding FLOAT[384]
+                    embedding FLOAT[1024]
                 )
             """))
             logger.info("sqlite-vec vec_product_features virtual table created")

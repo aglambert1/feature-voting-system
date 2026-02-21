@@ -525,7 +525,6 @@ async def find_similar_ideas(
     threshold: float = Query(0.7, ge=0.0, le=1.0, description="Minimum similarity score"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
-    request: Request = None
 ):
     """
     Find similar ideas using semantic search.
@@ -540,14 +539,12 @@ async def find_similar_ideas(
         threshold: Minimum similarity score (0.0-1.0, default 0.7)
         current_user: Authenticated user
         db: Database session
-        request: FastAPI request object (to access app.state.embedding_model)
 
     Returns:
         List of similar ideas with similarity scores
 
     Raises:
         404 Not Found: If product doesn't exist
-        503 Service Unavailable: If embedding model not loaded
         500 Internal Server Error: If embedding generation fails
     """
     # Validate product exists
@@ -558,19 +555,10 @@ async def find_similar_ideas(
             detail=f"Product with id {product_id} not found"
         )
 
-    # Check if embedding model is available
-    if not hasattr(request.app.state, 'embedding_model') or request.app.state.embedding_model is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Semantic search unavailable - embedding model not loaded"
-        )
-
     # Generate query embedding
     try:
-        query_embedding = request.app.state.embedding_model.encode(
-            q,
-            show_progress_bar=False
-        ).tolist()
+        from app.services.embedding_service import generate_embedding
+        query_embedding = generate_embedding(q, input_type="query")
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

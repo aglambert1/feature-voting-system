@@ -11,7 +11,7 @@ Independent Stages:
 - Stage 3: Analyze Competitor Features (handled by sessions)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
@@ -169,7 +169,6 @@ def analyze_product(
     request: ProductAnalyzeRequest,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
-    req: Request = None
 ):
     """
     Analyze a product with AI (Stage 1 - Independent Operation).
@@ -205,63 +204,52 @@ def analyze_product(
         )
 
         # Generate and store product embeddings after analysis completes
-        if req and hasattr(req.app.state, 'embedding_model'):
-            try:
-                # Get the product description that was analyzed
-                product_text = request.product_description
+        try:
+            from app.services.embedding_service import generate_embedding
 
-                print(f"[API] Generating embedding for product {product_id}...")
+            product_text = request.product_description
+            print(f"[API] Generating embedding for product {product_id}...")
 
-                # Check if text is large enough to require chunking
-                if len(product_text) > 16000:  # ~4000 tokens
-                    print(f"[API] Text is large ({len(product_text)} chars), chunking...")
-                    # Simple chunking: split into ~12K char chunks with overlap
-                    chunk_size = 12000
-                    overlap = 1000
-                    chunks = []
+            # Check if text is large enough to require chunking
+            if len(product_text) > 16000:  # ~4000 tokens
+                print(f"[API] Text is large ({len(product_text)} chars), chunking...")
+                chunk_size = 12000
+                overlap = 1000
+                chunks = []
 
-                    for i in range(0, len(product_text), chunk_size - overlap):
-                        chunk = product_text[i:i + chunk_size]
-                        if chunk.strip():
-                            chunks.append(chunk)
+                for i in range(0, len(product_text), chunk_size - overlap):
+                    chunk = product_text[i:i + chunk_size]
+                    if chunk.strip():
+                        chunks.append(chunk)
 
-                    print(f"[API] Created {len(chunks)} chunks")
+                print(f"[API] Created {len(chunks)} chunks")
 
-                    # Generate embedding for each chunk
-                    for i, chunk in enumerate(chunks):
-                        embedding = req.app.state.embedding_model.encode(
-                            chunk,
-                            show_progress_bar=False
-                        )
-                        VectorService.store_product_embedding(
-                            db,
-                            product_id,
-                            embedding.tolist(),
-                            chunk_index=i,
-                            chunk_text=chunk[:500]  # Store first 500 chars as preview
-                        )
-
-                    print(f"[API] ✓ Stored {len(chunks)} chunk embeddings for product {product_id}")
-                else:
-                    # Single embedding for entire product
-                    embedding = req.app.state.embedding_model.encode(
-                        product_text,
-                        show_progress_bar=False
-                    )
+                for i, chunk in enumerate(chunks):
+                    embedding = generate_embedding(chunk, input_type="document")
                     VectorService.store_product_embedding(
                         db,
                         product_id,
-                        embedding.tolist(),
-                        chunk_index=0,
-                        chunk_text=product_text[:500]  # Store first 500 chars as preview
+                        embedding,
+                        chunk_index=i,
+                        chunk_text=chunk[:500]
                     )
-                    print(f"[API] ✓ Stored single embedding for product {product_id}")
 
-                db.commit()
-            except Exception as e:
-                print(f"[API] Warning: Failed to generate product embedding: {e}")
-                # Don't fail the request if embedding generation fails
-                db.rollback()
+                print(f"[API] ✓ Stored {len(chunks)} chunk embeddings for product {product_id}")
+            else:
+                embedding = generate_embedding(product_text, input_type="document")
+                VectorService.store_product_embedding(
+                    db,
+                    product_id,
+                    embedding,
+                    chunk_index=0,
+                    chunk_text=product_text[:500]
+                )
+                print(f"[API] ✓ Stored single embedding for product {product_id}")
+
+            db.commit()
+        except Exception as e:
+            print(f"[API] Warning: Failed to generate product embedding: {e}")
+            db.rollback()
 
         return {
             "product_id": product_id,
@@ -494,7 +482,6 @@ def search_product_content(
     threshold: float = Query(0.6, ge=0.0, le=1.0, description="Similarity threshold (0-1, higher = more similar)"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
-    req: Request = None
 ):
     """
     Semantic search within product documentation.
@@ -520,13 +507,6 @@ def search_product_content(
         403: If user lacks VIEW permission
         404: If product not found or has no embeddings
     """
-    # Check if embedding model is available
-    if not req or not hasattr(req.app.state, 'embedding_model'):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Embedding model not available. Semantic search is disabled."
-        )
-
     # Check permission
     service = ProductService(db)
     product = service.get_product(product_id, current_user.id)
@@ -538,16 +518,15 @@ def search_product_content(
         )
 
     try:
+        from app.services.embedding_service import generate_embedding
+
         # Generate query embedding
-        query_embedding = req.app.state.embedding_model.encode(
-            q,
-            show_progress_bar=False
-        )
+        query_embedding = generate_embedding(q, input_type="query")
 
         # Search product chunks
         results = VectorService.find_similar_in_product(
             db,
-            query_embedding.tolist(),
+            query_embedding,
             product_id,
             threshold=threshold
         )

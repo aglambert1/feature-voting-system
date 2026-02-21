@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     max_tokens_default: int = 4000  # Default max tokens for agent responses
     temperature_default: float = 0.7  # Default temperature for agent calls
 
+    # Embedding API settings (Voyage AI for semantic search)
+    voyage_api_key: str = "your-voyage-api-key-here"  # Get key at https://dash.voyageai.com/
+
     # Search API settings (for competitor research)
     brave_api_key: str = "your-brave-api-key-here"  # Get free key at https://brave.com/search/api/
     enable_web_search: bool = True  # Enable web search for competitor discovery
@@ -94,6 +97,9 @@ class Settings(BaseSettings):
 
         if self.anthropic_api_key == "your-anthropic-api-key-here":
             errors.append("ANTHROPIC_API_KEY is still the placeholder value.")
+
+        if self.voyage_api_key == "your-voyage-api-key-here":
+            errors.append("VOYAGE_API_KEY is still the placeholder value.")
 
         if errors:
             print("\n=== PRODUCTION CONFIGURATION ERRORS ===", file=sys.stderr)
