@@ -2,7 +2,21 @@
 
 ## Overview
 
-The semantic search feature uses sqlite-vec (development) or pgvector (production) for vector similarity search. This document explains setup requirements and troubleshooting.
+The semantic search feature uses sqlite-vec (development) or pgvector (production) for vector similarity search. Embeddings are generated via the Voyage AI API (`voyage-3.5-lite` model, 1024 dimensions).
+
+## Requirements
+
+### Voyage AI API Key
+
+Embeddings are generated via the Voyage AI API. Get a key from https://dash.voyageai.com/ and set it in your `.env`:
+
+```bash
+VOYAGE_API_KEY=your-key-here
+```
+
+### Database: SQLite (Development) or PostgreSQL (Production)
+
+The app automatically selects the right vector backend based on `DATABASE_URL`.
 
 ## macOS Development Setup Issue
 
@@ -44,14 +58,14 @@ python -c "import sqlite3; conn = sqlite3.connect(':memory:'); conn.enable_load_
 The app has graceful degradation built-in. It will work without vector search - users just won't see similarity suggestions.
 
 **What works without vector search:**
-- ✅ All existing features
-- ✅ Idea submission
-- ✅ Voting
-- ✅ Product management
+- All existing features
+- Idea submission
+- Voting
+- Product management
 
 **What doesn't work:**
-- ❌ "Checking for similar ideas..." feature
-- ❌ Duplicate detection during submission
+- "Checking for similar ideas..." feature
+- Duplicate detection during submission
 
 **To run:**
 ```bash
@@ -114,7 +128,9 @@ Production deployments **must** use PostgreSQL with pgvector. SQLite is only for
    DATABASE_URL=postgresql://user:password@host:port/database
    ```
 
-3. **The app will automatically:**
+3. **Set VOYAGE_API_KEY environment variable** in your hosting dashboard.
+
+4. **The app will automatically:**
    - Detect PostgreSQL
    - Use pgvector instead of sqlite-vec
    - Create necessary indexes
@@ -165,7 +181,6 @@ uvicorn app.main:app --reload
 
 # Check startup logs for:
 # ✓ Loaded sqlite-vec extension
-# ✓ Model loaded successfully (384 dimensions)
 # ✓ sqlite-vec virtual table created
 ```
 
@@ -189,13 +204,6 @@ Expected response if working:
 ]
 ```
 
-Expected response if not working:
-```json
-{
-  "detail": "Semantic search unavailable - embedding model not loaded"
-}
-```
-
 ## Migrating Existing Ideas
 
 After setting up vector search, backfill embeddings for existing ideas:
@@ -205,36 +213,7 @@ cd backend
 python migrate_embeddings.py
 ```
 
-**Expected output:**
-```
-============================================================
-Embedding Migration Script
-============================================================
-
-Loading SentenceTransformer model (all-MiniLM-L6-v2)...
-✓ Model loaded successfully (384 dimensions)
-
-Checking vec_ideas virtual table...
-✓ vec_ideas table ready
-
-Fetching active ideas from database...
-✓ Found 42 active ideas to process
-
-Generating and storing embeddings...
-
-  Processed 10/42 ideas (10 successful, 0 errors)
-  Processed 20/42 ideas (20 successful, 0 errors)
-  Processed 30/42 ideas (30 successful, 0 errors)
-  Processed 40/42 ideas (40 successful, 0 errors)
-
-============================================================
-✓ Migration complete!
-  Total ideas: 42
-  Successfully embedded: 42
-  Errors: 0
-  Success rate: 100.0%
-============================================================
-```
+This uses the Voyage AI API to generate 1024-dimensional embeddings for all existing ideas.
 
 ## Troubleshooting
 
@@ -243,25 +222,16 @@ Generating and storing embeddings...
 **Cause:** SQLite extension not loaded
 **Solution:** Use Homebrew Python (Option 1 above)
 
-### "Semantic search unavailable - embedding model not loaded"
-
-**Cause:** SentenceTransformer model failed to load
-**Solution:** Check startup logs for model loading errors. Ensure torch and sentence-transformers are installed.
-
 ### "Vector search will not be available"
 
 **Cause:** Extension loading failed
 **Impact:** App works but no similarity search
 **Solution:** Use Homebrew Python or PostgreSQL
 
-### Model loading is slow (2-3 seconds)
+### Voyage AI API errors
 
-**Expected behavior:** First startup downloads the model (~80MB). Subsequent startups load from cache in ~2-3 seconds.
-
-**To pre-download model:**
-```bash
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
-```
+**Cause:** Missing or invalid `VOYAGE_API_KEY`
+**Solution:** Check your `.env` file or hosting environment variables. Get a key from https://dash.voyageai.com/
 
 ## Architecture
 
@@ -269,9 +239,9 @@ python -c "from sentence_transformers import SentenceTransformer; SentenceTransf
 ```
 User Input
     ↓
-SentenceTransformer (all-MiniLM-L6-v2)
+Voyage AI API (voyage-3.5-lite)
     ↓
-384-dim embedding
+1024-dim embedding
     ↓
 vec_ideas virtual table (sqlite-vec)
     ↓
@@ -284,9 +254,9 @@ Similar ideas
 ```
 User Input
     ↓
-SentenceTransformer (all-MiniLM-L6-v2)
+Voyage AI API (voyage-3.5-lite)
     ↓
-384-dim embedding
+1024-dim embedding
     ↓
 ideas.embedding column (pgvector)
     ↓

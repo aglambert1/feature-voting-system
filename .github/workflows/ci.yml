@@ -34,6 +34,7 @@ jobs:
           SECRET_KEY: "ci-test-secret-key-at-least-32-characters-long"
           DATABASE_URL: "sqlite:///:memory:"
           ANTHROPIC_API_KEY: "test-key"
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
         run: |
           python -m pytest tests/ -v --tb=short
 
