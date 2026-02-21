@@ -93,12 +93,12 @@ class VectorService:
             # Only show active ideas (is_active=true means accepted for voting)
             results = db.execute(text("""
                 SELECT id, title, what_description,
-                       embedding <=> :query_emb::vector as distance
+                       embedding <=> CAST(:query_emb AS vector) as distance
                 FROM ideas
                 WHERE product_id = :product_id
                   AND embedding IS NOT NULL
                   AND is_active = true
-                ORDER BY embedding <=> :query_emb::vector
+                ORDER BY embedding <=> CAST(:query_emb AS vector)
                 LIMIT :limit
             """), {
                 "query_emb": query_embedding,
@@ -240,12 +240,12 @@ class VectorService:
             # PostgreSQL: Search product embedding
             results = db.execute(text("""
                 SELECT COALESCE(product_description, '') as text,
-                       embedding <=> :query_emb::vector as distance
+                       embedding <=> CAST(:query_emb AS vector) as distance
                 FROM ci_products
                 WHERE id = :product_id
                   AND embedding IS NOT NULL
-                  AND (embedding <=> :query_emb::vector) <= :max_distance
-                ORDER BY embedding <=> :query_emb::vector
+                  AND (embedding <=> CAST(:query_emb AS vector)) <= :max_distance
+                ORDER BY embedding <=> CAST(:query_emb AS vector)
             """), {
                 "query_emb": query_embedding,
                 "product_id": product_id,
@@ -379,15 +379,15 @@ class VectorService:
             results = db.execute(text("""
                 SELECT pcf.id, pcf.feature_name, pcf.feature_description,
                        pc.id as competitor_id, pc.competitor_name,
-                       pcf.embedding <=> :query_emb::vector as distance
+                       pcf.embedding <=> CAST(:query_emb AS vector) as distance
                 FROM product_competitor_features pcf
                 JOIN product_competitors pc ON pcf.product_competitor_id = pc.id
                 WHERE pc.product_id = :product_id
                   AND pc.status = 'active'
                   AND pcf.status = 'active'
                   AND pcf.embedding IS NOT NULL
-                  AND (pcf.embedding <=> :query_emb::vector) <= :max_distance
-                ORDER BY pcf.embedding <=> :query_emb::vector
+                  AND (pcf.embedding <=> CAST(:query_emb AS vector)) <= :max_distance
+                ORDER BY pcf.embedding <=> CAST(:query_emb AS vector)
                 LIMIT :limit
             """), {
                 "query_emb": query_embedding,
@@ -494,13 +494,13 @@ class VectorService:
             results = db.execute(text("""
                 SELECT pf.id, pf.feature_name, pf.feature_description,
                        pf.source_url,
-                       pf.embedding <=> :query_emb::vector as distance
+                       pf.embedding <=> CAST(:query_emb AS vector) as distance
                 FROM product_features pf
                 WHERE pf.product_id = :product_id
                   AND pf.status = 'active'
                   AND pf.embedding IS NOT NULL
-                  AND (pf.embedding <=> :query_emb::vector) <= :max_distance
-                ORDER BY pf.embedding <=> :query_emb::vector
+                  AND (pf.embedding <=> CAST(:query_emb AS vector)) <= :max_distance
+                ORDER BY pf.embedding <=> CAST(:query_emb AS vector)
                 LIMIT :limit
             """), {
                 "query_emb": query_embedding,
