@@ -116,16 +116,20 @@ def init_db():
             db.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             logger.info("pgvector extension enabled")
 
-            # Add embedding column to ci_products if not exists
-            # Note: This will error if column already exists, which is fine
-            try:
-                db.execute(text("ALTER TABLE ci_products ADD COLUMN embedding vector(1024)"))
-                db.commit()
-                logger.info("Added embedding column to ci_products table")
-            except Exception as e:
-                db.rollback()
-                # Column likely already exists, which is fine
-                pass
+            # Add embedding columns to tables that need pgvector support.
+            # Each ALTER will error if column already exists, which is fine.
+            for table, col in [
+                ("ideas", "embedding"),
+                ("ci_products", "embedding"),
+                ("product_features", "embedding"),
+                ("product_competitor_features", "embedding"),
+            ]:
+                try:
+                    db.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} vector(1024)"))
+                    db.commit()
+                    logger.info("Added %s column to %s table", col, table)
+                except Exception:
+                    db.rollback()  # Column likely already exists
         else:
             # SQLite: Create vec_ideas virtual table for vector search
             db.execute(text("""
