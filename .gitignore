@@ -150,3 +150,8 @@ backend/data/competitive_reports/
 # Binary documents (use Google Drive/Notion instead)
 *.pptx
 *.docx
+
+# Celery Beat schedule files
+celerybeat-schedule
+celerybeat-schedule-shm
+celerybeat-schedule-wal
