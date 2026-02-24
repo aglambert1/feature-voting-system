@@ -1233,6 +1233,7 @@ class JobResponse(BaseModel):
     completed_at: Optional[datetime]
     duration_seconds: Optional[float]
     product_id: Optional[int]
+    input_data: Optional[dict]
     output_data: Optional[dict]
 
     class Config:
@@ -1433,6 +1434,7 @@ def list_product_jobs(
             completed_at=j.completed_at,
             duration_seconds=j.duration_seconds,
             product_id=j.product_id,
+            input_data=j.input_data,
             output_data=j.output_data,
         )
         for j in jobs
