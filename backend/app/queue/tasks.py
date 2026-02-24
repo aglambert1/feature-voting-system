@@ -1209,7 +1209,7 @@ def _calculate_next_run(schedule: str) -> datetime:
 @shared_task(bind=True, name='app.queue.tasks.check_scheduled_tasks', soft_time_limit=300)
 def check_scheduled_tasks(self) -> Dict[str, Any]:
     """
-    Master scheduler task - runs hourly via Celery Beat.
+    Master scheduler task - runs daily via Celery Beat.
 
     Checks CompetitiveAgentConfig for each product and queues work if due:
     - Product analysis (if scheduled mode and next_run <= now)

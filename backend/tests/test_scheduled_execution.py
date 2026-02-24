@@ -414,16 +414,6 @@ class TestCeleryBeatConfiguration:
 
         schedule_entry = celery_app.conf.beat_schedule['check-scheduled-agent-tasks']
         assert schedule_entry['task'] == 'app.queue.tasks.check_scheduled_tasks'
-        assert schedule_entry['schedule'] == 3600.0  # Hourly
-
-    def test_beat_schedule_includes_legacy_monitoring(self):
-        """Verify legacy scheduled_monitoring_task is still in beat schedule."""
-        from app.queue import celery_app
-
-        assert 'scheduled-monitoring-daily' in celery_app.conf.beat_schedule
-
-        schedule_entry = celery_app.conf.beat_schedule['scheduled-monitoring-daily']
-        assert schedule_entry['task'] == 'app.queue.tasks.scheduled_monitoring_task'
         assert schedule_entry['schedule'] == 86400.0  # Daily
 
 

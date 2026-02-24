@@ -72,18 +72,10 @@ celery_app.conf.update(
 
     # Beat schedule
     beat_schedule={
-        # Legacy scheduled monitoring (Phase 4)
-        'scheduled-monitoring-daily': {
-            'task': 'app.queue.tasks.scheduled_monitoring_task',
-            'schedule': 86400.0,  # Run once per day (24 * 60 * 60 seconds)
-            # Note: The task checks each product's individual schedule
-            # (daily, weekly, biweekly, monthly) and only runs monitoring
-            # for products that are due based on their configuration.
-        },
-        # Agent-centric scheduling - runs hourly to check what's due
+        # Runs daily to check what's due based on each product's schedule config
         'check-scheduled-agent-tasks': {
             'task': 'app.queue.tasks.check_scheduled_tasks',
-            'schedule': 3600.0,  # Run every hour
+            'schedule': 86400.0,  # Run once per day (24 * 60 * 60 seconds)
             # Checks CompetitiveAgentConfig for each product and queues work if due:
             # - Product analysis (if scheduled mode and next_run <= now)
             # - Competitor discovery (if scheduled mode and next_run <= now)
