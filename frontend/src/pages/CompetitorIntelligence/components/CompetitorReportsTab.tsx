@@ -9,7 +9,7 @@
  * - Competitor alerts display
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { format } from 'date-fns';
 import {
   getFunctionalReports,
@@ -26,6 +26,7 @@ import {
   getCompetitorAlerts,
   markAlertRead,
   markAllAlertsRead,
+  getProductJobs,
   CompetitorAlert,
 } from '../../../services/api';
 import type {
@@ -34,8 +35,9 @@ import type {
   BatchIdeaStatusesResponse,
   AgentCompetitor,
   CompetitiveAgentConfig,
+  QueueJob,
 } from '../../../types';
-import { JobType } from '../../../types';
+import { JobType, JobStatus } from '../../../types';
 import AgentJobStatus from '../../../components/AgentJobStatus';
 import AddCompetitorModal from './AddCompetitorModal';
 
@@ -70,6 +72,10 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Audit job tracking: map competitor_id -> job status
+  const [auditJobs, setAuditJobs] = useState<Map<number, QueueJob>>(new Map());
+  const prevAuditJobCount = useRef(0);
+
   const fetchAllData = useCallback(async () => {
     try {
       setLoading(true);
@@ -95,10 +101,67 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     fetchAllData();
   }, [fetchAllData, refreshKey]);
 
+  // Check for active audit jobs
+  const checkAuditJobs = useCallback(async () => {
+    try {
+      const jobs = await getProductJobs(productId, 20, [JobType.FUNCTIONAL_AUDIT]);
+      const jobMap = new Map<number, QueueJob>();
+      for (const job of jobs) {
+        const competitorId = job.input_data?.competitor_id;
+        if (!competitorId) continue;
+        // Keep the most recent job per competitor
+        if (!jobMap.has(competitorId)) {
+          jobMap.set(competitorId, job);
+        }
+      }
+      setAuditJobs(jobMap);
+    } catch (err) {
+      console.error('[CompetitorReportsTab] Failed to check audit jobs:', err);
+    }
+  }, [productId]);
+
+  // Initial audit job check
+  useEffect(() => {
+    checkAuditJobs();
+  }, [checkAuditJobs]);
+
+  // Poll while any audit jobs are active
+  useEffect(() => {
+    const hasActive = Array.from(auditJobs.values()).some(
+      (j) =>
+        j.status === JobStatus.PENDING ||
+        j.status === JobStatus.QUEUED ||
+        j.status === JobStatus.RUNNING
+    );
+    if (!hasActive) return;
+
+    const interval = setInterval(async () => {
+      await checkAuditJobs();
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [auditJobs, checkAuditJobs]);
+
+  // Refresh data when an audit finishes (active count decreases)
+  useEffect(() => {
+    const activeCount = Array.from(auditJobs.values()).filter(
+      (j) =>
+        j.status === JobStatus.PENDING ||
+        j.status === JobStatus.QUEUED ||
+        j.status === JobStatus.RUNNING
+    ).length;
+
+    if (prevAuditJobCount.current > 0 && activeCount < prevAuditJobCount.current) {
+      // An audit just finished — refresh reports
+      fetchAllData();
+    }
+    prevAuditJobCount.current = activeCount;
+  }, [auditJobs, fetchAllData]);
+
   // Clear success message after timeout
   useEffect(() => {
     if (successMessage) {
-      const timer = setTimeout(() => setSuccessMessage(null), 3000);
+      const timer = setTimeout(() => setSuccessMessage(null), 5000);
       return () => clearTimeout(timer);
     }
   }, [successMessage]);
@@ -188,7 +251,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
       setActionLoading(`audit-${competitorId}`);
       await triggerFunctionalAudit(productId, competitorId);
       setSuccessMessage(`Functional audit started for ${competitorName}`);
-      fetchAllData();
+      checkAuditJobs();
     } catch (err: any) {
       setError(err.message || 'Failed to start audit');
     } finally {
@@ -205,12 +268,11 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
 
     try {
       setActionLoading('batch-audit');
-      // Run audits for all selected competitors
       await Promise.all(
         selectedForAnalysis.map(c => triggerFunctionalAudit(productId, c.id))
       );
       setSuccessMessage(`Functional audits started for ${selectedForAnalysis.length} competitors`);
-      fetchAllData();
+      checkAuditJobs();
     } catch (err: any) {
       setError(err.message || 'Failed to start audits');
     } finally {
@@ -321,6 +383,12 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
   const totalCompetitors = competitors.length;
   const selectedForAnalysis = competitors.filter(c => c.deep_analysis_enabled).length;
   const competitorsWithReports = reports.length;
+  const activeAuditCount = Array.from(auditJobs.values()).filter(
+    (j) =>
+      j.status === JobStatus.PENDING ||
+      j.status === JobStatus.QUEUED ||
+      j.status === JobStatus.RUNNING
+  ).length;
 
   if (loading) {
     return (
@@ -678,10 +746,14 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
             </button>
             <button
               onClick={handleRunAuditsForSelected}
-              disabled={actionLoading === 'batch-audit' || selectedForAnalysis === 0}
+              disabled={actionLoading === 'batch-audit' || selectedForAnalysis === 0 || activeAuditCount > 0}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm disabled:opacity-50"
             >
-              {actionLoading === 'batch-audit' ? 'Starting...' : `Run Audits for Selected (${selectedForAnalysis})`}
+              {actionLoading === 'batch-audit'
+                ? 'Starting...'
+                : activeAuditCount > 0
+                ? `Audits Running (${activeAuditCount})`
+                : `Run Audits for Selected (${selectedForAnalysis})`}
             </button>
           </div>
         </div>
@@ -706,6 +778,12 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
             {competitors.map((competitor) => {
               const report = getReportForCompetitor(competitor.id);
               const hasReport = !!report;
+              const auditJob = auditJobs.get(competitor.id);
+              const isAuditActive = auditJob && (
+                auditJob.status === JobStatus.PENDING ||
+                auditJob.status === JobStatus.QUEUED ||
+                auditJob.status === JobStatus.RUNNING
+              );
 
               return (
                 <div key={competitor.id} className="p-4 hover:bg-gray-50">
@@ -725,22 +803,51 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
                         <div className="flex items-center gap-2">
                           <h4 className="font-medium text-gray-900">{competitor.competitor_name}</h4>
                           {/* Status badges */}
-                          {hasReport && (
+                          {hasReport && !isAuditActive && (
                             <span className="px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded">
                               Report Available
                             </span>
                           )}
-                          {competitor.deep_analysis_enabled && !hasReport && (
+                          {competitor.deep_analysis_enabled && !hasReport && !isAuditActive && (
                             <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded">
                               Selected for Analysis
                             </span>
                           )}
-                          {!competitor.deep_analysis_enabled && (
+                          {!competitor.deep_analysis_enabled && !isAuditActive && (
                             <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 rounded">
                               Not Selected
                             </span>
                           )}
+                          {/* Audit job status badge */}
+                          {isAuditActive && (
+                            <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded flex items-center gap-1">
+                              <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+                              {auditJob.status === JobStatus.RUNNING
+                                ? 'Auditing...'
+                                : auditJob.status === JobStatus.QUEUED
+                                ? 'Queued'
+                                : 'Starting...'}
+                            </span>
+                          )}
                         </div>
+                        {/* Audit progress bar */}
+                        {isAuditActive && auditJob.status === JobStatus.RUNNING && (
+                          <div className="mt-1 flex items-center gap-2">
+                            <div className="w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-300 ${
+                                  auditJob.progress_percent > 0 ? 'bg-blue-500' : 'bg-blue-400 animate-pulse'
+                                }`}
+                                style={{ width: auditJob.progress_percent > 0 ? `${auditJob.progress_percent}%` : '100%' }}
+                              />
+                            </div>
+                            {auditJob.progress_message && (
+                              <span className="text-xs text-gray-500 truncate max-w-48">
+                                {auditJob.progress_message}
+                              </span>
+                            )}
+                          </div>
+                        )}
                         {competitor.competitor_url && (
                           <a
                             href={competitor.competitor_url}
@@ -781,10 +888,10 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
                         )}
                         <button
                           onClick={() => handleRunAudit(competitor.id, competitor.competitor_name)}
-                          disabled={actionLoading === `audit-${competitor.id}`}
-                          className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
+                          disabled={actionLoading === `audit-${competitor.id}` || !!isAuditActive}
+                          className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-50"
                         >
-                          {actionLoading === `audit-${competitor.id}` ? 'Running...' : 'Audit'}
+                          {actionLoading === `audit-${competitor.id}` ? 'Starting...' : isAuditActive ? 'In Progress' : 'Audit'}
                         </button>
                       </div>
                     </div>

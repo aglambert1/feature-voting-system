@@ -5,11 +5,10 @@
  * Shows feature opportunities with priority scores and allows idea creation.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   getLandscapeReport,
   triggerLandscapeSynthesis,
-  triggerCompetitiveAnalysisV2,
   triggerFunctionalAudit,
   exportLandscapeReportMd,
   getOpportunityIdeaStatuses,
@@ -17,6 +16,7 @@ import {
   exportOpportunitiesJson,
   getFunctionalReports,
   getAgentCompetitors,
+  getProductJobs,
 } from "../../../services/api";
 import type {
   LandscapeReportDetail,
@@ -24,7 +24,9 @@ import type {
   FeatureOpportunity,
   AgentCompetitor,
   FunctionalReportSummary,
+  QueueJob,
 } from "../../../types";
+import { JobType, JobStatus } from "../../../types";
 import FeatureOpportunityCard from "./FeatureOpportunityCard";
 
 interface Props {
@@ -73,6 +75,10 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
     new Set()
   );
 
+  // Job polling state
+  const [activeJobs, setActiveJobs] = useState<QueueJob[]>([]);
+  const pendingSynthesisAfterAudits = useRef(false);
+
   // Collapsible sections
   const [showMatrix, setShowMatrix] = useState(false);
 
@@ -106,10 +112,88 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
     fetchData();
   }, [fetchData, refreshKey]);
 
+  // Check for active jobs on initial load
+  const checkForActiveJobs = useCallback(async () => {
+    try {
+      const jobs = await getProductJobs(productId, 10, [
+        JobType.FUNCTIONAL_AUDIT,
+        JobType.LANDSCAPE_SYNTHESIS,
+        JobType.SCHEDULED_DEEP_ANALYSIS,
+      ]);
+      const active = jobs.filter(
+        (j) =>
+          j.status === JobStatus.PENDING ||
+          j.status === JobStatus.QUEUED ||
+          j.status === JobStatus.RUNNING
+      );
+      setActiveJobs(active);
+    } catch (err) {
+      console.error("[LandscapeTab] Failed to check active jobs:", err);
+    }
+  }, [productId]);
+
+  useEffect(() => {
+    checkForActiveJobs();
+  }, [checkForActiveJobs]);
+
+  // Poll for job completion while jobs are active
+  useEffect(() => {
+    if (activeJobs.length === 0) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const jobs = await getProductJobs(productId, 10, [
+          JobType.FUNCTIONAL_AUDIT,
+          JobType.LANDSCAPE_SYNTHESIS,
+          JobType.SCHEDULED_DEEP_ANALYSIS,
+        ]);
+        const active = jobs.filter(
+          (j) =>
+            j.status === JobStatus.PENDING ||
+            j.status === JobStatus.QUEUED ||
+            j.status === JobStatus.RUNNING
+        );
+
+        const hadAudits = activeJobs.some(
+          (j) => j.job_type === JobType.FUNCTIONAL_AUDIT
+        );
+        const auditsNowDone =
+          hadAudits &&
+          !active.some((j) => j.job_type === JobType.FUNCTIONAL_AUDIT);
+
+        setActiveJobs(active);
+
+        // Auto-trigger synthesis when audits complete
+        if (auditsNowDone && pendingSynthesisAfterAudits.current) {
+          pendingSynthesisAfterAudits.current = false;
+          try {
+            await triggerLandscapeSynthesis(productId);
+            setSuccessMessage("Audits complete — landscape synthesis started automatically");
+            // Re-check to pick up the new synthesis job
+            await checkForActiveJobs();
+          } catch (err: any) {
+            setError(err.message || "Failed to auto-start synthesis");
+          }
+          return;
+        }
+
+        if (active.length === 0) {
+          // All jobs done — refresh data
+          setSuccessMessage("Analysis complete");
+          fetchData();
+        }
+      } catch (err) {
+        console.error("[LandscapeTab] Failed to poll jobs:", err);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [activeJobs, productId, fetchData, checkForActiveJobs]);
+
   // Clear success message after timeout
   useEffect(() => {
     if (successMessage) {
-      const timer = setTimeout(() => setSuccessMessage(null), 3000);
+      const timer = setTimeout(() => setSuccessMessage(null), 5000);
       return () => clearTimeout(timer);
     }
   }, [successMessage]);
@@ -164,7 +248,7 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
       setActionLoading("synthesis");
       await triggerLandscapeSynthesis(productId);
       setSuccessMessage("Landscape synthesis started");
-      // Note: We don't immediately refresh since it's async
+      checkForActiveJobs();
     } catch (err: any) {
       setError(err.message || "Failed to start synthesis");
     } finally {
@@ -177,31 +261,25 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
     try {
       setActionLoading("audits-then-synthesis");
 
-      // If specific competitors are selected for audit, trigger individual audits
-      if (
-        competitorsToAudit.size > 0 &&
-        competitorsToAudit.size < competitorsWithoutReports.length
-      ) {
-        // Run audits for selected competitors only
+      if (competitorsToAudit.size > 0) {
+        // Run audits for selected competitors only (not V2 which audits ALL)
         const auditPromises = Array.from(competitorsToAudit).map(
           (competitorId) => triggerFunctionalAudit(productId, competitorId)
         );
         await Promise.all(auditPromises);
+        pendingSynthesisAfterAudits.current = true;
         setSuccessMessage(
-          `Auditing ${competitorsToAudit.size} competitor(s). Run synthesis again when audits complete.`
+          `Auditing ${competitorsToAudit.size} competitor(s). Synthesis will run automatically when audits complete.`
         );
-      } else if (competitorsToAudit.size === competitorsWithoutReports.length) {
-        // All selected - use V2 analysis which runs audits then synthesizes
-        await triggerCompetitiveAnalysisV2(productId);
-        setSuccessMessage(
-          "Running functional audits for all missing competitors, followed by landscape synthesis"
-        );
+        // Start polling for job progress
+        checkForActiveJobs();
       } else {
         // None selected for audit - just run synthesis
         await triggerLandscapeSynthesis(productId);
         setSuccessMessage(
           "Landscape synthesis started (skipping competitors without reports)"
         );
+        checkForActiveJobs();
       }
     } catch (err: any) {
       setError(err.message || "Failed to start analysis");
@@ -368,23 +446,60 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
             competitor reports available
           </p>
         )}
+
+        {/* Active Job Progress Banner */}
+        {activeJobs.length > 0 && (
+          <div className="mb-4 mx-auto max-w-md bg-blue-50 border border-blue-200 rounded-lg p-3 text-left">
+            <div className="flex items-center gap-2">
+              <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent"></div>
+              <span className="text-sm font-medium text-blue-800">
+                Analysis in progress
+              </span>
+            </div>
+            <div className="mt-2 space-y-1">
+              {activeJobs.map((job) => (
+                <div key={job.id} className="text-xs text-blue-700">
+                  {job.job_type === JobType.FUNCTIONAL_AUDIT
+                    ? `Functional audit: ${job.input_data?.competitor_name || "competitor"}`
+                    : job.job_type === JobType.LANDSCAPE_SYNTHESIS
+                    ? "Landscape synthesis"
+                    : job.job_type === JobType.SCHEDULED_DEEP_ANALYSIS
+                    ? "Competitive analysis orchestration"
+                    : job.job_type}
+                  {" — "}
+                  <span className="capitalize">{job.progress_message || job.status}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="mb-4 mx-auto max-w-md bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
+            {successMessage}
+          </div>
+        )}
+
         <div className="flex gap-3 justify-center">
           <button
             onClick={handleRunSynthesisClick}
             disabled={
               actionLoading === "synthesis" ||
               actionLoading === "audits-then-synthesis" ||
-              totalFunctionalReports === 0
+              totalFunctionalReports === 0 ||
+              activeJobs.length > 0
             }
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
           >
             {actionLoading === "synthesis" ||
             actionLoading === "audits-then-synthesis"
               ? "Starting..."
+              : activeJobs.length > 0
+              ? "Analysis Running..."
               : "Run Landscape Analysis"}
           </button>
         </div>
-        {totalFunctionalReports > 0 && (
+        {totalFunctionalReports > 0 && activeJobs.length === 0 && (
           <p className="text-xs text-gray-500 mt-2">
             Uses existing competitor reports for synthesis.
           </p>
@@ -425,13 +540,16 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
               onClick={handleRunSynthesisClick}
               disabled={
                 actionLoading === "synthesis" ||
-                actionLoading === "audits-then-synthesis"
+                actionLoading === "audits-then-synthesis" ||
+                activeJobs.length > 0
               }
               className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
             >
               {actionLoading === "synthesis" ||
               actionLoading === "audits-then-synthesis"
                 ? "Starting..."
+                : activeJobs.length > 0
+                ? "Analysis Running..."
                 : "Re-run Synthesis"}
             </button>
             <button
@@ -472,6 +590,33 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
       {successMessage && (
         <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
           {successMessage}
+        </div>
+      )}
+
+      {/* Active Job Progress Banner */}
+      {activeJobs.length > 0 && (
+        <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <div className="flex items-center gap-2">
+            <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent"></div>
+            <span className="text-sm font-medium text-blue-800">
+              Analysis in progress
+            </span>
+          </div>
+          <div className="mt-2 space-y-1">
+            {activeJobs.map((job) => (
+              <div key={job.id} className="text-xs text-blue-700">
+                {job.job_type === JobType.FUNCTIONAL_AUDIT
+                  ? `Functional audit: ${job.input_data?.competitor_name || "competitor"}`
+                  : job.job_type === JobType.LANDSCAPE_SYNTHESIS
+                  ? "Landscape synthesis"
+                  : job.job_type === JobType.SCHEDULED_DEEP_ANALYSIS
+                  ? "Competitive analysis orchestration"
+                  : job.job_type}
+                {" — "}
+                <span className="capitalize">{job.progress_message || job.status}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -768,10 +913,8 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
                         : `Audit ${competitorsToAudit.size} Selected & Synthesize ${functionalReports.length + competitorsToAudit.size}`}
                     </button>
                     <p className="text-xs text-gray-500 text-center">
-                      {competitorsToAudit.size ===
-                      competitorsWithoutReports.length
-                        ? "Run audits for all competitors, then automatically synthesize."
-                        : "Queues audits for selected competitors. Run synthesis again when complete."}
+                      Queues audits for selected competitors, then
+                      automatically runs synthesis when complete.
                     </p>
                   </>
                 ) : (

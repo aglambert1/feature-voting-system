@@ -313,7 +313,9 @@ export enum JobType {
   IDEA_TRIAGE = 'idea_triage',
   COMPETITIVE_MONITORING = 'competitive_monitoring',
   FULL_WORKFLOW = 'full_workflow',
-  // V2 competitive analysis orchestration
+  // V2 competitive analysis
+  FUNCTIONAL_AUDIT = 'functional_audit',
+  LANDSCAPE_SYNTHESIS = 'landscape_synthesis',
   SCHEDULED_DEEP_ANALYSIS = 'scheduled_deep_analysis',
   // Three-source synthesis
   OPPORTUNITY_SYNTHESIS = 'opportunity_synthesis',
