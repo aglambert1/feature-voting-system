@@ -30,6 +30,14 @@ Common patterns - verify against source if unsure:
 - Adding/renaming service methods
 - Changing patterns used in 3+ places
 
+## Git Workflow (always follow)
+
+- **Never push directly to `main`** — all changes go through a PR
+- Create a feature branch, commit, push, and open a PR via `gh pr create`
+- CI tests must pass before merging
+- This applies to all changes, including one-line fixes and .gitignore updates
+- Production (Render) deploys from `main`, so treat it as protected
+
 ## Project Structure
 
 - `backend/` - FastAPI backend with SQLAlchemy models
