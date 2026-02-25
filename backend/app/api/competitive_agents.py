@@ -17,7 +17,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.database import get_db
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.models.queue import JobType, JobStatus
 from app.models.competitor_intelligence import CIProduct, ProductCompetitor
 from app.models.competitive_agent import (
@@ -28,6 +28,8 @@ from app.models.competitive_reports import (
 )
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.services.queue_service import QueueService
+from app.services.permission_service import PermissionService
+from app.models.competitor_intelligence import ProductPermissionLevel
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
 from app.utils.url import extract_domain
 
@@ -358,11 +360,16 @@ def get_or_create_config(db: Session, product_id: int) -> CompetitiveAgentConfig
     return config
 
 
-def verify_product_access(db: Session, product_id: int, user: User) -> CIProduct:
-    """Verify product exists and user has ownership access.
+def verify_product_access(
+    db: Session,
+    product_id: int,
+    user: User,
+    required_level: ProductPermissionLevel = ProductPermissionLevel.VIEW
+) -> CIProduct:
+    """Verify product exists and user has the required permission level.
 
-    Admin users can access any product. Product Owners can only access
-    products they created. Returns 403 if the user lacks access.
+    Uses PermissionService for consistent access control across all API files.
+    Checks system admin bypass, product creator, team-wide access, and explicit grants.
     """
     product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
     if not product:
@@ -370,7 +377,12 @@ def verify_product_access(db: Session, product_id: int, user: User) -> CIProduct
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Product {product_id} not found"
         )
-    if user.role != UserRole.ADMIN and product.created_by_user_id != user.id:
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=user.id,
+        product_id=product_id,
+        required_level=required_level
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this product"
@@ -378,10 +390,10 @@ def verify_product_access(db: Session, product_id: int, user: User) -> CIProduct
     return product
 
 
-def verify_competitor_access(
-    db: Session, product_id: int, competitor_id: int, user: User
+def get_competitor_or_404(
+    db: Session, product_id: int, competitor_id: int
 ) -> ProductCompetitor:
-    """Verify competitor exists and belongs to product."""
+    """Look up a competitor by ID, scoped to the given product. Raises 404 if not found."""
     competitor = db.query(ProductCompetitor).filter(
         ProductCompetitor.id == competitor_id,
         ProductCompetitor.product_id == product_id
@@ -436,7 +448,7 @@ def update_agent_config(
     db: Session = Depends(get_db)
 ):
     """Update the competitive agent configuration for a product."""
-    verify_product_access(db, product_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
     config = get_or_create_config(db, product_id)
 
     # Update fields if provided
@@ -530,7 +542,7 @@ def mark_alert_read(
     db: Session = Depends(get_db)
 ):
     """Mark an alert as read."""
-    verify_product_access(db, product_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
 
     alert = db.query(CompetitorAlert).filter(
         CompetitorAlert.id == alert_id,
@@ -556,7 +568,7 @@ def mark_all_alerts_read(
     db: Session = Depends(get_db)
 ):
     """Mark all alerts as read for a product."""
-    verify_product_access(db, product_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
 
     updated = db.query(CompetitorAlert).filter(
         CompetitorAlert.product_id == product_id,
@@ -579,7 +591,7 @@ async def trigger_competitor_discovery(
     db: Session = Depends(get_db)
 ):
     """Trigger async competitor discovery for a product."""
-    product = verify_product_access(db, product_id, current_user)
+    product = verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
 
     queue_service = QueueService(db)
 
@@ -636,7 +648,7 @@ def trigger_product_reanalysis(
     db: Session = Depends(get_db)
 ):
     """Trigger async product reanalysis."""
-    product = verify_product_access(db, product_id, current_user)
+    product = verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
 
     queue_service = QueueService(db)
 
@@ -748,7 +760,8 @@ def enable_deep_analysis(
     db: Session = Depends(get_db)
 ):
     """Mark a competitor for deep analysis."""
-    competitor = verify_competitor_access(db, product_id, competitor_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
+    competitor = get_competitor_or_404(db, product_id, competitor_id)
 
     competitor.deep_analysis_enabled = True
     db.commit()
@@ -764,7 +777,8 @@ def disable_deep_analysis(
     db: Session = Depends(get_db)
 ):
     """Remove a competitor from deep analysis."""
-    competitor = verify_competitor_access(db, product_id, competitor_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
+    competitor = get_competitor_or_404(db, product_id, competitor_id)
 
     competitor.deep_analysis_enabled = False
     db.commit()
@@ -785,7 +799,7 @@ def add_competitor_manually(
     Validates name+URL uniqueness within this product.
     Automatically enables deep analysis for manually added competitors.
     """
-    verify_product_access(db, product_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
 
     # Check uniqueness within product - compare in Python for DB-agnostic behavior
     active_competitors = db.query(ProductCompetitor).filter(
@@ -849,7 +863,8 @@ def list_competitor_features(
     """
     from app.models.competitive_reports import CompetitorFunctionalReport
 
-    verify_competitor_access(db, product_id, competitor_id, current_user)
+    verify_product_access(db, product_id, current_user)
+    get_competitor_or_404(db, product_id, competitor_id)
 
     # Get the latest functional report for this competitor
     report = db.query(CompetitorFunctionalReport).filter(
@@ -891,7 +906,8 @@ def create_idea_from_feature(
     """
     from app.models.competitive_reports import CompetitorFunctionalReport
 
-    verify_competitor_access(db, product_id, competitor_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
+    get_competitor_or_404(db, product_id, competitor_id)
 
     # Get the latest functional report
     report = db.query(CompetitorFunctionalReport).filter(
@@ -981,7 +997,8 @@ def create_ideas_from_features(
     """
     from app.models.competitive_reports import CompetitorFunctionalReport
 
-    verify_competitor_access(db, product_id, competitor_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
+    get_competitor_or_404(db, product_id, competitor_id)
 
     competitor = db.query(ProductCompetitor).filter(
         ProductCompetitor.id == competitor_id
@@ -1157,7 +1174,7 @@ async def trigger_competitive_analysis_v2(
     Use this endpoint for comprehensive competitive analysis with
     feature comparison and opportunity identification.
     """
-    verify_product_access(db, product_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
 
     queue_service = QueueService(db)
 
@@ -1239,7 +1256,8 @@ def trigger_functional_audit(
     db: Session = Depends(get_db)
 ):
     """Trigger a functional audit for a single competitor."""
-    verify_competitor_access(db, product_id, competitor_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
+    get_competitor_or_404(db, product_id, competitor_id)
 
     queue_service = QueueService(db)
 
@@ -1301,7 +1319,8 @@ def get_functional_report(
     db: Session = Depends(get_db)
 ):
     """Get the functional audit report for a competitor."""
-    competitor = verify_competitor_access(db, product_id, competitor_id, current_user)
+    verify_product_access(db, product_id, current_user)
+    competitor = get_competitor_or_404(db, product_id, competitor_id)
 
     report = db.query(CompetitorFunctionalReport).filter(
         CompetitorFunctionalReport.product_competitor_id == competitor_id,
@@ -1336,7 +1355,8 @@ def export_functional_report(
     """Export the functional audit report as markdown."""
     from fastapi.responses import PlainTextResponse
 
-    competitor = verify_competitor_access(db, product_id, competitor_id, current_user)
+    verify_product_access(db, product_id, current_user)
+    competitor = get_competitor_or_404(db, product_id, competitor_id)
 
     report = db.query(CompetitorFunctionalReport).filter(
         CompetitorFunctionalReport.product_competitor_id == competitor_id,
@@ -1421,7 +1441,7 @@ def create_ideas_from_gaps(
     Creates ideas in the idea queue and triggers triage for each.
     Gaps that already have ideas created will be skipped.
     """
-    verify_product_access(db, product_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
 
     # Get the functional report
     report = db.query(CompetitorFunctionalReport).filter(
@@ -1736,7 +1756,7 @@ def trigger_landscape_synthesis(
 
     Requires at least one functional report to exist.
     """
-    verify_product_access(db, product_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
 
     # Check for existing functional reports
     report_count = db.query(CompetitorFunctionalReport).filter(
@@ -1871,7 +1891,7 @@ def create_ideas_from_opportunities(
     Creates ideas in the idea queue and triggers triage for each.
     Opportunities that already have ideas created will be skipped.
     """
-    verify_product_access(db, product_id, current_user)
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
 
     # Get the landscape report
     report = db.query(LandscapeOpportunityReport).filter(
