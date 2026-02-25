@@ -30,6 +30,10 @@ Common patterns - verify against source if unsure:
 - Adding/renaming service methods
 - Changing patterns used in 3+ places
 
+### Documentation upkeep
+When adding, removing, or changing scripts, migrations, or CLI tools, update the relevant README:
+- `backend/scripts/README.md` — management scripts, DB utilities, migrations
+
 ## Git Workflow (always follow)
 
 - **Never push directly to `main`** — all changes go through a PR
