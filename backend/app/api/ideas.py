@@ -95,7 +95,7 @@ def get_user_vote(db: Session, idea_id: int, user_id: Optional[int]) -> tuple[Op
     return (None, None)
 
 
-@router.post("/", response_model=IdeaResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=IdeaResponse, status_code=status.HTTP_201_CREATED)
 def create_idea(
     idea_data: IdeaCreate,
     current_user: User = Depends(get_current_active_user),
@@ -156,7 +156,7 @@ def create_idea(
     return response
 
 
-@router.get("/", response_model=IdeaListResponse)
+@router.get("", response_model=IdeaListResponse)
 def list_ideas(
     skip: int = 0,
     limit: int = 100,
