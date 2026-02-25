@@ -1,7 +1,9 @@
 import { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import Navigation from '../components/Navigation';
 import api from '../services/api';
-import type { User } from '../types';
+import { getUserProducts, setUserProducts } from '../services/api';
+import type { User, UserProduct, ProductListItem } from '../types';
 import { AxiosError } from 'axios';
 import type { ApiError } from '../types';
 
@@ -11,6 +13,7 @@ interface CreateFormData {
   full_name: string;
   password: string;
   role: string;
+  product_ids: number[];
 }
 
 export default function UserManagementPage() {
@@ -20,18 +23,33 @@ export default function UserManagementPage() {
   const [error, setError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+  const [allProducts, setAllProducts] = useState<ProductListItem[]>([]);
+  const [userProductsMap, setUserProductsMap] = useState<Record<number, UserProduct[]>>({});
+  const [editingProductsUserId, setEditingProductsUserId] = useState<number | null>(null);
+  const [editingProductIds, setEditingProductIds] = useState<number[]>([]);
   const [createFormData, setCreateFormData] = useState<CreateFormData>({
     username: '',
     email: '',
     full_name: '',
     password: '',
-    role: 'voter'
+    role: 'voter',
+    product_ids: [],
   });
 
-  // Fetch users
+  // Fetch users and products
   useEffect(() => {
     fetchUsers();
+    fetchProducts();
   }, []);
+
+  const fetchProducts = async () => {
+    try {
+      const response = await api.get('/ideas/products');
+      setAllProducts(Array.isArray(response.data) ? response.data : []);
+    } catch {
+      // Admin should see all products
+    }
+  };
 
   const fetchUsers = async () => {
     try {
@@ -39,6 +57,18 @@ export default function UserManagementPage() {
       const response = await api.get<User[]>('/auth/users');
       setUsers(response.data);
       setError('');
+
+      // Fetch product assignments for each user
+      const productsMap: Record<number, UserProduct[]> = {};
+      for (const u of response.data) {
+        try {
+          const products = await getUserProducts(u.id);
+          productsMap[u.id] = products;
+        } catch {
+          productsMap[u.id] = [];
+        }
+      }
+      setUserProductsMap(productsMap);
     } catch (err) {
       const error = err as AxiosError<ApiError>;
       setError(error.response?.data?.detail || 'Failed to load users');
@@ -98,7 +128,14 @@ export default function UserManagementPage() {
     e.preventDefault();
 
     try {
-      await api.post('/auth/register', createFormData);
+      await api.post('/auth/register', {
+        username: createFormData.username,
+        email: createFormData.email,
+        full_name: createFormData.full_name,
+        password: createFormData.password,
+        role: createFormData.role,
+        product_ids: createFormData.product_ids,
+      });
       setSuccessMessage(`User ${createFormData.username} created successfully`);
       setShowCreateModal(false);
       setCreateFormData({
@@ -106,7 +143,8 @@ export default function UserManagementPage() {
         email: '',
         full_name: '',
         password: '',
-        role: 'voter'
+        role: 'voter',
+        product_ids: [],
       });
       fetchUsers(); // Refresh list
       setTimeout(() => setSuccessMessage(''), 3000);
@@ -114,6 +152,39 @@ export default function UserManagementPage() {
       const error = err as AxiosError<ApiError>;
       setError(error.response?.data?.detail || 'Failed to create user');
       setTimeout(() => setError(''), 3000);
+    }
+  };
+
+  const handleSaveProducts = async () => {
+    if (editingProductsUserId === null) return;
+    const targetUser = users.find(u => u.id === editingProductsUserId);
+    if (!targetUser) return;
+
+    try {
+      await setUserProducts(editingProductsUserId, editingProductIds);
+      setSuccessMessage(`Product assignments updated for ${targetUser.username}`);
+      setEditingProductsUserId(null);
+      setEditingProductIds([]);
+      fetchUsers();
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setError(error.response?.data?.detail || 'Failed to update product assignments');
+      setTimeout(() => setError(''), 3000);
+    }
+  };
+
+  const handleEditProducts = (userId: number) => {
+    const currentProducts = userProductsMap[userId] || [];
+    setEditingProductsUserId(userId);
+    setEditingProductIds(currentProducts.map(p => p.product_id));
+  };
+
+  const toggleProductId = (productId: number, list: number[], setter: (ids: number[]) => void) => {
+    if (list.includes(productId)) {
+      setter(list.filter(id => id !== productId));
+    } else {
+      setter([...list, productId]);
     }
   };
 
@@ -132,22 +203,10 @@ export default function UserManagementPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex justify-between items-center">
-            <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
-            <a
-              href="/ideas"
-              className="text-blue-600 hover:text-blue-800 transition-colors"
-            >
-              ← Back to Ideas
-            </a>
-          </div>
-        </div>
-      </header>
+      <Navigation />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">User Management</h1>
         {/* Messages */}
         {error && (
           <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
@@ -214,6 +273,9 @@ export default function UserManagementPage() {
                       Role
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Products
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -257,6 +319,26 @@ export default function UserManagementPage() {
                           <option value="product_owner">Product Owner</option>
                         </select>
                       </td>
+                      <td className="px-6 py-4">
+                        {u.role === 'admin' ? (
+                          <span className="text-xs text-gray-400">All products</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {(userProductsMap[u.id] || []).length === 0 ? (
+                              <span className="text-xs text-gray-400">None</span>
+                            ) : (
+                              (userProductsMap[u.id] || []).map(p => (
+                                <span
+                                  key={p.product_id}
+                                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800"
+                                >
+                                  {p.product_name}
+                                </span>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span
                           className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -273,6 +355,14 @@ export default function UserManagementPage() {
                           <span className="text-gray-400">Cannot modify yourself</span>
                         ) : (
                           <div className="flex space-x-2">
+                            {u.role !== 'admin' && (
+                              <button
+                                onClick={() => handleEditProducts(u.id)}
+                                className="text-purple-600 hover:text-purple-900 font-medium"
+                              >
+                                Products
+                              </button>
+                            )}
                             {u.is_active ? (
                               <button
                                 onClick={() => handleDeactivateUser(u.id, u.username)}
@@ -319,6 +409,62 @@ export default function UserManagementPage() {
           </div>
         </div>
       </main>
+
+      {/* Edit Products Modal */}
+      {editingProductsUserId !== null && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Edit Product Access — {users.find(u => u.id === editingProductsUserId)?.username}
+              </h3>
+            </div>
+
+            <div className="px-6 py-4">
+              {allProducts.length === 0 ? (
+                <p className="text-sm text-gray-500">No products available.</p>
+              ) : (
+                <div className="border border-gray-300 rounded-lg max-h-60 overflow-y-auto">
+                  {allProducts.map(product => (
+                    <label
+                      key={product.id}
+                      className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={editingProductIds.includes(product.id)}
+                        onChange={() => toggleProductId(product.id, editingProductIds, setEditingProductIds)}
+                        className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                      />
+                      <span className="ml-2 text-sm text-gray-700">{product.product_name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingProductsUserId(null);
+                  setEditingProductIds([]);
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveProducts}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create User Modal */}
       {showCreateModal && (
@@ -392,7 +538,7 @@ export default function UserManagementPage() {
                   </label>
                   <select
                     value={createFormData.role}
-                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setCreateFormData({...createFormData, role: e.target.value})}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setCreateFormData({...createFormData, role: e.target.value, product_ids: []})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="product_owner">Product Owner</option>
@@ -400,6 +546,33 @@ export default function UserManagementPage() {
                     <option value="admin">Admin</option>
                   </select>
                 </div>
+
+                {createFormData.role !== 'admin' && allProducts.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Product Access
+                    </label>
+                    <div className="border border-gray-300 rounded-lg max-h-40 overflow-y-auto">
+                      {allProducts.map(product => (
+                        <label
+                          key={product.id}
+                          className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={createFormData.product_ids.includes(product.id)}
+                            onChange={() => toggleProductId(product.id, createFormData.product_ids, (ids) => setCreateFormData({...createFormData, product_ids: ids}))}
+                            className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                          />
+                          <span className="ml-2 text-sm text-gray-700">{product.product_name}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Select products this user can access. Can be changed later.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="mt-6 flex justify-end space-x-3">
@@ -412,7 +585,8 @@ export default function UserManagementPage() {
                       email: '',
                       full_name: '',
                       password: '',
-                      role: 'voter'
+                      role: 'voter',
+                      product_ids: [],
                     });
                   }}
                   className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium transition-colors"

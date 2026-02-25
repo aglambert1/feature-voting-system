@@ -62,20 +62,20 @@ class TestCreateIdea:
 
 class TestGetIdea:
 
-    def test_get_idea_by_id(self, client, test_idea):
-        resp = client.get(f"/ideas/{test_idea.id}")
+    def test_get_idea_by_id(self, client, voter_user, test_idea):
+        resp = client.get(f"/ideas/{test_idea.id}", headers=auth_headers(voter_user))
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == test_idea.id
         assert data["title"] == "Test Idea"
 
-    def test_get_idea_not_found(self, client):
-        resp = client.get("/ideas/99999")
+    def test_get_idea_not_found(self, client, voter_user):
+        resp = client.get("/ideas/99999", headers=auth_headers(voter_user))
         assert resp.status_code == 404
 
-    def test_get_idea_no_auth_required(self, client, test_idea):
+    def test_get_idea_requires_auth(self, client, test_idea):
         resp = client.get(f"/ideas/{test_idea.id}")
-        assert resp.status_code == 200
+        assert resp.status_code == 401
 
 
 class TestListIdeas:

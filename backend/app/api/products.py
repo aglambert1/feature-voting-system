@@ -325,19 +325,19 @@ def list_products(
 @router.get("/{product_id}", response_model=ProductResponse)
 def get_product(
     product_id: int,
-    current_user: User = Depends(get_product_owner_or_admin),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
     Get a product by ID (detail view).
 
-    Requires: PRODUCT_OWNER or ADMIN role + VIEW permission on the product.
+    Requires VIEW permission on the product.
 
     Returns:
         Product details
 
     Raises:
-        403: If user is not a Product Owner/Admin or lacks VIEW permission
+        403: If user lacks VIEW permission
         404: If product not found
     """
     service = ProductService(db)
@@ -1233,8 +1233,8 @@ class JobResponse(BaseModel):
     completed_at: Optional[datetime]
     duration_seconds: Optional[float]
     product_id: Optional[int]
-    input_data: Optional[dict]
-    output_data: Optional[dict]
+    input_data: Optional[dict] = None
+    output_data: Optional[dict] = None
 
     class Config:
         from_attributes = True

@@ -21,7 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import settings
 from app.logging_config import setup_logging
 from app.database import init_db, create_initial_admin
-from app.api import auth, ideas, votes, submissions, products, pm_review, monitoring, competitive_agents, internal_feedback, synthesis, admin
+from app.api import auth, ideas, votes, submissions, products, pm_review, monitoring, competitive_agents, internal_feedback, synthesis, admin, invites
 from app.utils.security import create_access_token
 
 setup_logging(debug=settings.debug)
@@ -208,6 +208,7 @@ app.include_router(competitive_agents.router)  # Agent-centric competitive intel
 app.include_router(internal_feedback.router)  # Internal feedback import and themes
 app.include_router(synthesis.router)  # Opportunity synthesis
 app.include_router(admin.router)  # Admin endpoints (cost tracking, etc.)
+app.include_router(invites.router)  # Product invite codes and redemption
 
 
 @app.get("/")

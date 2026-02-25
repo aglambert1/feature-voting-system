@@ -101,12 +101,22 @@ class TestGetProduct:
         )
         assert resp.status_code == 404
 
-    def test_get_product_voter_forbidden(self, client, voter_user, test_product):
+    def test_get_product_voter_without_access_denied(self, client, voter_user, test_product):
+        """Voter without product permission gets 404 (product hidden)."""
         resp = client.get(
             f"/product-intelligence/products/{test_product.id}",
             headers=auth_headers(voter_user)
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 404
+
+    def test_get_product_voter_with_access_succeeds(self, client, voter_user, test_product, voter_product_access):
+        """Voter with VIEW permission can access the product."""
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}",
+            headers=auth_headers(voter_user)
+        )
+        assert resp.status_code == 200
+        assert resp.json()["product_name"] == test_product.product_name
 
 
 class TestUpdateProduct:

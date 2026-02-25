@@ -60,6 +60,42 @@ export interface RegisterData {
   password: string;
   full_name?: string;
   role?: UserRole;
+  invite_code?: string;
+  product_ids?: number[];
+}
+
+export interface InviteCodeInfo {
+  valid: boolean;
+  product_name?: string;
+  message: string;
+}
+
+export interface InviteCode {
+  id: number;
+  product_id: number;
+  code: string;
+  invite_url: string;
+  max_uses: number | null;
+  current_uses: number;
+  permission_level: string;
+  expires_at: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface ProductMember {
+  user_id: number;
+  username: string;
+  email: string;
+  permission_level: string;
+  granted_at: string;
+}
+
+export interface UserProduct {
+  product_id: number;
+  product_name: string;
+  permission_level: string;
+  granted_at: string;
 }
 
 export interface AuthResult {

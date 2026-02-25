@@ -25,9 +25,13 @@ import api, {
   getUnreadAlertCount,
   getFunctionalReports,
   getProductJobs,
+  createInviteCode,
+  getInviteCodes,
+  deactivateInviteCode,
+  getProductMembers,
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
-import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, TriageSettings, JobType, QueueJob, JobStatus } from '../../types';
+import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, TriageSettings, JobType, QueueJob, JobStatus, InviteCode, ProductMember } from '../../types';
 import IdeaTriageSetupModal from './components/IdeaTriageSetupModal';
 import CompetitiveIntelligenceSetupModal from './components/CompetitiveIntelligenceSetupModal';
 import AgentJobStatus from '../../components/AgentJobStatus';
@@ -128,6 +132,14 @@ export default function ProductDetailPage() {
   // Competitive intelligence stats
   const [unreadAlertCount, setUnreadAlertCount] = useState(0);
   const [functionalReportCount, setFunctionalReportCount] = useState(0);
+
+  // Voter management state
+  const [showVotersSection, setShowVotersSection] = useState(false);
+  const [inviteCodes, setInviteCodes] = useState<InviteCode[]>([]);
+  const [members, setMembers] = useState<ProductMember[]>([]);
+  const [votersLoading, setVotersLoading] = useState(false);
+  const [copiedCodeId, setCopiedCodeId] = useState<number | null>(null);
+  const [creatingCode, setCreatingCode] = useState(false);
 
   // Action state
   const [runningAction, setRunningAction] = useState<string | null>(null);
@@ -398,6 +410,64 @@ export default function ProductDetailPage() {
       setRunningAction(null);
     }
   };
+
+  // Voter management functions
+  const fetchVoterData = useCallback(async () => {
+    if (!productId) return;
+    const numProductId = parseInt(productId);
+    setVotersLoading(true);
+    try {
+      const [codesRes, membersRes] = await Promise.all([
+        getInviteCodes(numProductId),
+        getProductMembers(numProductId),
+      ]);
+      setInviteCodes(codesRes);
+      setMembers(membersRes);
+    } catch (err: any) {
+      console.error('Failed to fetch voter data:', err);
+    } finally {
+      setVotersLoading(false);
+    }
+  }, [productId]);
+
+  const handleCreateInviteCode = async () => {
+    if (!productId) return;
+    setCreatingCode(true);
+    try {
+      await createInviteCode(parseInt(productId));
+      await fetchVoterData();
+      setActionMessage({ type: 'success', text: 'Invite code created successfully' });
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err.message || 'Failed to create invite code' });
+    } finally {
+      setCreatingCode(false);
+    }
+  };
+
+  const handleDeactivateCode = async (codeId: number) => {
+    if (!productId) return;
+    try {
+      await deactivateInviteCode(parseInt(productId), codeId);
+      await fetchVoterData();
+      setActionMessage({ type: 'success', text: 'Invite code deactivated' });
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err.message || 'Failed to deactivate code' });
+    }
+  };
+
+  const handleCopyLink = (code: InviteCode) => {
+    const fullUrl = `${window.location.origin}${code.invite_url}`;
+    navigator.clipboard.writeText(fullUrl);
+    setCopiedCodeId(code.id);
+    setTimeout(() => setCopiedCodeId(null), 2000);
+  };
+
+  // Load voter data when section is opened
+  useEffect(() => {
+    if (showVotersSection) {
+      fetchVoterData();
+    }
+  }, [showVotersSection, fetchVoterData]);
 
   const toggleVersionExpanded = (versionId: number) => {
     setExpandedVersions(prev => {
@@ -732,6 +802,146 @@ export default function ProductDetailPage() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Voters & Access Section */}
+        <div className="bg-white rounded-lg shadow mb-6">
+          <button
+            onClick={() => setShowVotersSection(!showVotersSection)}
+            className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold text-gray-900">Voters & Access</h2>
+              {members.length > 0 && (
+                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
+                  {members.length} {members.length === 1 ? 'member' : 'members'}
+                </span>
+              )}
+            </div>
+            <svg
+              className={`h-5 w-5 text-gray-400 transition-transform ${showVotersSection ? 'rotate-180' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {showVotersSection && (
+            <div className="px-6 pb-6 border-t border-gray-200 pt-4">
+              {votersLoading ? (
+                <div className="flex justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Invite Codes */}
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-medium text-gray-900">Invite Codes</h3>
+                      <button
+                        onClick={handleCreateInviteCode}
+                        disabled={creatingCode}
+                        className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
+                      >
+                        {creatingCode ? 'Creating...' : 'Create Invite Link'}
+                      </button>
+                    </div>
+
+                    {inviteCodes.length === 0 ? (
+                      <p className="text-sm text-gray-500">No invite codes yet. Create one to invite voters to this product.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {inviteCodes.map(code => (
+                          <div
+                            key={code.id}
+                            className={`flex items-center justify-between p-3 rounded-lg border ${
+                              code.is_active ? 'border-gray-200 bg-gray-50' : 'border-gray-100 bg-gray-100 opacity-60'
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <code className="text-sm font-mono text-gray-700">
+                                  {code.code.slice(0, 8)}...
+                                </code>
+                                <span className={`px-1.5 py-0.5 text-xs rounded ${
+                                  code.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                }`}>
+                                  {code.is_active ? 'Active' : 'Inactive'}
+                                </span>
+                              </div>
+                              <div className="text-xs text-gray-500 mt-1">
+                                {code.current_uses}{code.max_uses ? `/${code.max_uses}` : ''} uses
+                                {' · '}
+                                Created {format(new Date(code.created_at), 'MMM d, yyyy')}
+                                {code.expires_at && ` · Expires ${format(new Date(code.expires_at), 'MMM d, yyyy')}`}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 ml-3">
+                              {code.is_active && (
+                                <>
+                                  <button
+                                    onClick={() => handleCopyLink(code)}
+                                    className="px-2.5 py-1 text-xs font-medium text-blue-600 hover:text-blue-800 border border-blue-200 rounded hover:bg-blue-50 transition-colors"
+                                  >
+                                    {copiedCodeId === code.id ? 'Copied!' : 'Copy Link'}
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeactivateCode(code.id)}
+                                    className="px-2.5 py-1 text-xs font-medium text-red-600 hover:text-red-800 border border-red-200 rounded hover:bg-red-50 transition-colors"
+                                  >
+                                    Deactivate
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Current Members */}
+                  <div>
+                    <h3 className="font-medium text-gray-900 mb-3">Current Members</h3>
+                    {members.length === 0 ? (
+                      <p className="text-sm text-gray-500">No members with access to this product yet.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">User</th>
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Access</th>
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Joined</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-200">
+                            {members.map(member => (
+                              <tr key={member.user_id} className="hover:bg-gray-50">
+                                <td className="px-4 py-2 text-sm text-gray-900">{member.username}</td>
+                                <td className="px-4 py-2 text-sm text-gray-500">{member.email}</td>
+                                <td className="px-4 py-2">
+                                  <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                                    {member.permission_level}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2 text-sm text-gray-500">
+                                  {format(new Date(member.granted_at), 'MMM d, yyyy')}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Current Product Analysis */}

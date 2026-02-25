@@ -1,11 +1,13 @@
 """
 Seed script for demo data.
 
-Creates realistic demo data tied to existing CIProduct records.
+Creates realistic demo data including a demo product, users with
+product permissions, ideas, votes, comments, and status history.
 Idempotent — safe to re-run. Uses get-or-create patterns.
 
 Usage:
     cd backend && ./venv/bin/python -m scripts.seed_demo_data
+    cd backend && ./venv/bin/python -m scripts.seed_demo_data --cleanup
 """
 
 import sys
@@ -13,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.database import SessionLocal
 from app.models.user import User, UserRole
-from app.models.competitor_intelligence import CIProduct
+from app.models.competitor_intelligence import CIProduct, ProductPermission, ProductPermissionLevel
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.idea_lifecycle_status import IdeaLifecycleStatus
 from app.models.vote import Vote
@@ -21,12 +23,26 @@ from app.models.idea_comment import IdeaComment
 from app.models.idea_status_history import IdeaStatusHistory
 from app.utils.security import hash_password
 
+SEED_EMAIL_DOMAIN = "@voteflow.dev"
+
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 DEMO_PASSWORD = "demo1234"
+
+DEMO_PRODUCT = {
+    "product_name": "Concur Invoice",
+    "product_description": (
+        "Concur Invoice is an accounts payable automation platform that helps "
+        "organizations streamline invoice processing, automate approval workflows, "
+        "and gain visibility into supplier spending. Features include invoice capture, "
+        "three-way PO matching, configurable approval routing, and integration with "
+        "major ERP systems."
+    ),
+    "product_category": "Accounts Payable Automation Software",
+}
 
 DEMO_USERS = [
     # (username, email, full_name, role)
@@ -338,6 +354,40 @@ def get_or_create_user(db, username, email, full_name, role):
     return user, True
 
 
+def get_or_create_product(db, product_name, product_description, product_category, created_by_user_id):
+    """Get existing product by name or create new one."""
+    product = db.query(CIProduct).filter(CIProduct.product_name == product_name).first()
+    if product:
+        return product, False
+    product = CIProduct(
+        product_name=product_name,
+        product_description=product_description,
+        product_category=product_category,
+        created_by_user_id=created_by_user_id,
+    )
+    db.add(product)
+    db.flush()
+    return product, True
+
+
+def grant_permission_if_not_exists(db, product_id, user_id, level, granted_by_user_id):
+    """Grant product permission if not already granted."""
+    existing = db.query(ProductPermission).filter(
+        ProductPermission.product_id == product_id,
+        ProductPermission.user_id == user_id,
+    ).first()
+    if existing:
+        return False
+    perm = ProductPermission(
+        product_id=product_id,
+        user_id=user_id,
+        permission_level=level,
+        granted_by_user_id=granted_by_user_id,
+    )
+    db.add(perm)
+    return True
+
+
 def get_or_create_lifecycle_status(db, name, slug, color, position):
     """Get existing lifecycle status by slug or create new one."""
     status = db.query(IdeaLifecycleStatus).filter(
@@ -419,17 +469,6 @@ def add_status_history(db, idea_id, prev_status, new_status, user_id=None,
 def seed():
     db = SessionLocal()
     try:
-        # --- Check for existing products ---
-        products = db.query(CIProduct).order_by(CIProduct.id).all()
-        if not products:
-            print("ERROR: No CIProduct records found in the database.")
-            print("  Create at least one product before running the seed script.")
-            sys.exit(1)
-
-        product = products[0]
-        print(f"Using product: {product.product_name} (ID={product.id})")
-        print()
-
         # --- Users ---
         print("Creating users...")
         users = {}
@@ -442,10 +481,49 @@ def seed():
         db.commit()
         print(f"  {created_count} new users created, {len(DEMO_USERS) - created_count} already existed")
 
-        # Collect voter user objects for vote assignment
+        # Collect user references
         voter_users = [users[f"voter_{i:02d}"] for i in range(1, 13)]
         po_user = users["demo_po_1"]
+        po_user_2 = users["demo_po_2"]
         admin_user = users["demo_admin"]
+
+        # --- Product ---
+        print("Creating demo product...")
+        product, product_created = get_or_create_product(
+            db,
+            DEMO_PRODUCT["product_name"],
+            DEMO_PRODUCT["product_description"],
+            DEMO_PRODUCT["product_category"],
+            created_by_user_id=admin_user.id,
+        )
+        db.commit()
+        if product_created:
+            print(f"  Created product: {product.product_name} (ID={product.id})")
+        else:
+            print(f"  Using existing product: {product.product_name} (ID={product.id})")
+
+        # --- Product Permissions ---
+        print("Granting product permissions...")
+        perms_created = 0
+
+        # POs get ADMIN on the product
+        for po in [po_user, po_user_2]:
+            if grant_permission_if_not_exists(
+                db, product.id, po.id,
+                ProductPermissionLevel.ADMIN, admin_user.id
+            ):
+                perms_created += 1
+
+        # Voters get VIEW on the product
+        for voter in voter_users:
+            if grant_permission_if_not_exists(
+                db, product.id, voter.id,
+                ProductPermissionLevel.VIEW, admin_user.id
+            ):
+                perms_created += 1
+
+        db.commit()
+        print(f"  {perms_created} new permissions granted")
 
         # --- Lifecycle Statuses ---
         print("Creating lifecycle statuses...")
@@ -687,15 +765,19 @@ def seed():
         print("Demo data seeding complete!")
         print("=" * 60)
         print()
-        print(f"Product:           {product.product_name}")
+        print(f"Product:           {product.product_name} (ID={product.id})")
         print(f"Users:             {len(DEMO_USERS)} (password: '{DEMO_PASSWORD}')")
+        print(f"Permissions:       2 POs (ADMIN), 12 voters (VIEW)")
         print(f"Lifecycle stages:  {len(LIFECYCLE_STATUSES)}")
         print(f"Ideas:             {len(AP_AUTOMATION_IDEAS)}")
         print()
         print("Demo accounts:")
         print(f"  Admin:   demo_admin / {DEMO_PASSWORD}")
         print(f"  PO:      demo_po_1 / {DEMO_PASSWORD}")
+        print(f"  PO:      demo_po_2 / {DEMO_PASSWORD}")
         print(f"  Voter:   voter_01 / {DEMO_PASSWORD}")
+        print()
+        print("Cleanup: ./venv/bin/python -m scripts.seed_demo_data --cleanup")
         print()
 
     except Exception as e:
@@ -706,5 +788,90 @@ def seed():
         db.close()
 
 
+def cleanup():
+    """Remove all seed data (users, permissions, ideas, votes, comments, history)."""
+    db = SessionLocal()
+    try:
+        # Find seed users by email domain
+        seed_users = db.query(User).filter(
+            User.email.like(f"%{SEED_EMAIL_DOMAIN}")
+        ).all()
+        seed_user_ids = [u.id for u in seed_users]
+
+        if not seed_user_ids:
+            print("No seed data found. Nothing to clean up.")
+            return
+
+        # Find seed ideas by title
+        seed_titles = [tmpl["title"] for tmpl in AP_AUTOMATION_IDEAS]
+        seed_ideas = db.query(Idea).filter(Idea.title.in_(seed_titles)).all()
+        seed_idea_ids = [i.id for i in seed_ideas]
+
+        # Delete in dependency order
+        if seed_idea_ids:
+            deleted = db.query(IdeaComment).filter(
+                IdeaComment.idea_id.in_(seed_idea_ids)
+            ).delete(synchronize_session=False)
+            print(f"  Deleted {deleted} comments")
+
+            deleted = db.query(IdeaStatusHistory).filter(
+                IdeaStatusHistory.idea_id.in_(seed_idea_ids)
+            ).delete(synchronize_session=False)
+            print(f"  Deleted {deleted} status history entries")
+
+            deleted = db.query(Vote).filter(
+                Vote.idea_id.in_(seed_idea_ids)
+            ).delete(synchronize_session=False)
+            print(f"  Deleted {deleted} votes")
+
+            deleted = db.query(Idea).filter(
+                Idea.id.in_(seed_idea_ids)
+            ).delete(synchronize_session=False)
+            print(f"  Deleted {deleted} ideas")
+
+        # Delete permissions granted to seed users
+        deleted = db.query(ProductPermission).filter(
+            ProductPermission.user_id.in_(seed_user_ids)
+        ).delete(synchronize_session=False)
+        print(f"  Deleted {deleted} product permissions")
+
+        # Delete seed users
+        deleted = db.query(User).filter(
+            User.id.in_(seed_user_ids)
+        ).delete(synchronize_session=False)
+        print(f"  Deleted {deleted} users")
+
+        # Delete demo product if it was created by a seed admin
+        # and has no non-seed ideas remaining
+        demo_product = db.query(CIProduct).filter(
+            CIProduct.product_name == DEMO_PRODUCT["product_name"]
+        ).first()
+        if demo_product:
+            remaining_ideas = db.query(Idea).filter(
+                Idea.product_id == demo_product.id
+            ).count()
+            if remaining_ideas == 0:
+                db.delete(demo_product)
+                print(f"  Deleted demo product: {demo_product.product_name}")
+            else:
+                print(f"  Kept product '{demo_product.product_name}' ({remaining_ideas} non-seed ideas remain)")
+
+        db.commit()
+        print()
+        print("Cleanup complete.")
+
+    except Exception as e:
+        db.rollback()
+        print(f"ERROR: {e}")
+        raise
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
-    seed()
+    if "--cleanup" in sys.argv:
+        print("Cleaning up seed data...")
+        print()
+        cleanup()
+    else:
+        seed()

@@ -7,7 +7,7 @@ fine-grained access control for CI products.
 
 from typing import Optional, List
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 
 from app.models.user import User, UserRole, ProductAccessMode
 from app.models.competitor_intelligence import (
@@ -136,14 +136,23 @@ class PermissionService:
             return query.all()
 
         elif user.role == UserRole.PRODUCT_OWNER:
-            # PRODUCT_OWNERs only see products they created (complete isolation)
-            # Note: default_product_access and explicit grants are ignored for PRODUCT_OWNER
-            return query.filter(CIProduct.created_by_user_id == user_id).all()
+            # POs see products they created + products explicitly granted to them
+            granted_ids = select(ProductPermission.product_id).where(
+                ProductPermission.user_id == user_id
+            )
+            return query.filter(
+                or_(
+                    CIProduct.created_by_user_id == user_id,
+                    CIProduct.id.in_(granted_ids)
+                )
+            ).all()
 
         elif user.role == UserRole.VOTER:
-            # VOTERs can see all products (read-only for dropdown in idea submission)
-            # They cannot navigate to /product-intelligence pages (enforced by route guards)
-            return query.all()
+            # VOTERs only see products they have explicit permission for
+            permitted_ids = select(ProductPermission.product_id).where(
+                ProductPermission.user_id == user_id
+            )
+            return query.filter(CIProduct.id.in_(permitted_ids)).all()
 
         # Fallback: no access
         return []

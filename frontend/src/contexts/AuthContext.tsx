@@ -24,6 +24,7 @@ interface AuthContextType {
     username: string;
     password: string;
     full_name?: string;
+    invite_code?: string;
   }) => Promise<AuthResult>;
   logout: () => void;
   isAuthenticated: () => boolean;
@@ -116,6 +117,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     username: string;
     password: string;
     full_name?: string;
+    invite_code?: string;
   }): Promise<AuthResult> => {
     try {
       setError(null);
@@ -127,8 +129,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       const loginResult = await login(userData.username, userData.password);
 
       return loginResult;
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Registration failed';
+    } catch (err: unknown) {
+      const apiErr = err as { message?: string };
+      const errorMsg = apiErr?.message || 'Registration failed';
       setError(errorMsg);
       return { success: false, error: errorMsg };
     }
