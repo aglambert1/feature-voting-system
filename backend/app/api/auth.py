@@ -15,8 +15,14 @@ from slowapi.util import get_remote_address
 
 limiter = Limiter(key_func=get_remote_address)
 
+from datetime import datetime
+from typing import Optional, List
+from pydantic import BaseModel, Field
+
 from app.database import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
+from app.models.product_invite import ProductInviteCode
+from app.models.competitor_intelligence import ProductPermission, ProductPermissionLevel, CIProduct
 from app.schemas.auth import (
     UserCreate,
     UserLogin,
@@ -35,7 +41,8 @@ from app.utils.security import (
     verify_password,
     create_access_token,
     get_current_active_user,
-    get_current_admin_user
+    get_current_admin_user,
+    get_current_user
 )
 
 
@@ -46,26 +53,62 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
-def register(request: Request, user_data: UserCreate, db: Session = Depends(get_db)):
+def register(
+    request: Request,
+    user_data: UserCreate,
+    db: Session = Depends(get_db),
+):
     """
     Register a new user account.
 
-    Steps:
-    1. Check if email or username already exists
-    2. Hash the password
-    3. Create new user in database
-    4. Return user information (without password)
-
-    Args:
-        user_data: User registration data (email, username, password)
-        db: Database session (automatically provided by FastAPI)
+    Two modes:
+    1. Self-registration: requires a valid invite_code. User gets VOTER role
+       and product access from the invite code.
+    2. Admin-created: admin can specify role and product_ids. No invite code needed.
 
     Returns:
         The newly created user information
 
     Raises:
-        400 Bad Request: If email or username already exists
+        400 Bad Request: If email/username exists or invite code is invalid
     """
+    # Check if an admin is making this request (optional auth)
+    is_admin_creating = False
+    admin_user = None
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            from jose import jwt
+            from app.config import settings
+            token = auth_header.split(" ", 1)[1]
+            payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+            user_id = payload.get("user_id")
+            if user_id:
+                admin_user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+                if admin_user and admin_user.role == UserRole.ADMIN:
+                    is_admin_creating = True
+        except Exception:
+            pass  # Not admin — continue with self-registration flow
+
+    # Validate invite code for self-registration
+    invite = None
+    if not is_admin_creating:
+        if not user_data.invite_code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An invite code is required to register. Contact a Product Owner for an invite link."
+            )
+
+        invite = db.query(ProductInviteCode).filter(
+            ProductInviteCode.code == user_data.invite_code
+        ).first()
+
+        if not invite or not invite.is_valid():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired invite code"
+            )
+
     # Check if email already exists
     existing_user = db.query(User).filter(User.email == user_data.email).first()
     if existing_user:
@@ -83,19 +126,51 @@ def register(request: Request, user_data: UserCreate, db: Session = Depends(get_
         )
 
     # Create new user with hashed password
-    # Note: role defaults to VOTER (set in the User model) if not provided
     new_user = User(
         email=user_data.email,
         username=user_data.username,
         hashed_password=hash_password(user_data.password),
         full_name=user_data.full_name,
-        role=user_data.role if user_data.role else None  # Use provided role or let model default to VOTER
+        role=user_data.role if user_data.role else None  # Defaults to VOTER
     )
 
-    # Add to database and commit
     db.add(new_user)
+    db.flush()  # Assigns new_user.id without committing
+
+    # Grant product access
+    if invite:
+        # Self-registration: grant access from invite code
+        # Create permission directly — the invite code itself is the authorization,
+        # so we bypass grant_permission()'s granter-level check.
+        perm = ProductPermission(
+            product_id=invite.product_id,
+            user_id=new_user.id,
+            permission_level=invite.permission_level,
+            granted_by_user_id=invite.created_by_user_id,
+        )
+        db.add(perm)
+        invite.current_uses += 1
+    elif is_admin_creating and user_data.product_ids:
+        # Admin-created: grant access to specified products
+        perm_level = (
+            ProductPermissionLevel.EDIT
+            if user_data.role == UserRole.PRODUCT_OWNER
+            else ProductPermissionLevel.VIEW
+        )
+        for product_id in user_data.product_ids:
+            product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+            if product:
+                perm = ProductPermission(
+                    product_id=product_id,
+                    user_id=new_user.id,
+                    permission_level=perm_level,
+                    granted_by_user_id=admin_user.id,
+                )
+                db.add(perm)
+
+    # Commit user + permission(s) together as one transaction
     db.commit()
-    db.refresh(new_user)  # Refresh to get the auto-generated ID
+    db.refresh(new_user)
 
     return new_user
 
@@ -656,3 +731,117 @@ if _settings.debug:
             otp=latest_token.token,
             expires_at=latest_token.expires_at
         )
+
+
+# ============================================================================
+# Admin Product Assignment
+# ============================================================================
+
+class UserProductsUpdate(BaseModel):
+    """Schema for setting a user's product assignments."""
+    product_ids: List[int] = Field(..., description="Product IDs to assign")
+
+
+class UserProductResponse(BaseModel):
+    """Schema for a user's product assignment."""
+    product_id: int
+    product_name: str
+    permission_level: str
+    granted_at: datetime
+
+
+@router.get("/users/{user_id}/products", response_model=List[UserProductResponse])
+async def get_user_products(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get product assignments for a user (admin only)."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    permissions = db.query(ProductPermission, CIProduct).join(
+        CIProduct, ProductPermission.product_id == CIProduct.id
+    ).filter(
+        ProductPermission.user_id == user_id
+    ).all()
+
+    return [
+        UserProductResponse(
+            product_id=product.id,
+            product_name=product.product_name,
+            permission_level=perm.permission_level.value,
+            granted_at=perm.granted_at,
+        )
+        for perm, product in permissions
+    ]
+
+
+@router.put("/users/{user_id}/products", response_model=List[UserProductResponse])
+async def set_user_products(
+    user_id: int,
+    update: UserProductsUpdate,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Set product assignments for a user (admin only).
+
+    Replaces all existing product permissions with the new set.
+    Permission level is inferred from user role: EDIT for POs, VIEW for voters.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot modify your own product assignments"
+        )
+
+    # Determine permission level based on user role
+    perm_level = (
+        ProductPermissionLevel.EDIT
+        if user.role == UserRole.PRODUCT_OWNER
+        else ProductPermissionLevel.VIEW
+    )
+
+    # Remove existing permissions
+    db.query(ProductPermission).filter(
+        ProductPermission.user_id == user_id
+    ).delete(synchronize_session="fetch")
+    db.flush()
+
+    # Add new permissions
+    for product_id in update.product_ids:
+        product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+        if not product:
+            continue
+        perm = ProductPermission(
+            product_id=product_id,
+            user_id=user_id,
+            permission_level=perm_level,
+            granted_by_user_id=current_user.id,
+        )
+        db.add(perm)
+
+    db.commit()
+
+    # Return updated assignments
+    permissions = db.query(ProductPermission, CIProduct).join(
+        CIProduct, ProductPermission.product_id == CIProduct.id
+    ).filter(
+        ProductPermission.user_id == user_id
+    ).all()
+
+    return [
+        UserProductResponse(
+            product_id=product.id,
+            product_name=product.product_name,
+            permission_level=perm.permission_level.value,
+            granted_at=perm.granted_at,
+        )
+        for perm, product in permissions
+    ]

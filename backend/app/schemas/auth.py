@@ -13,7 +13,7 @@ The difference between a Model and a Schema:
 
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import Optional, List
 
 from app.models.user import UserRole
 
@@ -22,15 +22,17 @@ class UserCreate(BaseModel):
     """
     Schema for creating a new user (registration).
 
-    This is what the API expects when someone registers.
-    Note: role is optional - defaults to VOTER if not provided.
-    When an admin creates a user, they can specify the role.
+    Two modes:
+    1. Self-registration: invite_code is required, product access is derived from the code
+    2. Admin-created: role and product_ids can be specified, invite_code not needed
     """
-    email: EmailStr  # EmailStr automatically validates email format
+    email: EmailStr
     username: str = Field(..., min_length=3, max_length=50)
     password: str = Field(..., min_length=8, max_length=100)
     full_name: Optional[str] = None
     role: Optional[UserRole] = None
+    invite_code: Optional[str] = Field(None, description="Required for self-registration")
+    product_ids: Optional[List[int]] = Field(None, description="Product assignments (admin-created users only)")
 
 
 class UserLogin(BaseModel):

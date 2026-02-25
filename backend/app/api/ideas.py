@@ -36,7 +36,7 @@ from app.models.idea_status_history import IdeaStatusHistory
 from app.models.vote import Vote
 from app.models.user import User, UserRole
 from app.models.queue import JobType
-from app.models.competitor_intelligence import CIProduct, ProductPermissionLevel
+from app.models.competitor_intelligence import CIProduct, ProductPermission, ProductPermissionLevel
 from app.schemas.idea import IdeaCreate, IdeaResponse, IdeaListItem, IdeaListResponse, VoteCount, SimilarIdeaResponse
 from app.services.permission_service import PermissionService
 from app.services.vector_service import VectorService
@@ -194,43 +194,55 @@ def list_ideas(
     Raises:
         404 Not Found: If product doesn't exist
     """
-    from sqlalchemy import or_
+    from sqlalchemy import or_, and_
 
     # Determine user's visibility level
     is_admin = current_user and current_user.role == UserRole.ADMIN
     is_po = current_user and current_user.role == UserRole.PRODUCT_OWNER
 
-    # Get products owned by the current user (for PO visibility)
-    owned_product_ids = []
+    # Get accessible product IDs for PO and VOTER roles
+    accessible_product_ids = []
     if is_po and current_user:
-        owned_products = db.query(CIProduct.id).filter(
+        # POs: products they created + explicitly granted
+        owned = db.query(CIProduct.id).filter(
             CIProduct.created_by_user_id == current_user.id
         ).all()
-        owned_product_ids = [p.id for p in owned_products]
+        granted = db.query(ProductPermission.product_id).filter(
+            ProductPermission.user_id == current_user.id
+        ).all()
+        accessible_product_ids = list(set(
+            [p.id for p in owned] + [p.product_id for p in granted]
+        ))
+    elif current_user:
+        # Voters: only explicitly permitted products
+        permitted = db.query(ProductPermission.product_id).filter(
+            ProductPermission.user_id == current_user.id
+        ).all()
+        accessible_product_ids = [p.product_id for p in permitted]
 
     # Build base query with visibility rules
     if is_admin:
         # Admins see all ideas
         query = db.query(Idea)
     elif is_po and current_user:
-        # POs see all ideas for their products, plus their own submissions
+        # POs see all ideas for accessible products, plus their own submissions
         query = db.query(Idea).filter(
             or_(
-                Idea.product_id.in_(owned_product_ids),  # All ideas for owned products
-                Idea.submitter_id == current_user.id,     # Their own submissions
+                Idea.product_id.in_(accessible_product_ids),
+                Idea.submitter_id == current_user.id,
             )
         )
     elif current_user:
-        # Voters see their own ideas (any status) + active ideas from others
+        # Voters see their own ideas (any status) + active ideas from permitted products
         query = db.query(Idea).filter(
             or_(
-                Idea.submitter_id == current_user.id,  # Their own submissions
-                Idea.is_active == True                 # Active ideas from others
+                Idea.submitter_id == current_user.id,
+                and_(Idea.is_active == True, Idea.product_id.in_(accessible_product_ids))
             )
         )
     else:
-        # Unauthenticated users only see active ideas
-        query = db.query(Idea).filter(Idea.is_active == True)
+        # Unauthenticated users see nothing (require auth for beta)
+        query = db.query(Idea).filter(Idea.id == -1)  # empty result
 
     # Filter by product if specified
     if product_id is not None:
@@ -355,16 +367,32 @@ def get_products_for_ideas(
 
     Returns products scoped by role:
     - ADMIN: all active products
-    - PRODUCT_OWNER: only products they created
-    - VOTER: only products they created (for beta; future: products with explicit access)
+    - PRODUCT_OWNER: products they created + explicitly granted
+    - VOTER: only products with explicit ProductPermission
 
     Returns:
         List of active products with id and product_name
     """
+    from sqlalchemy import or_, select
+
     query = db.query(CIProduct).filter(CIProduct.status == "active")
 
-    if current_user.role != UserRole.ADMIN:
-        query = query.filter(CIProduct.created_by_user_id == current_user.id)
+    if current_user.role == UserRole.ADMIN:
+        pass  # no filter
+    elif current_user.role == UserRole.PRODUCT_OWNER:
+        granted_ids = select(ProductPermission.product_id).where(
+            ProductPermission.user_id == current_user.id
+        )
+        query = query.filter(or_(
+            CIProduct.created_by_user_id == current_user.id,
+            CIProduct.id.in_(granted_ids)
+        ))
+    else:
+        # VOTER: only explicitly permitted products
+        permitted_ids = select(ProductPermission.product_id).where(
+            ProductPermission.user_id == current_user.id
+        )
+        query = query.filter(CIProduct.id.in_(permitted_ids))
 
     products = query.all()
 
@@ -547,13 +575,14 @@ async def find_similar_ideas(
         404 Not Found: If product doesn't exist
         500 Internal Server Error: If embedding generation fails
     """
-    # Validate product exists
+    # Validate product exists and user has access
     product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Product with id {product_id} not found"
         )
+    check_product_permission(db, current_user, product_id, ProductPermissionLevel.VIEW)
 
     # Generate query embedding
     try:
@@ -602,22 +631,24 @@ async def find_similar_ideas(
 @router.get("/{idea_id}", response_model=IdeaResponse)
 def get_idea(
     idea_id: int,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
     Get a single idea by ID.
 
-    This is a public endpoint (no authentication required).
-    Returns full idea details with vote counts.
+    Requires authentication and product-level VIEW permission.
 
     Args:
         idea_id: ID of the idea to retrieve
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Full idea details with vote counts
 
     Raises:
+        403 Forbidden: If user lacks product access
         404 Not Found: If idea doesn't exist
     """
     # Find the idea
@@ -629,9 +660,12 @@ def get_idea(
             detail=f"Idea with id {idea_id} not found"
         )
 
+    # Check product permission
+    check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.VIEW)
+
     # Get vote counts
     vote_counts = get_vote_counts(db, idea.id)
-    user_vote = None  # TODO: Add optional auth to show user's vote
+    user_vote = None
 
     # Build response
     response = IdeaResponse(
@@ -1196,6 +1230,9 @@ def get_idea_detail(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Idea {idea_id} not found"
         )
+
+    # Check product permission
+    check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.VIEW)
 
     # Get product name
     product_name = None

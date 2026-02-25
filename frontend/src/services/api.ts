@@ -198,6 +198,8 @@ export const getCurrentUser = async (): Promise<User> => {
  */
 export const logout = (): void => {
   localStorage.removeItem('access_token');
+  sessionStorage.removeItem('selectedProductId');
+  sessionStorage.removeItem('products');
 };
 
 // ============================================================================
@@ -1634,6 +1636,61 @@ export const getIdeaFunnel = async (productId: number): Promise<IdeaFunnelData> 
   const response = await api.get<IdeaFunnelData>(
     `/product-intelligence/products/${productId}/idea-funnel`
   );
+  return response.data;
+};
+
+// ============================================================================
+// INVITE CODE API METHODS
+// ============================================================================
+
+import type { InviteCodeInfo, InviteCode, ProductMember, UserProduct } from '../types';
+
+export const getInviteInfo = async (code: string): Promise<InviteCodeInfo> => {
+  const response = await api.get<InviteCodeInfo>(`/invites/${code}/info`);
+  return response.data;
+};
+
+export const redeemInviteCode = async (code: string): Promise<{ product_id: number; product_name: string; message: string }> => {
+  const response = await api.post('/invites/redeem', { code });
+  return response.data;
+};
+
+export const createInviteCode = async (
+  productId: number,
+  options?: { max_uses?: number; expires_at?: string }
+): Promise<InviteCode> => {
+  const response = await api.post<InviteCode>(
+    `/products/${productId}/invite-codes`,
+    options || {}
+  );
+  return response.data;
+};
+
+export const getInviteCodes = async (productId: number): Promise<InviteCode[]> => {
+  const response = await api.get<InviteCode[]>(`/products/${productId}/invite-codes`);
+  return response.data;
+};
+
+export const deactivateInviteCode = async (productId: number, codeId: number): Promise<void> => {
+  await api.delete(`/products/${productId}/invite-codes/${codeId}`);
+};
+
+export const getProductMembers = async (productId: number): Promise<ProductMember[]> => {
+  const response = await api.get<ProductMember[]>(`/products/${productId}/members`);
+  return response.data;
+};
+
+// ============================================================================
+// ADMIN PRODUCT ASSIGNMENT API METHODS
+// ============================================================================
+
+export const getUserProducts = async (userId: number): Promise<UserProduct[]> => {
+  const response = await api.get<UserProduct[]>(`/auth/users/${userId}/products`);
+  return response.data;
+};
+
+export const setUserProducts = async (userId: number, productIds: number[]): Promise<UserProduct[]> => {
+  const response = await api.put<UserProduct[]>(`/auth/users/${userId}/products`, { product_ids: productIds });
   return response.data;
 };
 

@@ -76,13 +76,14 @@ class TestJWTTokens:
 
 class TestRegistration:
 
-    def test_register_valid_user(self, client, db_session):
+    def test_register_valid_user_via_admin(self, client, admin_user):
+        """Admin can create users without invite codes."""
         resp = client.post("/auth/register", json={
             "email": "new@example.com",
             "username": "newuser",
             "password": "securepass123",
             "full_name": "New User"
-        })
+        }, headers=auth_headers(admin_user))
         assert resp.status_code == 201
         data = resp.json()
         assert data["email"] == "new@example.com"
@@ -91,21 +92,32 @@ class TestRegistration:
         assert data["is_active"] is True
         assert "hashed_password" not in data
 
-    def test_register_duplicate_email(self, client, voter_user):
+    def test_register_requires_invite_code(self, client, db_session):
+        """Self-registration without invite code is rejected."""
+        resp = client.post("/auth/register", json={
+            "email": "new@example.com",
+            "username": "newuser",
+            "password": "securepass123",
+            "full_name": "New User"
+        })
+        assert resp.status_code == 400
+        assert "invite code" in resp.json()["detail"].lower()
+
+    def test_register_duplicate_email(self, client, voter_user, admin_user):
         resp = client.post("/auth/register", json={
             "email": voter_user.email,
             "username": "different",
             "password": "securepass123"
-        })
+        }, headers=auth_headers(admin_user))
         assert resp.status_code == 400
         assert "Email already registered" in resp.json()["detail"]
 
-    def test_register_duplicate_username(self, client, voter_user):
+    def test_register_duplicate_username(self, client, voter_user, admin_user):
         resp = client.post("/auth/register", json={
             "email": "unique@example.com",
             "username": voter_user.username,
             "password": "securepass123"
-        })
+        }, headers=auth_headers(admin_user))
         assert resp.status_code == 400
         assert "Username already taken" in resp.json()["detail"]
 
@@ -139,12 +151,12 @@ class TestRegistration:
         })
         assert resp.status_code == 422
 
-    def test_register_default_role_is_voter(self, client, db_session):
+    def test_register_default_role_is_voter(self, client, admin_user):
         resp = client.post("/auth/register", json={
             "email": "roletest@example.com",
             "username": "roletest",
             "password": "securepass123"
-        })
+        }, headers=auth_headers(admin_user))
         assert resp.status_code == 201
         assert resp.json()["role"] == "voter"
 

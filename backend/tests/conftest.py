@@ -127,8 +127,13 @@ def client(db_session):
     # Disable rate limiting for tests
     app.state.limiter = Limiter(key_func=get_remote_address, enabled=False)
 
+    # Also disable the module-level limiter in auth (used by @limiter.limit decorators)
+    from app.api.auth import limiter as auth_limiter
+    auth_limiter.enabled = False
+
     yield TestClient(app)
 
+    auth_limiter.enabled = True
     app.dependency_overrides.clear()
 
 
@@ -196,7 +201,59 @@ def test_product(db_session, po_user):
 
 
 @pytest.fixture
-def test_idea(db_session, test_product, voter_user):
+def voter_product_access(db_session, test_product, voter_user):
+    """Grant voter_user VIEW access to test_product."""
+    from app.models.competitor_intelligence import ProductPermission, ProductPermissionLevel
+
+    perm = ProductPermission(
+        product_id=test_product.id,
+        user_id=voter_user.id,
+        permission_level=ProductPermissionLevel.VIEW,
+        granted_by_user_id=test_product.created_by_user_id,
+    )
+    db_session.add(perm)
+    db_session.commit()
+    return perm
+
+
+@pytest.fixture
+def test_invite_code(db_session, test_product, po_user):
+    """Create a test invite code for the test product."""
+    from app.models.product_invite import ProductInviteCode
+    from app.models.competitor_intelligence import ProductPermissionLevel
+
+    invite = ProductInviteCode(
+        product_id=test_product.id,
+        code=ProductInviteCode.generate_code(),
+        created_by_user_id=po_user.id,
+        permission_level=ProductPermissionLevel.VIEW,
+    )
+    db_session.add(invite)
+    db_session.commit()
+    db_session.refresh(invite)
+    return invite
+
+
+@pytest.fixture
+def second_product(db_session, po_user):
+    """Create a second test product owned by the same PO."""
+    from app.models.competitor_intelligence import CIProduct
+
+    product = CIProduct(
+        product_name="Second Product",
+        product_description="Another product for testing",
+        product_category="Testing",
+        created_by_user_id=po_user.id,
+        status="active",
+    )
+    db_session.add(product)
+    db_session.commit()
+    db_session.refresh(product)
+    return product
+
+
+@pytest.fixture
+def test_idea(db_session, test_product, voter_user, voter_product_access):
     """Create a test Idea linked to the test product."""
     from app.models.idea import Idea, IdeaStatus, SourceType
 

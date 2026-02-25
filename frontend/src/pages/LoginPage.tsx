@@ -11,12 +11,15 @@
  */
 
 import { useState, ChangeEvent, FormEvent } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const LoginPage = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login } = useAuth();
+
+  const redirectTo = searchParams.get('redirect');
 
   // Form state
   const [formData, setFormData] = useState({
@@ -50,8 +53,8 @@ const LoginPage = () => {
       const result = await login(formData.username, formData.password);
 
       if (result.success) {
-        // Redirect to root - RootRedirect will handle role-based navigation
-        navigate('/');
+        // Redirect to specified path (e.g. /join/:code) or root
+        navigate(redirectTo || '/');
       } else {
         // Show error message
         setError(result.error || 'Login failed');

@@ -64,6 +64,7 @@ from app.models.cost_tracking import (
     LLMUsageLog,
     OperationType,
 )
+from app.models.product_invite import ProductInviteCode
 
 __all__ = [
     "User", "UserRole", "ProductAccessMode",
@@ -81,4 +82,5 @@ __all__ = [
     "ActivityImport", "DealActivityInsight", "SupportActivityInsight",
     "SynthesisRun", "SynthesizedOpportunity", "SynthesisStatus", "SynthesisSourceType",
     "LLMUsageLog", "OperationType",
+    "ProductInviteCode",
 ]

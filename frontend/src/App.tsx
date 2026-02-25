@@ -31,6 +31,7 @@ import IntelligenceHubPage from './pages/CompetitorIntelligence/IntelligenceHubP
 import InternalFeedbackPage from './pages/CompetitorIntelligence/InternalFeedbackPage';
 import SynthesisHubPage from './pages/CompetitorIntelligence/SynthesisHubPage';
 import IdeaLifecycleSettingsPage from './pages/IdeaLifecycleSettingsPage';
+import JoinPage from './pages/JoinPage';
 
 // Redirect from old /report route to new V2 IntelligenceHub
 function ReportRedirect() {
@@ -50,6 +51,7 @@ function App() {
           {/* Public routes */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/join/:code" element={<JoinPage />} />
 
           {/* Protected routes */}
           <Route

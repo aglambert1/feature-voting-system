@@ -104,6 +104,7 @@ def init_db():
     import app.models.queue  # noqa: F401
     import app.models.competitive_agent  # noqa: F401
     import app.models.idea_lifecycle_status  # noqa: F401
+    import app.models.product_invite  # noqa: F401
 
     # Create standard tables
     Base.metadata.create_all(bind=engine)
