@@ -1539,12 +1539,15 @@ def add_comment(
             detail=f"Idea {idea_id} not found"
         )
 
-    # Check permission
+    # Verify user has VIEW access to the idea's product
+    check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.VIEW)
+
+    # Check permission for non-active ideas
     is_submitter = idea.submitter_id == current_user.id
     is_po_or_admin = can_respond_to_idea(db, current_user, idea)
     is_idea_active = idea.is_active and idea.status == IdeaStatus.ACCEPTED
 
-    # All authenticated users can comment on active/accepted ideas
+    # Users with product access can comment on active/accepted ideas
     # Submitter, PO, Admin can comment on any idea
     if not is_idea_active and not is_submitter and not is_po_or_admin:
         raise HTTPException(
@@ -1589,6 +1592,9 @@ def get_comments(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Idea {idea_id} not found"
         )
+
+    # Verify user has VIEW access to the idea's product
+    check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.VIEW)
 
     comments = []
     for comment in idea.comments:

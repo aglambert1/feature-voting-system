@@ -21,7 +21,8 @@ from datetime import datetime
 
 from app.database import get_db
 from app.models.user import User, UserRole
-from app.models.competitor_intelligence import CIProduct
+from app.models.competitor_intelligence import CIProduct, ProductPermissionLevel
+from app.services.permission_service import PermissionService
 from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
 from app.models.competitive_reports import LandscapeOpportunityReport
 from app.models.internal_feedback import (
@@ -81,15 +82,25 @@ class CreateIdeaResponse(BaseModel):
 # Helpers
 # ============================================================================
 
-def verify_product_access(db: Session, product_id: int, user: User) -> CIProduct:
-    """Verify product exists and user has ownership access."""
+def verify_product_access(
+    db: Session,
+    product_id: int,
+    user: User,
+    required_level: ProductPermissionLevel = ProductPermissionLevel.VIEW
+) -> CIProduct:
+    """Verify product exists and user has the required permission level."""
     product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found"
         )
-    if user.role != UserRole.ADMIN and product.created_by_user_id != user.id:
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=user.id,
+        product_id=product_id,
+        required_level=required_level
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this product"
