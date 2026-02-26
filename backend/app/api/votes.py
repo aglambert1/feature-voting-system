@@ -12,9 +12,11 @@ from sqlalchemy import func, case
 from app.database import get_db
 from app.models.idea import Idea
 from app.models.vote import Vote
-from app.models.user import User
+from app.models.user import User, UserRole
+from app.models.competitor_intelligence import ProductPermissionLevel
 from app.schemas.vote import VoteCreate, VoteResponse, VoteCountResponse, VoteActionResponse
 from app.utils.security import get_current_active_user
+from app.services.permission_service import PermissionService
 
 
 # Create router (no prefix - will be included from main)
@@ -59,6 +61,18 @@ def vote_on_idea(
     # Check if idea exists
     idea = db.query(Idea).filter(Idea.id == idea_id).first()
     if not idea:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Idea with id {idea_id} not found"
+        )
+
+    # Verify user has VIEW access to the idea's product
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=idea.product_id,
+        required_level=ProductPermissionLevel.VIEW
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Idea with id {idea_id} not found"

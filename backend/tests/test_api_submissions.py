@@ -13,7 +13,7 @@ from conftest import auth_headers
 class TestStructureFreeformText:
 
     @patch("app.api.submissions.llm_service")
-    def test_structure_success(self, mock_llm, client, voter_user, test_product):
+    def test_structure_success(self, mock_llm, client, voter_user, test_product, voter_product_access):
         mock_llm.structure_idea.return_value = {
             "title": "AI Generated Title",
             "what_description": "What the feature does",
@@ -55,7 +55,7 @@ class TestStructureFreeformText:
 class TestSubmitIdea:
 
     @patch("app.utils.celery_utils.send_celery_task")
-    def test_submit_success(self, mock_celery, client, voter_user, test_product):
+    def test_submit_success(self, mock_celery, client, voter_user, test_product, voter_product_access):
         mock_result = MagicMock()
         mock_result.id = "task-123"
         mock_celery.return_value = mock_result

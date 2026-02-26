@@ -72,6 +72,18 @@ async def structure_freeform_text(
                 detail=f"Product with id {request.product_id} not found"
             )
 
+        # Verify user has VIEW access to this product
+        permission_service = PermissionService(db)
+        if not permission_service.can_access_product(
+            user_id=current_user.id,
+            product_id=request.product_id,
+            required_level=ProductPermissionLevel.VIEW
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product with id {request.product_id} not found"
+            )
+
         # Get product context (similar to idea generation)
         from app.models.competitor_intelligence import ProductFeature
 
@@ -178,8 +190,17 @@ async def submit_idea(
             detail=f"Product with id {submission_data.product_id} not found"
         )
 
-    # Note: All authenticated users (VOTER, PRODUCT_OWNER, ADMIN) can submit ideas for any product
-    # Product permissions are only enforced for product management operations, not idea submission
+    # Verify user has VIEW access to this product
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=current_user.id,
+        product_id=submission_data.product_id,
+        required_level=ProductPermissionLevel.VIEW
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product with id {submission_data.product_id} not found"
+        )
 
     # Create the idea first with PENDING triage status
     new_idea = Idea(
