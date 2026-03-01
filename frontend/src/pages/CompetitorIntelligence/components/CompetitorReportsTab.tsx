@@ -23,6 +23,8 @@ import {
   getAgentConfig,
   triggerCompetitorDiscovery,
   updateCompetitorSelection,
+  deactivateCompetitor,
+  triggerCompetitiveAnalysisV2,
   getCompetitorAlerts,
   markAlertRead,
   markAllAlertsRead,
@@ -44,9 +46,10 @@ import AddCompetitorModal from './AddCompetitorModal';
 interface Props {
   productId: number;
   refreshKey?: number;
+  onAnalysisComplete?: () => void;
 }
 
-export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
+export default function CompetitorReportsTab({ productId, refreshKey, onAnalysisComplete }: Props) {
   // Competitor data
   const [competitors, setCompetitors] = useState<AgentCompetitor[]>([]);
   const [reports, setReports] = useState<FunctionalReportSummary[]>([]);
@@ -203,6 +206,43 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     }
   };
 
+  // Select/Deselect all competitors for deep analysis
+  const handleSelectAllCompetitors = async () => {
+    const allSelected = competitors.every(c => c.deep_analysis_enabled);
+    const targetState = !allSelected;
+
+    try {
+      setActionLoading('select-all');
+      await Promise.all(
+        competitors
+          .filter(c => c.deep_analysis_enabled !== targetState)
+          .map(c => updateCompetitorSelection(productId, c.id, targetState))
+      );
+      setCompetitors(prev => prev.map(c => ({ ...c, deep_analysis_enabled: targetState })));
+    } catch (err: any) {
+      setError(err.message || 'Failed to update competitors');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Remove (deactivate) a competitor from the list
+  const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
+
+  const handleRemoveCompetitor = async (competitorId: number) => {
+    try {
+      setActionLoading(`remove-${competitorId}`);
+      await deactivateCompetitor(productId, competitorId);
+      setCompetitors(prev => prev.filter(c => c.id !== competitorId));
+      setConfirmRemove(null);
+      setSuccessMessage('Competitor removed from list');
+    } catch (err: any) {
+      setError(err.message || 'Failed to remove competitor');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   // Alert handlers
   const handleDismissAlert = async (alertId: number) => {
     try {
@@ -259,7 +299,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     }
   };
 
-  const handleRunAuditsForSelected = async () => {
+  const handleRunAuditsAndSynthesize = async () => {
     const selectedForAnalysis = competitors.filter(c => c.deep_analysis_enabled);
     if (selectedForAnalysis.length === 0) {
       setError('No competitors selected for deep analysis');
@@ -268,13 +308,25 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
 
     try {
       setActionLoading('batch-audit');
-      await Promise.all(
-        selectedForAnalysis.map(c => triggerFunctionalAudit(productId, c.id))
-      );
-      setSuccessMessage(`Functional audits started for ${selectedForAnalysis.length} competitors`);
+      await triggerCompetitiveAnalysisV2(productId);
+      setSuccessMessage(`Competitive analysis started for ${selectedForAnalysis.length} competitors (audits + landscape synthesis)`);
       checkAuditJobs();
+      // Switch to landscape tab when analysis completes
+      if (onAnalysisComplete) {
+        // Poll for completion and switch tab
+        const pollForCompletion = setInterval(async () => {
+          const jobs = await getProductJobs(productId, 10, [JobType.SCHEDULED_DEEP_ANALYSIS]);
+          const active = jobs.filter(
+            j => j.status === JobStatus.PENDING || j.status === JobStatus.QUEUED || j.status === JobStatus.RUNNING
+          );
+          if (active.length === 0) {
+            clearInterval(pollForCompletion);
+            onAnalysisComplete();
+          }
+        }, 5000);
+      }
     } catch (err: any) {
-      setError(err.message || 'Failed to start audits');
+      setError(err.message || 'Failed to start analysis');
     } finally {
       setActionLoading(null);
     }
@@ -731,8 +783,23 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
                 Manage competitors and run functional audits.
               </p>
             </div>
-            <div className="text-sm text-gray-500">
-              {totalCompetitors} total | {competitorsWithReports} with reports | {selectedForAnalysis} selected
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-gray-500">
+                {totalCompetitors} total | {competitorsWithReports} with reports | {selectedForAnalysis} selected
+              </span>
+              {totalCompetitors > 0 && (
+                <button
+                  onClick={handleSelectAllCompetitors}
+                  disabled={actionLoading === 'select-all'}
+                  className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                >
+                  {actionLoading === 'select-all'
+                    ? 'Updating...'
+                    : competitors.every(c => c.deep_analysis_enabled)
+                    ? 'Deselect All'
+                    : 'Select All'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -745,7 +812,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
               Add Competitor
             </button>
             <button
-              onClick={handleRunAuditsForSelected}
+              onClick={handleRunAuditsAndSynthesize}
               disabled={actionLoading === 'batch-audit' || selectedForAnalysis === 0 || activeAuditCount > 0}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm disabled:opacity-50"
             >
@@ -753,7 +820,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
                 ? 'Starting...'
                 : activeAuditCount > 0
                 ? `Audits Running (${activeAuditCount})`
-                : `Run Audits for Selected (${selectedForAnalysis})`}
+                : `Run Audits and Synthesize Selected (${selectedForAnalysis})`}
             </button>
           </div>
         </div>
@@ -893,6 +960,33 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
                         >
                           {actionLoading === `audit-${competitor.id}` ? 'Starting...' : isAuditActive ? 'In Progress' : 'Audit'}
                         </button>
+                        {confirmRemove === competitor.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleRemoveCompetitor(competitor.id)}
+                              disabled={actionLoading === `remove-${competitor.id}`}
+                              className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                            >
+                              {actionLoading === `remove-${competitor.id}` ? '...' : 'Confirm'}
+                            </button>
+                            <button
+                              onClick={() => setConfirmRemove(null)}
+                              className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmRemove(competitor.id)}
+                            className="px-2 py-1.5 text-sm text-gray-400 hover:text-red-600 rounded hover:bg-red-50"
+                            title="Remove competitor"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>

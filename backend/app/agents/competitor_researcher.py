@@ -7,7 +7,7 @@ This module provides two AI agents:
 """
 
 from typing import Dict, Any, Type, List
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 from app.agents.base_agent import BaseAgent
 from app.services.search_service import get_search_service
 from app.utils.url import extract_domain
@@ -37,6 +37,14 @@ class CompetitorResearchOutput(BaseModel):
         min_items=0,
         max_items=15
     )
+
+    @field_validator('competitors', mode='before')
+    @classmethod
+    def keep_top_15(cls, v: list) -> list:
+        """Sort by relevance_score descending and keep only top 15."""
+        if len(v) > 15:
+            v = sorted(v, key=lambda c: c.get('relevance_score', 0), reverse=True)[:15]
+        return v
     research_summary: str = Field(
         ...,
         description="Brief summary of competitive landscape or explanation if no competitors found"
@@ -105,7 +113,7 @@ SEARCH STRATEGY:
 - Combine knowledge from multiple searches for comprehensive results
 
 RESPONSE REQUIREMENTS:
-1. Aim for 5-10 high-quality competitors (direct competitors preferred)
+1. Return at most 15 competitors, ranked by relevance (direct competitors preferred)
 2. All URLs must be real, verified from search results or training knowledge
 3. Prioritize direct competitors (serve the same market/needs) over adjacent products
 4. Score relevance objectively (1.0 = direct competitor, 0.5 = adjacent market)
@@ -180,7 +188,7 @@ YOUR TASK:
 1. **Start with knowledge**: Think of well-known competitors you know from training
 2. **Use web search**: Search for "{product_category} competitors", "{product_category} alternatives", or similar queries
 3. **Verify & compile**: Combine knowledge + search results into a comprehensive list
-4. **Aim for quality**: 5-10 direct competitors preferred over a long list
+4. **Return at most 15**: Rank by relevance and include only the top 15 most relevant competitors
 
 SEARCH SUGGESTIONS:
 - "{product_category} competitors"

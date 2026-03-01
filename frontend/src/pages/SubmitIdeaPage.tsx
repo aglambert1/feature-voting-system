@@ -299,6 +299,14 @@ const SubmitIdeaPage = () => {
 
       {/* Main Content */}
       <main className="main-content max-w-4xl mx-auto py-8">
+        {/* Back navigation */}
+        <Link
+          to="/ideas"
+          className="text-blue-600 hover:text-blue-800 mb-4 font-medium inline-block"
+        >
+          &larr; Back to Ideas
+        </Link>
+
         {/* Page Header */}
         <div className="mb-8">
           <h2 className="text-3xl font-bold text-gray-900">Submit New Idea</h2>

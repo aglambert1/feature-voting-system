@@ -315,6 +315,7 @@ class LandscapeReportDetail(BaseModel):
     feature_opportunities: Optional[List[dict]] = None
     high_impact_gaps: Optional[List[dict]] = None
     source_competitor_report_ids: Optional[List[int]] = None
+    source_competitor_names: Optional[List[str]] = None
     generated_at: Optional[datetime] = None
 
     class Config:
@@ -784,6 +785,24 @@ def disable_deep_analysis(
     db.commit()
 
     return {"message": f"Deep analysis disabled for competitor {competitor_id}"}
+
+
+@router.post("/{product_id}/competitors/{competitor_id}/deactivate")
+def deactivate_competitor(
+    product_id: int,
+    competitor_id: int,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db)
+):
+    """Soft-delete a competitor by setting status to inactive. Reports are preserved."""
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
+    competitor = get_competitor_or_404(db, product_id, competitor_id)
+
+    competitor.status = 'inactive'
+    competitor.deep_analysis_enabled = False
+    db.commit()
+
+    return {"message": f"Competitor {competitor_id} removed from list"}
 
 
 @router.post("/{product_id}/competitors/add")
@@ -1844,6 +1863,7 @@ def get_landscape_report(
         feature_opportunities=report.feature_opportunities,
         high_impact_gaps=report.high_impact_gaps,
         source_competitor_report_ids=report.source_competitor_report_ids,
+        source_competitor_names=report.source_competitor_names,
         generated_at=report.generated_at
     )
 

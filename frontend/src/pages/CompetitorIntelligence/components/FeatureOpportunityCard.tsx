@@ -3,12 +3,14 @@
  *
  * Individual card for displaying a feature opportunity with:
  * - Priority score visualization
+ * - Expandable score breakdown
  * - Market context
  * - User sentiment
  * - High-impact badge
  * - Selection checkbox
  */
 
+import { useState } from 'react';
 import type { FeatureOpportunity } from '../../../types';
 
 interface Props {
@@ -29,6 +31,7 @@ export default function FeatureOpportunityCard({
   highImpactRank,
 }: Props) {
   const priorityPercent = Math.round(opportunity.priority_score * 100);
+  const [showScoreDetails, setShowScoreDetails] = useState(false);
 
   // Determine high-impact badge color
   const getHighImpactBadge = () => {
@@ -48,6 +51,14 @@ export default function FeatureOpportunityCard({
     if (priorityPercent >= 60) return 'bg-yellow-500';
     if (priorityPercent >= 40) return 'bg-blue-500';
     return 'bg-gray-400';
+  };
+
+  // Get priority level label
+  const getPriorityLevel = () => {
+    if (priorityPercent >= 80) return 'Critical';
+    if (priorityPercent >= 60) return 'High';
+    if (priorityPercent >= 40) return 'Medium';
+    return 'Low';
   };
 
   return (
@@ -78,7 +89,7 @@ export default function FeatureOpportunityCard({
           </div>
 
           {/* Priority Score Bar */}
-          <div className="mt-3 mb-4">
+          <div className="mt-3 mb-2">
             <div className="flex items-center gap-4">
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
@@ -90,6 +101,12 @@ export default function FeatureOpportunityCard({
                     />
                   </div>
                   <span className="text-xs font-medium text-gray-700">{priorityPercent}%</span>
+                  <button
+                    onClick={() => setShowScoreDetails(!showScoreDetails)}
+                    className="text-xs text-blue-600 hover:text-blue-800 ml-1"
+                  >
+                    {showScoreDetails ? 'Hide details' : 'Score details'}
+                  </button>
                 </div>
               </div>
               <div className="text-xs text-gray-500">
@@ -98,11 +115,40 @@ export default function FeatureOpportunityCard({
             </div>
           </div>
 
-          {/* Why this score / Priority Rationale */}
-          {opportunity.priority_rationale && (
-            <p className="text-sm text-gray-600 mb-3">
-              <span className="font-medium">Why this score:</span> {opportunity.priority_rationale}
-            </p>
+          {/* Expandable Score Breakdown */}
+          {showScoreDetails && (
+            <div className="mb-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <h5 className="text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">Priority Score Breakdown</h5>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="flex items-center justify-between bg-white rounded px-2 py-1.5">
+                  <span className="text-gray-600">Priority Level</span>
+                  <span className={`font-medium ${
+                    priorityPercent >= 80 ? 'text-red-600' :
+                    priorityPercent >= 60 ? 'text-yellow-600' :
+                    priorityPercent >= 40 ? 'text-blue-600' : 'text-gray-500'
+                  }`}>{getPriorityLevel()}</span>
+                </div>
+                <div className="flex items-center justify-between bg-white rounded px-2 py-1.5">
+                  <span className="text-gray-600">Competitors</span>
+                  <span className="font-medium text-gray-900">{opportunity.competitors_with_feature.length} have this</span>
+                </div>
+                <div className="flex items-center justify-between bg-white rounded px-2 py-1.5">
+                  <span className="text-gray-600">Evidence Sources</span>
+                  <span className="font-medium text-gray-900">{opportunity.source_evidence?.length || 0} sources</span>
+                </div>
+                <div className="flex items-center justify-between bg-white rounded px-2 py-1.5">
+                  <span className="text-gray-600">Market Position</span>
+                  <span className="font-medium text-gray-900">{opportunity.market_context || 'N/A'}</span>
+                </div>
+              </div>
+              {opportunity.priority_rationale && (
+                <div className="mt-2 pt-2 border-t border-gray-200">
+                  <p className="text-xs text-gray-600">
+                    <span className="font-medium">Reasoning:</span> {opportunity.priority_rationale}
+                  </p>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Summary */}
