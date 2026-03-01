@@ -24,9 +24,12 @@ import {
   getIdeaFunnel,
   getCompetitorAlerts,
   markAllAlertsRead,
+  getAgentCompetitors,
+  triggerCompetitiveAnalysisV2,
+  triggerCompetitorDiscovery,
 } from '../services/api';
 import type { CompetitorAlert } from '../services/api';
-import type { PMReviewQueueStats, MonitoringConfig, QueueJob, ApiError, TriageSettings, IdeaFunnelData } from '../types';
+import type { PMReviewQueueStats, MonitoringConfig, QueueJob, ApiError, TriageSettings, IdeaFunnelData, AgentCompetitor } from '../types';
 import { JobStatus } from '../types';
 
 const ProductDashboardPage = () => {
@@ -49,6 +52,11 @@ const ProductDashboardPage = () => {
   const [funnelData, setFunnelData] = useState<IdeaFunnelData | null>(null);
   const [alerts, setAlerts] = useState<CompetitorAlert[]>([]);
   const [dismissingAlerts, setDismissingAlerts] = useState(false);
+
+  // Competitive analysis state
+  const [runningAnalysis, setRunningAnalysis] = useState(false);
+  const [analysisMessage, setAnalysisMessage] = useState('');
+  const [showAnalysisModal, setShowAnalysisModal] = useState(false);
 
   const numProductId = productId ? parseInt(productId) : null;
 
@@ -163,6 +171,65 @@ const ProductDashboardPage = () => {
       setTriageError((err as ApiError).message || 'Failed to update settings');
     } finally {
       setSavingTriageSettings(false);
+    }
+  };
+
+  const handleRunCompetitiveAnalysis = async () => {
+    if (!numProductId) return;
+
+    setRunningAnalysis(true);
+    setAnalysisMessage('');
+    try {
+      const competitors = await getAgentCompetitors(numProductId);
+      const selectedCompetitors = competitors.filter((c: AgentCompetitor) => c.deep_analysis_enabled);
+
+      if (selectedCompetitors.length > 0) {
+        // Competitors selected — run V2 analysis immediately
+        await triggerCompetitiveAnalysisV2(numProductId);
+        setAnalysisMessage(`Competitive analysis started for ${selectedCompetitors.length} selected competitors`);
+        // Refresh jobs
+        const jobsData = await getProductJobs(numProductId, 5);
+        setRecentJobs(jobsData);
+      } else {
+        // No competitors selected — show modal with options
+        setShowAnalysisModal(true);
+      }
+    } catch (err) {
+      setError((err as ApiError).message || 'Failed to start analysis');
+    } finally {
+      setRunningAnalysis(false);
+    }
+  };
+
+  const handleDiscoveryOnly = async () => {
+    if (!numProductId) return;
+    setShowAnalysisModal(false);
+    setRunningAnalysis(true);
+    try {
+      await triggerCompetitorDiscovery(numProductId);
+      setAnalysisMessage('Market discovery started. New competitors will appear in the Intelligence Hub.');
+      const jobsData = await getProductJobs(numProductId, 5);
+      setRecentJobs(jobsData);
+    } catch (err) {
+      setError((err as ApiError).message || 'Failed to start discovery');
+    } finally {
+      setRunningAnalysis(false);
+    }
+  };
+
+  const handleDiscoveryAndAnalysis = async () => {
+    if (!numProductId) return;
+    setShowAnalysisModal(false);
+    setRunningAnalysis(true);
+    try {
+      await triggerCompetitorDiscovery(numProductId);
+      setAnalysisMessage('Market discovery started. After discovery, select competitors and run analysis from the Intelligence Hub.');
+      const jobsData = await getProductJobs(numProductId, 5);
+      setRecentJobs(jobsData);
+    } catch (err) {
+      setError((err as ApiError).message || 'Failed to start discovery');
+    } finally {
+      setRunningAnalysis(false);
     }
   };
 
@@ -599,19 +666,31 @@ const ProductDashboardPage = () => {
             {/* Quick Actions */}
             <div>
               <h2 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h2>
+              {analysisMessage && (
+                <div className="mb-3 bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
+                  {analysisMessage}
+                </div>
+              )}
               <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={handleRunCompetitiveAnalysis}
+                  disabled={runningAnalysis}
+                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {runningAnalysis ? 'Starting...' : 'Run Competitive Analysis'}
+                </button>
                 <button
                   onClick={handleTriggerMonitoring}
                   disabled={triggeringMonitoring || !monitoringConfig?.monitoring_enabled}
-                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Run Competitive Scan
                 </button>
                 <Link
-                  to={`/product-intelligence/products/${productId}`}
+                  to={`/product-intelligence/products/${productId}/intelligence`}
                   className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50"
                 >
-                  View Comparison
+                  Intelligence Hub
                 </Link>
                 <Link
                   to={`/ideas?product=${productId}&from=dashboard`}
@@ -621,6 +700,49 @@ const ProductDashboardPage = () => {
                 </Link>
               </div>
             </div>
+
+            {/* Analysis Options Modal (shown when no competitors selected) */}
+            {showAnalysisModal && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+                  <div className="p-6">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      No Competitors Selected
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-6">
+                      No competitors are currently selected for deep analysis. Choose an option:
+                    </p>
+
+                    <div className="space-y-3">
+                      <button
+                        onClick={handleDiscoveryOnly}
+                        className="w-full px-4 py-3 text-left bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+                      >
+                        <div className="font-medium text-gray-900">Market Discovery Only</div>
+                        <div className="text-sm text-gray-500 mt-1">
+                          Find competitors in your market. You can select and analyze them after.
+                        </div>
+                      </button>
+                      <button
+                        onClick={handleDiscoveryAndAnalysis}
+                        className="w-full px-4 py-3 text-left bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100"
+                      >
+                        <div className="font-medium text-blue-900">Run Market Discovery and Competitive Analysis for All</div>
+                        <div className="text-sm text-blue-700 mt-1">
+                          Discover competitors, then select and run full analysis from the Intelligence Hub.
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => setShowAnalysisModal(false)}
+                        className="w-full px-4 py-2 text-gray-500 hover:text-gray-700 font-medium"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
       </main>

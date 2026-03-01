@@ -238,7 +238,10 @@ export default function IntelligenceHubPage() {
         {/* Tab Content */}
         <div className="bg-white rounded-lg shadow">
           {activeTab === "competitor-reports" && (
-            <CompetitorReportsTab productId={numProductId} />
+            <CompetitorReportsTab
+              productId={numProductId}
+              onAnalysisComplete={() => handleTabChange("landscape")}
+            />
           )}
           {activeTab === "landscape" && (
             <LandscapeTab productId={numProductId} />

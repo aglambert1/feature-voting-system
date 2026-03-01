@@ -149,6 +149,8 @@ class LandscapeOpportunityReport(Base):
 
     # Source competitor reports used for this synthesis
     source_competitor_report_ids = Column(JSON, nullable=True)
+    # Names of competitors whose reports were used (for display)
+    source_competitor_names = Column(JSON, nullable=True)
 
     # Timestamps
     generated_at = Column(DateTime, server_default=func.now(), nullable=False)
@@ -173,6 +175,7 @@ class LandscapeOpportunityReport(Base):
             "feature_opportunities": self.feature_opportunities,
             "high_impact_gaps": self.high_impact_gaps,
             "source_competitor_report_ids": self.source_competitor_report_ids,
+            "source_competitor_names": self.source_competitor_names,
             "generated_at": self.generated_at.isoformat() if self.generated_at else None,
             "queue_job_id": self.queue_job_id,
         }

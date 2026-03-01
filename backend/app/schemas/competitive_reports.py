@@ -243,6 +243,7 @@ class LandscapeReportResponse(BaseModel):
     feature_opportunities: Optional[List[FeatureOpportunity]] = None
     high_impact_gaps: Optional[List[HighImpactGap]] = None
     source_competitor_report_ids: Optional[List[int]] = None
+    source_competitor_names: Optional[List[str]] = None
     generated_at: Optional[str] = None
     queue_job_id: Optional[int] = None
 

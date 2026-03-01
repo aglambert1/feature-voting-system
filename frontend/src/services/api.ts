@@ -379,6 +379,13 @@ export const deleteCompetitor = async (productId: number, competitorId: number):
   await api.delete(`/products/${productId}/competitors/${competitorId}`);
 };
 
+/**
+ * Deactivate competitor (soft delete - hides from list, preserves reports)
+ */
+export const deactivateCompetitor = async (productId: number, competitorId: number): Promise<void> => {
+  await api.post(`/product-intelligence/agents/${productId}/competitors/${competitorId}/deactivate`);
+};
+
 // ============================================================================
 // FEATURES API METHODS
 // ============================================================================

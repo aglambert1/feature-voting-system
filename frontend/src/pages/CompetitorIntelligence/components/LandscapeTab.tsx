@@ -530,7 +530,10 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
             <p className="text-sm text-gray-600">
               Based on:{" "}
               <span className="font-medium">
-                {report.competitor_count} competitor reports
+                {report.competitor_count} competitor report{report.competitor_count !== 1 ? "s" : ""}
+                {report.source_competitor_names && report.source_competitor_names.length > 0 && (
+                  <> for {report.source_competitor_names.join(", ")}</>
+                )}
               </span>{" "}
               &bull; Generated: {new Date(report.generated_at).toLocaleString()}
             </p>

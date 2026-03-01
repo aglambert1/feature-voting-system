@@ -1638,6 +1638,9 @@ def landscape_synthesis_task(self, job_id: int):
             len(functional_reports)
         )
 
+        # Collect competitor names from reports used in synthesis
+        source_competitor_names = [cr['competitor_name'] for cr in competitor_reports]
+
         # Store or update the landscape report
         existing_report = db.query(LandscapeOpportunityReport).filter(
             LandscapeOpportunityReport.product_id == product_id
@@ -1650,6 +1653,7 @@ def landscape_synthesis_task(self, job_id: int):
             existing_report.feature_opportunities = result['feature_opportunities']
             existing_report.high_impact_gaps = result['high_impact_gaps']
             existing_report.source_competitor_report_ids = report_ids
+            existing_report.source_competitor_names = source_competitor_names
             existing_report.queue_job_id = job_id
             landscape_report = existing_report
         else:
@@ -1661,6 +1665,7 @@ def landscape_synthesis_task(self, job_id: int):
                 feature_opportunities=result['feature_opportunities'],
                 high_impact_gaps=result['high_impact_gaps'],
                 source_competitor_report_ids=report_ids,
+                source_competitor_names=source_competitor_names,
                 queue_job_id=job_id
             )
             db.add(landscape_report)

@@ -1330,20 +1330,33 @@ export default function ProductDetailPage() {
             <h3 className="text-lg font-semibold text-gray-900 mb-3">
               No Competitors Selected
             </h3>
-            <p className="text-gray-600 mb-6">
-              No competitors are currently selected for deep analysis. Would you like to run market discovery first to find competitors?
+            <p className="text-sm text-gray-600 mb-6">
+              No competitors are currently selected for deep analysis. Choose an option:
             </p>
             <div className="flex flex-col gap-3">
               <button
                 onClick={handleRunMarketDiscovery}
                 disabled={runningAction === 'market-discovery'}
-                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
+                className="w-full px-4 py-3 text-left bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
               >
-                {runningAction === 'market-discovery' ? 'Running...' : 'Run Discovery Only'}
+                <div className="font-medium text-gray-900">Market Discovery Only</div>
+                <div className="text-sm text-gray-500 mt-1">
+                  Find competitors in your market. You can select and analyze them after.
+                </div>
+              </button>
+              <button
+                onClick={handleRunMarketDiscovery}
+                disabled={runningAction === 'market-discovery'}
+                className="w-full px-4 py-3 text-left bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100"
+              >
+                <div className="font-medium text-blue-900">Run Market Discovery & Competitive Analysis for All</div>
+                <div className="text-sm text-blue-700 mt-1">
+                  Discover competitors, then select and run full analysis from the Intelligence Hub.
+                </div>
               </button>
               <button
                 onClick={() => setShowNoCompetitorsWarning(false)}
-                className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+                className="w-full px-4 py-2 text-gray-500 hover:text-gray-700 font-medium"
               >
                 Cancel
               </button>

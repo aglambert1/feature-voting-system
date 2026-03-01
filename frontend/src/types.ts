@@ -1007,6 +1007,7 @@ export interface LandscapeReportDetail {
   innovation_whitespace: string | null;
   analysis_summary: string | null;
   source_competitor_report_ids: number[];
+  source_competitor_names: string[] | null;
   competitor_count: number;
   generated_at: string;
   job_status: string | null;
