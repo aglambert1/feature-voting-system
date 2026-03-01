@@ -5,7 +5,7 @@
  * Shows feature opportunities with priority scores and allows idea creation.
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   getLandscapeReport,
   triggerLandscapeSynthesis,
@@ -111,6 +111,17 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
   useEffect(() => {
     fetchData();
   }, [fetchData, refreshKey]);
+
+  // Build competitor name -> URL map for source traceability links
+  const competitorUrls = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of competitors) {
+      if (c.competitor_url) {
+        map[c.competitor_name] = c.competitor_url;
+      }
+    }
+    return map;
+  }, [competitors]);
 
   // Check for active jobs on initial load
   const checkForActiveJobs = useCallback(async () => {
@@ -674,6 +685,7 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
                 onSelect={handleOpportunitySelection}
                 hasIdea={hasIdea || false}
                 highImpactRank={highImpactRank}
+                competitorUrls={competitorUrls}
               />
             );
           })}

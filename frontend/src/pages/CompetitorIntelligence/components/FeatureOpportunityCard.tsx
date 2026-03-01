@@ -20,6 +20,7 @@ interface Props {
   onSelect: (index: number) => void;
   hasIdea: boolean;
   highImpactRank?: number;
+  competitorUrls?: Record<string, string>;
 }
 
 export default function FeatureOpportunityCard({
@@ -29,6 +30,7 @@ export default function FeatureOpportunityCard({
   onSelect,
   hasIdea,
   highImpactRank,
+  competitorUrls = {},
 }: Props) {
   const priorityPercent = Math.round(opportunity.priority_score * 100);
   const [showScoreDetails, setShowScoreDetails] = useState(false);
@@ -146,6 +148,45 @@ export default function FeatureOpportunityCard({
                   <p className="text-xs text-gray-600">
                     <span className="font-medium">Reasoning:</span> {opportunity.priority_rationale}
                   </p>
+                </div>
+              )}
+
+              {/* Source Traceability */}
+              {(opportunity.competitors_with_feature.length > 0 || (opportunity.source_evidence && opportunity.source_evidence.length > 0)) && (
+                <div className="mt-2 pt-2 border-t border-gray-200">
+                  <h6 className="text-xs font-semibold text-gray-700 mb-1.5 uppercase tracking-wide">Sources</h6>
+                  {opportunity.competitors_with_feature.length > 0 && (
+                    <div className="mb-1.5">
+                      <span className="text-xs text-gray-600 font-medium">Competitor reports:</span>
+                      <span className="text-xs text-gray-700 ml-1">
+                        {opportunity.competitors_with_feature.map((name, i) => {
+                          const url = competitorUrls[name];
+                          return (
+                            <span key={name}>
+                              {i > 0 && ', '}
+                              {url ? (
+                                <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 underline">
+                                  {name}
+                                </a>
+                              ) : name}
+                            </span>
+                          );
+                        })}
+                      </span>
+                    </div>
+                  )}
+                  {opportunity.source_evidence && opportunity.source_evidence.length > 0 && (
+                    <div>
+                      <span className="text-xs text-gray-600 font-medium">Evidence:</span>
+                      <ul className="mt-1 space-y-1">
+                        {opportunity.source_evidence.map((evidence, i) => (
+                          <li key={i} className="text-gray-500 text-xs italic pl-2 border-l-2 border-gray-300">
+                            "{evidence}"
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

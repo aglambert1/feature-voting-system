@@ -87,7 +87,7 @@ You MUST respond with a valid JSON object matching this exact structure:
       "market_context": "Which competitors have it, Table Stakes vs Innovation",
       "priority_score": 0.85,
       "competitors_with_feature": ["Competitor A"],
-      "source_evidence": ["Evidence quote or description"]
+      "source_evidence": ["Competitor Name (source type): Evidence quote or description"]
     }
   ],
   "high_impact_gaps": [
@@ -117,11 +117,20 @@ You MUST respond with a valid JSON object matching this exact structure:
 - **Gap**: We don't have this feature
 - **Partial**: We have partial implementation
 
+## Source Evidence Format
+
+Each entry in `source_evidence` MUST include attribution in this format:
+  "Competitor Name (source type): evidence description or quote"
+
+Where source type is one of: product documentation, user reviews, feature page, pricing page, API docs, marketing site, or other descriptive label.
+
+Example: "Coupa (product documentation): Self-service portal where suppliers manage profiles, view POs, submit invoices"
+
 ## Important Guidelines
 
 1. Analyze patterns across ALL competitor reports provided
 2. Prioritize features by market gravity (demand + competition)
-3. Include specific evidence for each opportunity
+3. Include attributed evidence for each opportunity (see Source Evidence Format above)
 4. Identify the "Innovation Whitespace" - unsolved problems across all competitors
 5. Generate 5-15 feature opportunities, prioritized by importance
 6. Rank top 3-5 high-impact gaps
