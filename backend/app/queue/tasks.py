@@ -1577,13 +1577,29 @@ def landscape_synthesis_task(self, job_id: int):
         ).limit(15).all()
         product_context['core_features'] = [f.feature_name for f in features]
 
-        # Get all functional reports for this product
-        functional_reports = db.query(CompetitorFunctionalReport).filter(
-            CompetitorFunctionalReport.product_id == product_id
-        ).all()
+        # Get functional reports — scoped to selected competitors only
+        audit_report_ids = input_data.get('audit_report_ids')
+        if audit_report_ids:
+            # V2 chord path: use specific report IDs from the audits that just ran
+            functional_reports = db.query(CompetitorFunctionalReport).filter(
+                CompetitorFunctionalReport.id.in_(audit_report_ids)
+            ).all()
+        else:
+            # Manual trigger: only include reports for selected (deep_analysis_enabled) competitors
+            selected_competitor_ids = [
+                c.id for c in db.query(ProductCompetitor).filter(
+                    ProductCompetitor.product_id == product_id,
+                    ProductCompetitor.status == 'active',
+                    ProductCompetitor.deep_analysis_enabled == True
+                ).all()
+            ]
+            functional_reports = db.query(CompetitorFunctionalReport).filter(
+                CompetitorFunctionalReport.product_id == product_id,
+                CompetitorFunctionalReport.product_competitor_id.in_(selected_competitor_ids)
+            ).all() if selected_competitor_ids else []
 
         if not functional_reports:
-            raise ValueError(f"No functional reports found for product {product_id}")
+            raise ValueError(f"No functional reports found for selected competitors of product {product_id}")
 
         # Format reports for the agent
         competitor_reports = []
