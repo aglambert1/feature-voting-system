@@ -23,9 +23,14 @@ The agent identifies:
 from typing import Dict, Any, Type, List, Optional
 
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.agents.base_agent import BaseAgent
 from app.schemas.synthesis import OpportunitySynthesisOutput
+from app.services.scoring_defaults import (
+    DEFAULT_SCORING_WEIGHTS,
+    format_scoring_prompt,
+)
 
 
 class OpportunitySynthesisAgent(BaseAgent):
@@ -44,7 +49,10 @@ class OpportunitySynthesisAgent(BaseAgent):
         - source_stats: Statistics about source usage
 
     Usage:
-        agent = OpportunitySynthesisAgent(db=db, llm_service=llm_service)
+        agent = OpportunitySynthesisAgent(
+            db=db, llm_service=llm_service,
+            scoring_weights=weights  # optional, defaults to DEFAULT_SCORING_WEIGHTS
+        )
         result = agent.execute({
             'competitive_opportunities': [...],
             'customer_ideas': [...],
@@ -52,6 +60,10 @@ class OpportunitySynthesisAgent(BaseAgent):
             'support_themes': [...]
         })
     """
+
+    def __init__(self, scoring_weights: Optional[dict] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.scoring_weights = scoring_weights or DEFAULT_SCORING_WEIGHTS
 
     def get_stage(self) -> str:
         """Return the pipeline stage for this agent."""
@@ -62,8 +74,11 @@ class OpportunitySynthesisAgent(BaseAgent):
         return OpportunitySynthesisOutput
 
     def get_system_prompt(self) -> str:
-        """Build system prompt with JSON output instructions."""
-        return """You are a Product Intelligence Synthesizer specializing in identifying high-value product opportunities by analyzing the intersection of multiple data sources.
+        """Build system prompt with dynamic scoring weights."""
+        scoring_section = format_scoring_prompt(self.scoring_weights)
+
+        return (
+            """You are a Product Intelligence Synthesizer specializing in identifying high-value product opportunities by analyzing the intersection of multiple data sources.
 
 Your task is to synthesize insights from:
 1. **Competitive Intelligence**: Features competitors have that represent gaps in the product
@@ -122,7 +137,8 @@ You MUST respond with a valid JSON object matching this exact structure:
         }
       },
       "recommended_action": "high_priority",
-      "feature_keywords": ["time tracking", "billable hours", "timesheet"]
+      "feature_keywords": ["time tracking", "billable hours", "timesheet"],
+      "jtbd_statement": "When [situation], I want to [motivation], so I can [outcome]"
     }
   ],
   "analysis_summary": "2-3 sentence summary of the most critical findings",
@@ -138,14 +154,9 @@ You MUST respond with a valid JSON object matching this exact structure:
 }
 ```
 
-## Priority Scoring Guidelines (0-100)
-
-Calculate priority_score using these factors:
-- **Source count**: 3 sources = +40, 2 sources = +25, 1 source = +10
-- **Competitive prevalence**: Table Stakes = +20, Emerging = +15, Differentiator = +10
-- **Customer votes**: 50+ votes = +20, 20-49 = +15, 10-19 = +10
-- **Internal signal**: Lost deals OR high urgency support = +20, medium = +10
-- **Internal confidence**: High confidence (structured + activity agree) = +10 bonus
+"""
+            + scoring_section
+            + """
 
 ## Internal Feedback Confidence Levels
 
@@ -154,6 +165,13 @@ Internal themes may have different confidence levels:
 - **Medium confidence**: Theme appears in only one internal source. Still valuable but single-validated.
 
 When an internal theme has "high" confidence, it means multiple independent signals within your organization confirm this issue. Prioritize these themes.
+
+## Jobs-to-be-Done Synthesis
+
+For each opportunity, synthesize a unified JTBD statement capturing the underlying customer job across all contributing sources.
+- Format: "When [situation], I want to [motivation], so I can [outcome]"
+- If competitive features, customer ideas, and internal themes all point to the same need, the JTBD should capture that converged need
+- Focus on the UNDERLYING customer job, not the specific feature implementation
 
 ## Matching Guidelines
 
@@ -179,6 +197,7 @@ Match based on the underlying CAPABILITY, not specific wording.
 4. Sort opportunities by priority_score descending
 5. Limit to top 15 opportunities maximum
 6. Only output valid JSON - no explanatory text outside the JSON object"""
+        )
 
     def build_user_prompt(self, input_data: Dict[str, Any]) -> str:
         """Build user prompt from the three data sources."""

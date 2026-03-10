@@ -911,6 +911,123 @@ def update_product(
             )
 
 
+@router.get("/{product_id}/scoring-weights")
+def get_scoring_weights(
+    product_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get effective scoring weights for synthesis priority scoring.
+
+    Returns the merged result of product-specific overrides and defaults.
+    Any weight category not overridden by the product uses the default value.
+
+    Requires VIEW permission on the product.
+    """
+    from app.services.scoring_defaults import get_weights_for_product, DEFAULT_SCORING_WEIGHTS, VOTE_THRESHOLDS
+
+    service = ProductService(db)
+    try:
+        product = service.get_product(product_id, current_user.id)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    effective = get_weights_for_product(product)
+
+    return {
+        "product_id": product_id,
+        "effective_weights": effective,
+        "has_custom_weights": product.scoring_weights is not None,
+        "custom_overrides": product.scoring_weights,
+        "defaults": DEFAULT_SCORING_WEIGHTS,
+        "vote_thresholds": VOTE_THRESHOLDS,
+    }
+
+
+@router.put("/{product_id}/scoring-weights")
+def update_scoring_weights(
+    product_id: int,
+    weights: dict = Body(..., examples=[{
+        "source_count": {"three": 40, "two": 25, "one": 10},
+        "competitive_prevalence": {"table_stakes": 20, "emerging": 15, "differentiator": 10},
+        "customer_votes": {"high": 20, "medium": 15, "low": 10},
+        "internal_signal": {"high": 20, "medium": 10},
+        "confidence_bonus": 10
+    }]),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Set custom scoring weights for synthesis priority scoring.
+
+    Accepts partial overrides — only the keys you include will be customized.
+    Unspecified keys will use default values during synthesis.
+
+    Send an empty object {} or null to reset to defaults.
+
+    Requires EDIT permission on the product.
+    """
+    from app.services.scoring_defaults import get_weights_for_product, DEFAULT_SCORING_WEIGHTS
+
+    service = ProductService(db)
+    try:
+        product = service.get_product(product_id, current_user.id)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    # Check EDIT permission
+    from app.services.permission_service import PermissionService
+    perm_service = PermissionService(db)
+    if not perm_service.can_access_product(
+        user_id=current_user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.EDIT
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="EDIT permission required to modify scoring weights"
+        )
+
+    # Validate weight values are reasonable
+    valid_top_keys = set(DEFAULT_SCORING_WEIGHTS.keys())
+    for key in weights:
+        if key not in valid_top_keys:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown weight category: {key}. Valid: {sorted(valid_top_keys)}"
+            )
+        if isinstance(weights[key], dict):
+            for sub_key, val in weights[key].items():
+                if not isinstance(val, (int, float)) or val < 0 or val > 100:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Weight value {key}.{sub_key} must be a number between 0 and 100"
+                    )
+        elif isinstance(weights[key], (int, float)):
+            if weights[key] < 0 or weights[key] > 100:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Weight value {key} must be a number between 0 and 100"
+                )
+
+    # Store overrides (empty dict or None resets to defaults)
+    product.scoring_weights = weights if weights else None
+    db.commit()
+
+    effective = get_weights_for_product(product)
+    return {
+        "product_id": product_id,
+        "effective_weights": effective,
+        "has_custom_weights": product.scoring_weights is not None,
+        "custom_overrides": product.scoring_weights,
+    }
+
+
 @router.get("/{product_id}/delete-preview")
 def get_delete_preview(
     product_id: int,

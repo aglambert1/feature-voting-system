@@ -223,6 +223,10 @@ class SynthesizedOpportunity(Base):
     # Embedding for semantic matching (stored as JSON array)
     embedding = Column(JSON, nullable=True)
 
+    # Jobs-to-be-Done extraction
+    jtbd_statement = Column(Text, nullable=True)  # Unified JTBD synthesized across all contributing sources
+    jtbd_embedding = Column(JSON, nullable=True)  # 1024-dim Voyage AI embedding for cross-opportunity clustering
+
     # Link to created idea (if user creates one from this opportunity)
     linked_idea_id = Column(
         Integer,
@@ -262,6 +266,7 @@ class SynthesizedOpportunity(Base):
             "recommended_action": self.recommended_action,
             "feature_keywords": self.feature_keywords,
             "linked_idea_id": self.linked_idea_id,
+            "jtbd_statement": self.jtbd_statement,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

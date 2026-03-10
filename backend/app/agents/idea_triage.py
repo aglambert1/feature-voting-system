@@ -89,6 +89,10 @@ class IdeaTriageOutput(BaseModel):
         ...,
         description="Brief summary of the idea (1-2 sentences)"
     )
+    jtbd_statement: Optional[str] = Field(
+        None,
+        description="Jobs-to-be-Done: 'When [situation], I want to [motivation], so I can [outcome]'"
+    )
     category: str = Field(
         ...,
         description="Suggested category for the idea"
@@ -187,10 +191,17 @@ Your role is to analyze new feature ideas and provide intelligent triage decisio
 - Be generous with approval for clear, actionable ideas
 - Reserve rejection for clearly problematic submissions
 
+7. **Jobs-to-be-Done Extraction**
+   - Extract the underlying job the customer is hiring this feature to do
+   - Format: "When [situation/circumstance], I want to [motivation/action], so I can [expected outcome/benefit]"
+   - Focus on the UNDERLYING NEED, not the specific feature implementation
+   - Example: Idea "Add pricing comparison table" → "When I'm evaluating software vendors for my team, I want to quickly compare pricing and feature tiers, so I can make a defensible recommendation to my manager."
+
 **Output Requirements:**
 
 Provide a structured analysis including:
 - Brief idea summary
+- JTBD statement capturing the underlying customer job
 - Category assignment with confidence
 - Analysis of similar ideas
 - Competitive context assessment
@@ -328,6 +339,7 @@ You MUST return a JSON object with EXACTLY this structure:
 ```json
 {{
   "idea_summary": "Brief 1-2 sentence summary of what the idea is",
+  "jtbd_statement": "When [situation], I want to [motivation], so I can [outcome]",
   "category": "Category name",
   "category_confidence": 0.85,
   "similar_ideas_analysis": "Analysis of similar ideas found, or 'No similar ideas found' if none",

@@ -144,6 +144,10 @@ class FeatureOpportunity(BaseModel):
     user_value: str = Field(
         description="The primary benefit to the customer"
     )
+    jtbd_statement: Optional[str] = Field(
+        default=None,
+        description="The customer job this feature serves: 'When [situation], I want to [motivation], so I can [outcome]'"
+    )
     market_context: str = Field(
         description="Which competitors have it and whether Table Stakes or Innovation"
     )

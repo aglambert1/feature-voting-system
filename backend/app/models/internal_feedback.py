@@ -146,6 +146,9 @@ class WinLossTheme(Base):
     # Embedding for semantic matching (stored as JSON array)
     embedding = Column(JSON, nullable=True)
 
+    # Jobs-to-be-Done extraction
+    jtbd_statement = Column(Text, nullable=True)  # "When [situation], I want to [motivation], so I can [outcome]"
+
     # Timestamps
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
@@ -206,6 +209,9 @@ class SupportTheme(Base):
 
     # Embedding for semantic matching (stored as JSON array)
     embedding = Column(JSON, nullable=True)
+
+    # Jobs-to-be-Done extraction
+    jtbd_statement = Column(Text, nullable=True)  # "When [situation], I want to [motivation], so I can [outcome]"
 
     # Timestamps
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

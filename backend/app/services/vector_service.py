@@ -686,3 +686,129 @@ class VectorService:
             """), {"product_id": product_id}).scalar() or 0
 
         return counts
+
+    # =========================================================================
+    # JTBD Embedding Search Methods
+    # =========================================================================
+
+    @staticmethod
+    def find_similar_jtbds(db, query_embedding, product_id, limit=10):
+        """Find ideas with similar JTBD statements using vector similarity.
+
+        Args:
+            db: Database session
+            query_embedding: 1024-dim embedding of the search query
+            product_id: Filter to this product's ideas
+            limit: Max results to return
+
+        Returns:
+            List of dicts with idea_id, title, jtbd_statement, distance
+        """
+        if VectorService.is_postgres(db):
+            results = db.execute(text("""
+                SELECT id, title, jtbd_statement,
+                       jtbd_embedding::vector <=> CAST(:query_emb AS vector) AS distance
+                FROM ideas
+                WHERE product_id = :product_id
+                  AND jtbd_embedding IS NOT NULL
+                ORDER BY distance ASC
+                LIMIT :limit
+            """), {
+                "query_emb": str(query_embedding),
+                "product_id": product_id,
+                "limit": limit,
+            }).fetchall()
+        else:
+            # SQLite fallback: no vector index for JTBD, scan all
+            import json
+            import numpy as np
+
+            all_ideas = db.execute(text("""
+                SELECT id, title, jtbd_statement, jtbd_embedding
+                FROM ideas
+                WHERE product_id = :product_id
+                  AND jtbd_embedding IS NOT NULL
+            """), {"product_id": product_id}).fetchall()
+
+            scored = []
+            query_arr = np.array(query_embedding)
+            for row in all_ideas:
+                emb = json.loads(row[3]) if isinstance(row[3], str) else row[3]
+                emb_arr = np.array(emb)
+                dist = float(np.linalg.norm(query_arr - emb_arr))
+                scored.append((row[0], row[1], row[2], dist))
+            scored.sort(key=lambda x: x[3])
+            results = scored[:limit]
+
+        return [
+            {
+                "idea_id": r[0],
+                "title": r[1],
+                "jtbd_statement": r[2],
+                "distance": float(r[3]),
+            }
+            for r in results
+        ]
+
+    @staticmethod
+    def find_similar_opportunity_jtbds(db, query_embedding, product_id, limit=10):
+        """Find synthesized opportunities with similar JTBD statements.
+
+        Args:
+            db: Database session
+            query_embedding: 1024-dim embedding of the search query
+            product_id: Filter to this product's opportunities
+            limit: Max results to return
+
+        Returns:
+            List of dicts with opportunity_id, name, jtbd_statement, distance
+        """
+        if VectorService.is_postgres(db):
+            results = db.execute(text("""
+                SELECT so.id, so.name, so.jtbd_statement,
+                       so.jtbd_embedding::vector <=> CAST(:query_emb AS vector) AS distance
+                FROM synthesized_opportunities so
+                JOIN synthesis_runs sr ON so.synthesis_run_id = sr.id
+                WHERE sr.product_id = :product_id
+                  AND sr.status = 'completed'
+                  AND so.jtbd_embedding IS NOT NULL
+                ORDER BY distance ASC
+                LIMIT :limit
+            """), {
+                "query_emb": str(query_embedding),
+                "product_id": product_id,
+                "limit": limit,
+            }).fetchall()
+        else:
+            # SQLite fallback: scan all
+            import json
+            import numpy as np
+
+            all_opps = db.execute(text("""
+                SELECT so.id, so.name, so.jtbd_statement, so.jtbd_embedding
+                FROM synthesized_opportunities so
+                JOIN synthesis_runs sr ON so.synthesis_run_id = sr.id
+                WHERE sr.product_id = :product_id
+                  AND sr.status = 'completed'
+                  AND so.jtbd_embedding IS NOT NULL
+            """), {"product_id": product_id}).fetchall()
+
+            scored = []
+            query_arr = np.array(query_embedding)
+            for row in all_opps:
+                emb = json.loads(row[3]) if isinstance(row[3], str) else row[3]
+                emb_arr = np.array(emb)
+                dist = float(np.linalg.norm(query_arr - emb_arr))
+                scored.append((row[0], row[1], row[2], dist))
+            scored.sort(key=lambda x: x[3])
+            results = scored[:limit]
+
+        return [
+            {
+                "opportunity_id": r[0],
+                "name": r[1],
+                "jtbd_statement": r[2],
+                "distance": float(r[3]),
+            }
+            for r in results
+        ]

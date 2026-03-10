@@ -76,7 +76,8 @@ You MUST respond with a valid JSON object matching this exact structure:
       "deal_count": 3,
       "total_value": 205000,
       "sample_reasons": ["Quote 1", "Quote 2"],
-      "feature_keywords": ["time tracking", "billable hours", "timesheet"]
+      "feature_keywords": ["time tracking", "billable hours", "timesheet"],
+      "jtbd_statement": "When [situation], I want to [motivation], so I can [outcome]"
     }
   ],
   "support_themes": [
@@ -86,7 +87,8 @@ You MUST respond with a valid JSON object matching this exact structure:
       "ticket_count": 47,
       "sample_subjects": ["Subject 1", "Subject 2"],
       "feature_keywords": ["export", "pdf", "reporting"],
-      "urgency_indicator": "high"
+      "urgency_indicator": "high",
+      "jtbd_statement": "When [situation], I want to [motivation], so I can [outcome]"
     }
   ],
   "analysis_summary": "Brief 2-3 sentence summary of key findings",
@@ -116,6 +118,12 @@ You MUST respond with a valid JSON object matching this exact structure:
 - Keywords should be specific enough for semantic matching
 - Include synonyms and related terms
 - Focus on the functional capability, not the problem description
+
+### Jobs-to-be-Done (JTBD):
+For each theme, extract the underlying customer job:
+- Format: "When [situation/circumstance], I want to [motivation/action], so I can [expected outcome/benefit]"
+- Focus on the UNDERLYING NEED, not the specific feature
+- Example: Theme "Missing Time Tracking" → "When I'm managing billable client work, I want to track time spent on each project, so I can invoice accurately and monitor profitability."
 
 ## Important Guidelines
 
