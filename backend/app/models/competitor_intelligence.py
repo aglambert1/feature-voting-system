@@ -87,6 +87,10 @@ class CIProduct(Base):
     # Example: {"pending": false, "accepted": true, "needs_review": false, ...}
     status_visibility_config = Column(JSON, nullable=True)
 
+    # Configurable scoring weights for synthesis priority scoring
+    # null = use defaults from scoring_defaults.py
+    scoring_weights = Column(JSON, nullable=True)
+
     status = Column(String(50), default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

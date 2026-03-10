@@ -125,6 +125,10 @@ class SynthesizedOpportunityOutput(BaseModel):
         default=[],
         description="Keywords for this opportunity"
     )
+    jtbd_statement: Optional[str] = Field(
+        default=None,
+        description="Unified JTBD synthesizing the customer job across all contributing sources: 'When [situation], I want to [motivation], so I can [outcome]'"
+    )
 
 
 class OpportunitySynthesisOutput(BaseModel):

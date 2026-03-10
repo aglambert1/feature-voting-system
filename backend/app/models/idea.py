@@ -154,6 +154,10 @@ class Idea(Base):
     # Lifecycle status (post-acceptance stages like "On Roadmap", "Delivered")
     lifecycle_status_id = Column(Integer, ForeignKey("idea_lifecycle_statuses.id"), nullable=True)
 
+    # Jobs-to-be-Done extraction
+    jtbd_statement = Column(Text, nullable=True)  # "When [situation], I want to [motivation], so I can [outcome]"
+    jtbd_embedding = Column(JSON, nullable=True)  # 1024-dim Voyage AI embedding for clustering
+
     # Timestamps
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -224,5 +228,6 @@ class Idea(Base):
             "lifecycle_status_id": self.lifecycle_status_id,
             "lifecycle_status_name": self.lifecycle_status.name if self.lifecycle_status else None,
             "lifecycle_status_color": self.lifecycle_status.color if self.lifecycle_status else None,
+            "jtbd_statement": self.jtbd_statement,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

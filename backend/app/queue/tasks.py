@@ -828,6 +828,16 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
                 competitor_ref += f" and {len(source_names) - 3} others"
             idea.auto_response_text = f"From analysis of {competitor_ref}"
 
+        # Store JTBD statement and generate embedding for clustering
+        jtbd = triage_result.get('jtbd_statement')
+        if jtbd:
+            idea.jtbd_statement = jtbd
+            try:
+                from app.services.embedding_service import generate_embedding
+                idea.jtbd_embedding = generate_embedding(jtbd, input_type="document")
+            except Exception as jtbd_emb_err:
+                print(f"[triage_idea_task] Warning: JTBD embedding failed: {jtbd_emb_err}")
+
         # Record status history for agent triage
         # Only record as automated action if auto-respond is ON and status changed
         # When auto-respond is OFF, we don't record the agent's recommendation in history
@@ -1121,6 +1131,16 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         # Store auto-response text (always store for PO to use, regardless of auto-respond setting)
         if triage_result.get('auto_response_text'):
             idea.auto_response_text = triage_result['auto_response_text']
+
+        # Store JTBD statement and generate embedding for clustering
+        jtbd = triage_result.get('jtbd_statement')
+        if jtbd:
+            idea.jtbd_statement = jtbd
+            try:
+                from app.services.embedding_service import generate_embedding
+                idea.jtbd_embedding = generate_embedding(jtbd, input_type="document")
+            except Exception as jtbd_emb_err:
+                print(f"[submit_and_triage_idea_task] Warning: JTBD embedding failed: {jtbd_emb_err}")
 
         db.commit()
 
@@ -1457,7 +1477,14 @@ def functional_audit_task(self, job_id: int):
             CompetitorFunctionalReport.product_id == product_id
         ).first()
 
+        # Capture previous data for change detection before overwriting
+        previous_data = None
         if existing_report:
+            previous_data = {
+                "functional_comparison": existing_report.functional_comparison or [],
+                "competitor_context": existing_report.competitor_context or {},
+                "gaps_deep_dive": existing_report.gaps_deep_dive or [],
+            }
             # Update existing report
             existing_report.report_version += 1
             existing_report.report_content_md = markdown_content
@@ -1486,6 +1513,22 @@ def functional_audit_task(self, job_id: int):
 
         db.commit()
         db.refresh(report)
+
+        # Compute structured diff from previous version
+        if previous_data:
+            try:
+                from app.services.change_detection_service import ChangeDetectionService
+                current_data = {
+                    "functional_comparison": result['functional_comparison'],
+                    "competitor_context": result['competitor_context'],
+                    "gaps_deep_dive": result['gaps_deep_dive'],
+                }
+                report.changes_from_previous = ChangeDetectionService.compute_functional_report_diff(
+                    current_data, previous_data
+                )
+                db.commit()
+            except Exception as diff_err:
+                print(f"[functional_audit_task] Warning: Change detection failed: {diff_err}")
 
         output_data = {
             'report_id': report.id,
@@ -1662,7 +1705,13 @@ def landscape_synthesis_task(self, job_id: int):
             LandscapeOpportunityReport.product_id == product_id
         ).first()
 
+        # Capture previous data for change detection before overwriting
+        previous_landscape_data = None
         if existing_report:
+            previous_landscape_data = {
+                "feature_opportunities": existing_report.feature_opportunities or [],
+                "high_impact_gaps": existing_report.high_impact_gaps or [],
+            }
             existing_report.report_version += 1
             existing_report.report_content_md = markdown_content
             existing_report.feature_cluster_matrix = result['feature_cluster_matrix']
@@ -1689,6 +1738,21 @@ def landscape_synthesis_task(self, job_id: int):
 
         db.commit()
         db.refresh(landscape_report)
+
+        # Compute structured diff from previous version
+        if previous_landscape_data:
+            try:
+                from app.services.change_detection_service import ChangeDetectionService
+                current_landscape_data = {
+                    "feature_opportunities": result['feature_opportunities'],
+                    "high_impact_gaps": result['high_impact_gaps'],
+                }
+                landscape_report.changes_from_previous = ChangeDetectionService.compute_landscape_report_diff(
+                    current_landscape_data, previous_landscape_data
+                )
+                db.commit()
+            except Exception as diff_err:
+                print(f"[landscape_synthesis_task] Warning: Change detection failed: {diff_err}")
 
         # Auto-export all reports to filesystem
         export_service = get_report_export_service()
@@ -2126,7 +2190,8 @@ def internal_discovery_task(self, job_id: int):
                 deal_count=theme.deal_count,
                 total_value=theme.total_value,
                 sample_reasons=theme.sample_reasons,
-                feature_keywords=theme.feature_keywords
+                feature_keywords=theme.feature_keywords,
+                jtbd_statement=theme.jtbd_statement
             )
             db.add(db_theme)
 
@@ -2140,7 +2205,8 @@ def internal_discovery_task(self, job_id: int):
                 ticket_count=theme.ticket_count,
                 sample_subjects=theme.sample_subjects,
                 feature_keywords=theme.feature_keywords,
-                urgency_indicator=theme.urgency_indicator
+                urgency_indicator=theme.urgency_indicator,
+                jtbd_statement=theme.jtbd_statement
             )
             db.add(db_theme)
 
@@ -2522,14 +2588,20 @@ def opportunity_synthesis_task(self, job_id: int):
 
         queue_service.update_progress(job_id, 50.0, "Running synthesis agent...")
 
-        # Initialize LLM service and agent
+        # Initialize LLM service and agent with product-specific scoring weights
+        from app.models.competitor_intelligence import CIProduct
+        from app.services.scoring_defaults import get_weights_for_product
+        product = db.query(CIProduct).get(product_id)
+        scoring_weights = get_weights_for_product(product) if product else None
+
         llm_service = LLMService()
         agent = OpportunitySynthesisAgent(
             db=db,
             llm_service=llm_service,
             product_id=product_id,
             user_id=user_id,
-            job_id=job.job_uuid
+            job_id=job.job_uuid,
+            scoring_weights=scoring_weights
         )
 
         # Run the agent with higher max_tokens for complex JSON output
@@ -2570,8 +2642,18 @@ def opportunity_synthesis_task(self, job_id: int):
                 customer_evidence=opp.customer_evidence.model_dump() if opp.customer_evidence else None,
                 internal_evidence=opp.internal_evidence.model_dump() if opp.internal_evidence else None,
                 recommended_action=opp.recommended_action,
-                feature_keywords=opp.feature_keywords
+                feature_keywords=opp.feature_keywords,
+                jtbd_statement=opp.jtbd_statement
             )
+
+            # Generate JTBD embedding for cross-opportunity clustering
+            if opp.jtbd_statement:
+                try:
+                    from app.services.embedding_service import generate_embedding
+                    db_opp.jtbd_embedding = generate_embedding(opp.jtbd_statement, input_type="document")
+                except Exception as jtbd_emb_err:
+                    print(f"[opportunity_synthesis_task] Warning: JTBD embedding failed: {jtbd_emb_err}")
+
             db.add(db_opp)
 
             if opp.source_count >= 3:

@@ -84,6 +84,7 @@ You MUST respond with a valid JSON object matching this exact structure:
       "feature_name": "Concise feature name",
       "summary": "1-2 sentence description",
       "user_value": "Primary benefit to customer",
+      "jtbd_statement": "When [situation], I want to [motivation], so I can [outcome]",
       "market_context": "Which competitors have it, Table Stakes vs Innovation",
       "priority_score": 0.85,
       "competitors_with_feature": ["Competitor A"],
@@ -126,15 +127,23 @@ Where source type is one of: product documentation, user reviews, feature page, 
 
 Example: "Coupa (product documentation): Self-service portal where suppliers manage profiles, view POs, submit invoices"
 
+## Jobs-to-be-Done Extraction
+
+For each feature opportunity, extract the underlying customer job:
+- Format: "When [situation/circumstance], I want to [motivation/action], so I can [expected outcome/benefit]"
+- Focus on the UNDERLYING NEED the feature serves, not the feature itself
+- Multiple features may serve the same job — that's expected
+
 ## Important Guidelines
 
 1. Analyze patterns across ALL competitor reports provided
 2. Prioritize features by market gravity (demand + competition)
 3. Include attributed evidence for each opportunity (see Source Evidence Format above)
-4. Identify the "Innovation Whitespace" - unsolved problems across all competitors
-5. Generate 5-15 feature opportunities, prioritized by importance
-6. Rank top 3-5 high-impact gaps
-7. Only output valid JSON - no explanatory text outside the JSON object"""
+4. Include a jtbd_statement for each feature opportunity
+5. Identify the "Innovation Whitespace" - unsolved problems across all competitors
+6. Generate 5-15 feature opportunities, prioritized by importance
+7. Rank top 3-5 high-impact gaps
+8. Only output valid JSON - no explanatory text outside the JSON object"""
 
     def build_user_prompt(self, input_data: Dict[str, Any]) -> str:
         """

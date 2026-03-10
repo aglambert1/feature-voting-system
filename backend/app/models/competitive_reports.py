@@ -76,6 +76,9 @@ class CompetitorFunctionalReport(Base):
     # Raw search results used (cleaned HTML, for reference)
     raw_search_results = Column(JSON, nullable=True)
 
+    # Structured diff from previous version
+    changes_from_previous = Column(JSON, nullable=True)
+
     # Timestamps
     generated_at = Column(DateTime, server_default=func.now(), nullable=False)
 
@@ -101,6 +104,7 @@ class CompetitorFunctionalReport(Base):
             "functional_comparison": self.functional_comparison,
             "gaps_deep_dive": self.gaps_deep_dive,
             "technical_constraints": self.technical_constraints,
+            "changes_from_previous": self.changes_from_previous,
             "generated_at": self.generated_at.isoformat() if self.generated_at else None,
             "queue_job_id": self.queue_job_id,
         }
@@ -147,6 +151,9 @@ class LandscapeOpportunityReport(Base):
     # [{rank, feature_name, market_gravity, competitors_with_feature, user_demand_evidence}]
     high_impact_gaps = Column(JSON, nullable=True)
 
+    # Structured diff from previous version
+    changes_from_previous = Column(JSON, nullable=True)
+
     # Source competitor reports used for this synthesis
     source_competitor_report_ids = Column(JSON, nullable=True)
     # Names of competitors whose reports were used (for display)
@@ -176,6 +183,7 @@ class LandscapeOpportunityReport(Base):
             "high_impact_gaps": self.high_impact_gaps,
             "source_competitor_report_ids": self.source_competitor_report_ids,
             "source_competitor_names": self.source_competitor_names,
+            "changes_from_previous": self.changes_from_previous,
             "generated_at": self.generated_at.isoformat() if self.generated_at else None,
             "queue_job_id": self.queue_job_id,
         }

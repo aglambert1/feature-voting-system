@@ -18,7 +18,7 @@ dnspython==2.8.0
 docstring_parser==0.17.0
 ecdsa==0.19.1
 email-validator==2.3.0
-fastapi==0.115.0
+fastapi==0.135.1
 frozenlist==1.8.0
 h11==0.16.0
 httpcore==1.0.9
@@ -99,6 +99,9 @@ python-magic==0.4.27
 
 # Rate limiting
 slowapi==0.1.9
+
+# MCP server
+fastmcp>=3.1.0
 
 # Queue/Task dependencies (Celery + Redis)
 celery[redis]==5.4.0

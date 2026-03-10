@@ -126,6 +126,10 @@ class WinLossThemeOutput(BaseModel):
         default=[],
         description="Keywords that could match competitive features"
     )
+    jtbd_statement: Optional[str] = Field(
+        default=None,
+        description="The customer job this theme relates to: 'When [situation], I want to [motivation], so I can [outcome]'"
+    )
 
 
 class SupportThemeOutput(BaseModel):
@@ -150,6 +154,10 @@ class SupportThemeOutput(BaseModel):
     urgency_indicator: Literal["high", "medium", "low"] = Field(
         default="medium",
         description="Assessed urgency based on ticket volume and recency"
+    )
+    jtbd_statement: Optional[str] = Field(
+        default=None,
+        description="The customer job this theme relates to: 'When [situation], I want to [motivation], so I can [outcome]'"
     )
 
 

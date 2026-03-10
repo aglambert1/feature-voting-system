@@ -76,6 +76,46 @@ Full project setup from scratch: creates venv, installs dependencies, runs tests
 
 ---
 
+## MCP Server (`backend/mcp_server/`)
+
+Local MCP server for Claude Desktop. Exposes ~23 tools for competitive intelligence, customer ideas, synthesis, and internal feedback as structured evidence.
+
+```bash
+cd backend
+./venv/bin/python -m mcp_server    # run via stdio for Claude Desktop
+```
+
+Claude Desktop config (`~/.claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "feature-iq": {
+      "command": "python",
+      "args": ["-m", "mcp_server"],
+      "cwd": "/path/to/feature-voting-system/backend",
+      "env": {
+        "DATABASE_URL": "postgresql://...",
+        "VOYAGE_API_KEY": "..."
+      }
+    }
+  }
+}
+```
+
+---
+
+## Database Migrations (`backend/alembic/`)
+
+Migrations are managed with Alembic.
+
+```bash
+cd backend
+./venv/bin/alembic upgrade head          # apply all pending migrations
+./venv/bin/alembic revision --autogenerate -m "description"  # create new migration
+```
+
+---
+
 ## Testing
 
 All tests are in `backend/tests/` and run via pytest. This is also what CI runs.

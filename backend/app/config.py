@@ -9,6 +9,7 @@ For local development, set DEBUG=true in your .env file.
 """
 
 import sys
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -72,8 +73,10 @@ class Settings(BaseSettings):
     dev_return_otp: bool = False  # Set to true in .env to see OTPs in API responses
 
     # Configuration for pydantic to read from .env file
+    # Use absolute path so .env is found regardless of working directory
+    # (needed for MCP server launched by Claude Desktop)
     model_config = SettingsConfigDict(
-        env_file=".env",  # Load from .env file
+        env_file=Path(__file__).resolve().parent.parent / ".env",
         case_sensitive=False,  # DATABASE_URL and database_url are treated the same
         extra="ignore"  # Ignore extra environment variables
     )
