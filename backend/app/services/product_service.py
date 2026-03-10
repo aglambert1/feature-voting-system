@@ -48,7 +48,7 @@ class ProductService:
         Create a new product without automatic analysis.
 
         Products are created as team resources with the creator
-        getting implicit ADMIN access.
+        getting implicit OWNER access.
 
         Args:
             product_name: Product name (must be unique)
@@ -468,7 +468,7 @@ class ProductService:
         """
         Delete a product and all associated data.
 
-        Requires ADMIN permission. When dry_run=True, returns a preview
+        Requires OWNER permission. When dry_run=True, returns a preview
         of what would be deleted without making changes.
 
         Args:
@@ -481,16 +481,16 @@ class ProductService:
             - dry_run=False: True if deleted, False if not found
 
         Raises:
-            PermissionError: If user lacks ADMIN permission
+            PermissionError: If user lacks OWNER permission
         """
         # Check permission
         if not self.permission_service.can_access_product(
             user_id=user_id,
             product_id=product_id,
-            required_level=ProductPermissionLevel.ADMIN
+            required_level=ProductPermissionLevel.OWNER
         ):
             raise PermissionError(
-                f"User {user_id} does not have ADMIN permission for product {product_id}"
+                f"User {user_id} does not have OWNER permission for product {product_id}"
             )
 
         preview = self.get_delete_preview(product_id)

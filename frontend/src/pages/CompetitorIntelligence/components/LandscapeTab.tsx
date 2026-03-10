@@ -209,6 +209,16 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
     }
   }, [successMessage]);
 
+  // Functional reports for selected (deep_analysis_enabled) competitors only
+  const selectedFunctionalReports = useMemo(() => {
+    const selectedCompetitorIds = new Set(
+      competitors.filter((c) => c.deep_analysis_enabled).map((c) => c.id)
+    );
+    return functionalReports.filter((r) =>
+      selectedCompetitorIds.has(r.product_competitor_id)
+    );
+  }, [competitors, functionalReports]);
+
   // Check if any selected competitors are missing reports
   const getCompetitorsWithoutReports = (): AgentCompetitor[] => {
     const reportCompetitorIds = new Set(
@@ -908,8 +918,8 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
                   )}
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  {functionalReports.length} existing report
-                  {functionalReports.length !== 1 ? "s" : ""} will be included
+                  {selectedFunctionalReports.length} existing report
+                  {selectedFunctionalReports.length !== 1 ? "s" : ""} will be included
                   in synthesis
                 </p>
               </div>
@@ -925,7 +935,7 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
                     >
                       {actionLoading === "audits-then-synthesis"
                         ? "Starting..."
-                        : `Audit ${competitorsToAudit.size} Selected & Synthesize ${functionalReports.length + competitorsToAudit.size}`}
+                        : `Audit ${competitorsToAudit.size} Selected & Synthesize ${selectedFunctionalReports.length + competitorsToAudit.size}`}
                     </button>
                     <p className="text-xs text-gray-500 text-center">
                       Queues audits for selected competitors, then
@@ -941,7 +951,7 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
                     >
                       {actionLoading === "synthesis"
                         ? "Starting..."
-                        : `Skip & Synthesize ${functionalReports.length}`}
+                        : `Skip & Synthesize ${selectedFunctionalReports.length}`}
                     </button>
                     <p className="text-xs text-gray-500 text-center">
                       Skip all unaudited competitors and synthesize using
@@ -959,7 +969,7 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
                     >
                       {actionLoading === "synthesis"
                         ? "Starting..."
-                        : `Skip & Synthesize ${functionalReports.length}`}
+                        : `Skip & Synthesize ${selectedFunctionalReports.length}`}
                     </button>
                   </>
                 )}

@@ -1671,6 +1671,7 @@ def landscape_synthesis_task(self, job_id: int):
             existing_report.source_competitor_report_ids = report_ids
             existing_report.source_competitor_names = source_competitor_names
             existing_report.queue_job_id = job_id
+            existing_report.generated_at = datetime.utcnow()
             landscape_report = existing_report
         else:
             landscape_report = LandscapeOpportunityReport(
