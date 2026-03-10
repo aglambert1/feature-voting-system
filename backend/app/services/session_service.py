@@ -300,7 +300,7 @@ class SessionService:
             True if deleted, False if not found
 
         Raises:
-            PermissionError: If user lacks ADMIN permission
+            PermissionError: If user lacks OWNER permission
         """
         session = self.db.query(CompetitorAnalysisSession).filter(
             CompetitorAnalysisSession.id == session_id
@@ -309,14 +309,14 @@ class SessionService:
         if not session:
             return False
 
-        # Check permission - user needs ADMIN access to delete session
+        # Check permission - user needs OWNER access to delete session
         if not self.permission_service.can_access_product(
             user_id=user_id,
             product_id=session.product_id,
-            required_level=ProductPermissionLevel.ADMIN
+            required_level=ProductPermissionLevel.OWNER
         ):
             raise PermissionError(
-                f"User {user_id} does not have ADMIN permission for product {session.product_id}"
+                f"User {user_id} does not have OWNER permission for product {session.product_id}"
             )
 
         self.db.delete(session)

@@ -104,12 +104,19 @@ export default function CompetitorReportsTab({ productId, refreshKey, onAnalysis
     fetchAllData();
   }, [fetchAllData, refreshKey]);
 
-  // Check for active audit jobs
+  // Track whether a V2 analysis pipeline is active (orchestration or synthesis)
+  const [v2PipelineActive, setV2PipelineActive] = useState(false);
+
+  // Check for active audit jobs and V2 pipeline jobs
   const checkAuditJobs = useCallback(async () => {
     try {
-      const jobs = await getProductJobs(productId, 20, [JobType.FUNCTIONAL_AUDIT]);
+      const [auditJobsList, pipelineJobs] = await Promise.all([
+        getProductJobs(productId, 20, [JobType.FUNCTIONAL_AUDIT]),
+        getProductJobs(productId, 5, [JobType.SCHEDULED_DEEP_ANALYSIS, JobType.LANDSCAPE_SYNTHESIS]),
+      ]);
+
       const jobMap = new Map<number, QueueJob>();
-      for (const job of jobs) {
+      for (const job of auditJobsList) {
         const competitorId = job.input_data?.competitor_id;
         if (!competitorId) continue;
         // Keep the most recent job per competitor
@@ -118,6 +125,12 @@ export default function CompetitorReportsTab({ productId, refreshKey, onAnalysis
         }
       }
       setAuditJobs(jobMap);
+
+      // Check if any V2 pipeline jobs are still active
+      const pipelineActive = pipelineJobs.some(
+        j => j.status === JobStatus.PENDING || j.status === JobStatus.QUEUED || j.status === JobStatus.RUNNING
+      );
+      setV2PipelineActive(pipelineActive);
     } catch (err) {
       console.error('[CompetitorReportsTab] Failed to check audit jobs:', err);
     }
@@ -128,22 +141,22 @@ export default function CompetitorReportsTab({ productId, refreshKey, onAnalysis
     checkAuditJobs();
   }, [checkAuditJobs]);
 
-  // Poll while any audit jobs are active
+  // Poll while any audit jobs or V2 pipeline jobs are active
   useEffect(() => {
-    const hasActive = Array.from(auditJobs.values()).some(
+    const hasActiveAudits = Array.from(auditJobs.values()).some(
       (j) =>
         j.status === JobStatus.PENDING ||
         j.status === JobStatus.QUEUED ||
         j.status === JobStatus.RUNNING
     );
-    if (!hasActive) return;
+    if (!hasActiveAudits && !v2PipelineActive) return;
 
     const interval = setInterval(async () => {
       await checkAuditJobs();
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [auditJobs, checkAuditJobs]);
+  }, [auditJobs, v2PipelineActive, checkAuditJobs]);
 
   // Refresh data when an audit finishes (active count decreases)
   useEffect(() => {

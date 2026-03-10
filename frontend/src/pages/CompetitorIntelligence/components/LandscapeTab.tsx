@@ -5,7 +5,7 @@
  * Shows feature opportunities with priority scores and allows idea creation.
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   getLandscapeReport,
   triggerLandscapeSynthesis,
@@ -112,6 +112,17 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
     fetchData();
   }, [fetchData, refreshKey]);
 
+  // Build competitor name -> URL map for source traceability links
+  const competitorUrls = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of competitors) {
+      if (c.competitor_url) {
+        map[c.competitor_name] = c.competitor_url;
+      }
+    }
+    return map;
+  }, [competitors]);
+
   // Check for active jobs on initial load
   const checkForActiveJobs = useCallback(async () => {
     try {
@@ -197,6 +208,16 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
       return () => clearTimeout(timer);
     }
   }, [successMessage]);
+
+  // Functional reports for selected (deep_analysis_enabled) competitors only
+  const selectedFunctionalReports = useMemo(() => {
+    const selectedCompetitorIds = new Set(
+      competitors.filter((c) => c.deep_analysis_enabled).map((c) => c.id)
+    );
+    return functionalReports.filter((r) =>
+      selectedCompetitorIds.has(r.product_competitor_id)
+    );
+  }, [competitors, functionalReports]);
 
   // Check if any selected competitors are missing reports
   const getCompetitorsWithoutReports = (): AgentCompetitor[] => {
@@ -674,6 +695,7 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
                 onSelect={handleOpportunitySelection}
                 hasIdea={hasIdea || false}
                 highImpactRank={highImpactRank}
+                competitorUrls={competitorUrls}
               />
             );
           })}
@@ -896,8 +918,8 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
                   )}
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  {functionalReports.length} existing report
-                  {functionalReports.length !== 1 ? "s" : ""} will be included
+                  {selectedFunctionalReports.length} existing report
+                  {selectedFunctionalReports.length !== 1 ? "s" : ""} will be included
                   in synthesis
                 </p>
               </div>
@@ -913,7 +935,7 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
                     >
                       {actionLoading === "audits-then-synthesis"
                         ? "Starting..."
-                        : `Audit ${competitorsToAudit.size} Selected & Synthesize ${functionalReports.length + competitorsToAudit.size}`}
+                        : `Audit ${competitorsToAudit.size} Selected & Synthesize ${selectedFunctionalReports.length + competitorsToAudit.size}`}
                     </button>
                     <p className="text-xs text-gray-500 text-center">
                       Queues audits for selected competitors, then
@@ -929,7 +951,7 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
                     >
                       {actionLoading === "synthesis"
                         ? "Starting..."
-                        : `Skip & Synthesize ${functionalReports.length}`}
+                        : `Skip & Synthesize ${selectedFunctionalReports.length}`}
                     </button>
                     <p className="text-xs text-gray-500 text-center">
                       Skip all unaudited competitors and synthesize using
@@ -947,7 +969,7 @@ export default function LandscapeTab({ productId, refreshKey }: Props) {
                     >
                       {actionLoading === "synthesis"
                         ? "Starting..."
-                        : `Skip & Synthesize ${functionalReports.length}`}
+                        : `Skip & Synthesize ${selectedFunctionalReports.length}`}
                     </button>
                   </>
                 )}

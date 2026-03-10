@@ -7,7 +7,7 @@ Delete a product and all associated data (competitors, reports, ideas, embedding
 
 ```bash
 cd backend
-./venv/bin/python scripts/delete_product.py <product_id> --dry-run   # preview only
+./venv/bin/python scripts/delete_product.py <product_id> --dry-run   # preview only - shows what will be deleted without execution
 ./venv/bin/python scripts/delete_product.py <product_id>             # delete with confirmation
 ./venv/bin/python scripts/delete_product.py <product_id> --yes       # skip confirmation
 ```

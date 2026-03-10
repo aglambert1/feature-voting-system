@@ -31,7 +31,7 @@ class PermissionService:
         Check if user has access to a product at the required permission level.
 
         Permission hierarchy (from highest to lowest):
-        - ADMIN: Can delete product, manage permissions, edit, view
+        - OWNER: Can delete product, manage permissions, edit, view
         - EDIT: Can modify product, run analyses, view
         - VIEW: Can only view product and analyses
 
@@ -57,7 +57,7 @@ class PermissionService:
         if user.role == UserRole.ADMIN:
             return True
 
-        # 2. Product creator has implicit ADMIN access
+        # 2. Product creator has implicit OWNER access
         if product.created_by_user_id == user_id:
             return True
 
@@ -90,12 +90,12 @@ class PermissionService:
         """
         Check if granted permission level meets or exceeds required level.
 
-        Hierarchy: ADMIN > EDIT > VIEW
+        Hierarchy: OWNER > EDIT > VIEW
         """
         levels = {
             ProductPermissionLevel.VIEW: 1,
             ProductPermissionLevel.EDIT: 2,
-            ProductPermissionLevel.ADMIN: 3
+            ProductPermissionLevel.OWNER: 3
         }
         return levels.get(granted, 0) >= levels.get(required, 0)
 
@@ -167,7 +167,7 @@ class PermissionService:
         """
         Grant a user permission to access a product.
 
-        The granting user must have ADMIN access to the product.
+        The granting user must have OWNER access to the product.
 
         Args:
             product_id: Product ID
@@ -179,17 +179,17 @@ class PermissionService:
             ProductPermission object
 
         Raises:
-            PermissionError: If granter doesn't have ADMIN access
+            PermissionError: If granter doesn't have OWNER access
             ValueError: If product or user not found
         """
-        # Verify granter has ADMIN access
+        # Verify granter has OWNER access
         if not self.can_access_product(
             user_id=granted_by_user_id,
             product_id=product_id,
-            required_level=ProductPermissionLevel.ADMIN
+            required_level=ProductPermissionLevel.OWNER
         ):
             raise PermissionError(
-                f"User {granted_by_user_id} does not have ADMIN access to product {product_id}"
+                f"User {granted_by_user_id} does not have OWNER access to product {product_id}"
             )
 
         # Verify target user exists
@@ -232,7 +232,7 @@ class PermissionService:
         """
         Revoke a user's permission to access a product.
 
-        The revoking user must have ADMIN access to the product.
+        The revoking user must have OWNER access to the product.
 
         Args:
             product_id: Product ID
@@ -243,16 +243,16 @@ class PermissionService:
             True if permission was revoked, False if no permission existed
 
         Raises:
-            PermissionError: If revoker doesn't have ADMIN access
+            PermissionError: If revoker doesn't have OWNER access
         """
-        # Verify revoker has ADMIN access
+        # Verify revoker has OWNER access
         if not self.can_access_product(
             user_id=revoked_by_user_id,
             product_id=product_id,
-            required_level=ProductPermissionLevel.ADMIN
+            required_level=ProductPermissionLevel.OWNER
         ):
             raise PermissionError(
-                f"User {revoked_by_user_id} does not have ADMIN access to product {product_id}"
+                f"User {revoked_by_user_id} does not have OWNER access to product {product_id}"
             )
 
         # Find and delete permission
@@ -276,7 +276,7 @@ class PermissionService:
         """
         Get all permissions for a product.
 
-        Requesting user must have ADMIN access to the product.
+        Requesting user must have OWNER access to the product.
 
         Args:
             product_id: Product ID
@@ -286,15 +286,15 @@ class PermissionService:
             List of ProductPermission objects
 
         Raises:
-            PermissionError: If requesting user doesn't have ADMIN access
+            PermissionError: If requesting user doesn't have OWNER access
         """
         if not self.can_access_product(
             user_id=requesting_user_id,
             product_id=product_id,
-            required_level=ProductPermissionLevel.ADMIN
+            required_level=ProductPermissionLevel.OWNER
         ):
             raise PermissionError(
-                f"User {requesting_user_id} does not have ADMIN access to product {product_id}"
+                f"User {requesting_user_id} does not have OWNER access to product {product_id}"
             )
 
         return self.db.query(ProductPermission).filter(

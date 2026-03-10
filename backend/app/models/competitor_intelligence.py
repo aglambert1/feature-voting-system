@@ -23,11 +23,11 @@ class ProductPermissionLevel(str, enum.Enum):
 
     - VIEW: Can view product and analyses
     - EDIT: Can modify product, run analyses
-    - ADMIN: Can delete product, manage permissions
+    - OWNER: Can delete product, manage permissions
     """
     VIEW = "view"
     EDIT = "edit"
-    ADMIN = "admin"
+    OWNER = "owner"
 
 
 class SessionStage(str, enum.Enum):
@@ -390,7 +390,7 @@ class ProductPermission(Base):
     Permission grants for product access.
 
     Defines which users can access which products and at what level.
-    Creators get implicit ADMIN access without needing a row in this table.
+    Creators get implicit OWNER access without needing a row in this table.
     """
     __tablename__ = "product_permissions"
 

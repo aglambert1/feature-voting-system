@@ -133,8 +133,8 @@ def create_product(
 
     Requires: PRODUCT_OWNER or ADMIN role.
 
-    Products are created as team resources. The creator gets implicit ADMIN access.
-    Other users can be granted VIEW/EDIT/ADMIN permissions separately.
+    Products are created as team resources. The creator gets implicit OWNER access.
+    Other users can be granted VIEW/EDIT/OWNER permissions separately.
 
     After creation, use POST /products/{id}/analyze to analyze the product.
 
@@ -296,7 +296,7 @@ def list_products(
     - Explicit product permission grants
 
     Args:
-        permission_level: Filter by minimum permission level (view, edit, admin)
+        permission_level: Filter by minimum permission level (view, edit, owner)
 
     Returns:
         List of products the user can access
@@ -921,18 +921,18 @@ def get_delete_preview(
     Preview what would be deleted if this product were removed.
 
     Returns counts of related rows, file paths, and embedding counts
-    without making any changes. Requires ADMIN permission.
+    without making any changes. Requires OWNER permission.
     """
     from app.services.permission_service import PermissionService
     permission_service = PermissionService(db)
     if not permission_service.can_access_product(
         user_id=current_user.id,
         product_id=product_id,
-        required_level=ProductPermissionLevel.ADMIN
+        required_level=ProductPermissionLevel.OWNER
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User {current_user.id} does not have ADMIN permission for product {product_id}"
+            detail=f"User {current_user.id} does not have OWNER permission for product {product_id}"
         )
 
     service = ProductService(db)
@@ -970,7 +970,7 @@ def delete_product(
     - Agent execution logs
 
     Use `?dry_run=true` to preview what would be deleted.
-    Requires ADMIN permission on the product.
+    Requires OWNER permission on the product.
     """
     service = ProductService(db)
 

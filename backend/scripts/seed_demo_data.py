@@ -506,11 +506,11 @@ def seed():
         print("Granting product permissions...")
         perms_created = 0
 
-        # POs get ADMIN on the product
+        # POs get OWNER on the product
         for po in [po_user, po_user_2]:
             if grant_permission_if_not_exists(
                 db, product.id, po.id,
-                ProductPermissionLevel.ADMIN, admin_user.id
+                ProductPermissionLevel.OWNER, admin_user.id
             ):
                 perms_created += 1
 
