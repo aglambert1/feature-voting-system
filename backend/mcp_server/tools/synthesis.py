@@ -118,7 +118,8 @@ def synthesis_run(product_id: int) -> dict:
             product_id=product_id,
         )
 
-        result = opportunity_synthesis_task.delay(job.id)
+        from mcp_server.db import dispatch_task
+        result = dispatch_task(opportunity_synthesis_task, job.id)
         queue_service.mark_queued(job.id, result.id)
 
         return {
