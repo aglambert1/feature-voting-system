@@ -68,6 +68,50 @@ def product_get_context(product_id: int) -> dict:
 
 
 @mcp.tool()
+def product_update_scoring(product_id: int, weights_json: str) -> dict:
+    """Update scoring weights for opportunity synthesis. Pass a JSON object with weight overrides. Omitted keys keep their defaults. Pass '{}' to reset to defaults.
+
+    Args:
+        product_id: The product to update scoring weights for.
+        weights_json: JSON string of weight overrides. Valid keys: source_count, competitive_prevalence, customer_votes, internal_signal, evidence_research, confidence_bonus. Example: '{"source_count": {"four": 60, "three": 45}}'
+    """
+    import json
+    from app.models.competitor_intelligence import CIProduct
+    from app.services.scoring_defaults import get_weights_for_product, DEFAULT_SCORING_WEIGHTS
+
+    try:
+        overrides = json.loads(weights_json) if weights_json else {}
+    except json.JSONDecodeError:
+        return {"error": "Invalid JSON. Provide a valid JSON object with weight overrides."}
+
+    if not isinstance(overrides, dict):
+        return {"error": "Weights must be a JSON object, not a list or scalar."}
+
+    # Validate keys
+    valid_keys = set(DEFAULT_SCORING_WEIGHTS.keys())
+    invalid_keys = set(overrides.keys()) - valid_keys
+    if invalid_keys:
+        return {"error": f"Invalid weight keys: {sorted(invalid_keys)}. Valid keys: {sorted(valid_keys)}"}
+
+    with get_session() as db:
+        product = db.query(CIProduct).get(product_id)
+        if not product:
+            return {"error": f"Product {product_id} not found"}
+
+        product.scoring_weights = overrides if overrides else None
+        db.flush()
+
+        effective = get_weights_for_product(product)
+
+        return {
+            "product_id": product_id,
+            "has_custom_weights": bool(overrides),
+            "custom_overrides": overrides if overrides else None,
+            "effective_weights": effective,
+        }
+
+
+@mcp.tool()
 def product_search_features(product_id: int, query: str) -> dict:
     """Semantic search across a product's own features."""
     from app.services.embedding_service import generate_embedding

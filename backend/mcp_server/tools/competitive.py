@@ -165,6 +165,92 @@ def ci_get_alerts(product_id: int, limit: int = 20) -> dict:
 
 
 @mcp.tool()
+def ci_add_competitor(product_id: int, competitor_name: str, competitor_url: str) -> dict:
+    """Add a new competitor to track for a product. The competitor will be available for audits and landscape analysis.
+
+    Args:
+        product_id: The product to add the competitor to.
+        competitor_name: Name of the competitor (e.g. "Asana").
+        competitor_url: Website URL (e.g. "https://asana.com").
+    """
+    from app.models.competitor_intelligence import ProductCompetitor
+    from urllib.parse import urlparse
+
+    with get_session() as db:
+        # Check for duplicate by name
+        existing = db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id == product_id,
+            ProductCompetitor.competitor_name.ilike(competitor_name),
+        ).first()
+        if existing:
+            return {"error": f"Competitor '{existing.competitor_name}' already exists (id={existing.id})"}
+
+        # Check for duplicate by domain
+        parsed = urlparse(competitor_url)
+        domain = parsed.netloc or parsed.path
+        domain = domain.replace("www.", "")
+        existing_url = db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id == product_id,
+            ProductCompetitor.competitor_url.ilike(f"%{domain}%"),
+        ).first()
+        if existing_url:
+            return {"error": f"A competitor with domain '{domain}' already exists: {existing_url.competitor_name}"}
+
+        competitor = ProductCompetitor(
+            product_id=product_id,
+            competitor_name=competitor_name,
+            competitor_url=competitor_url,
+            deep_analysis_enabled=True,
+            status="active",
+        )
+        db.add(competitor)
+        db.flush()
+
+        return {
+            "competitor_id": competitor.id,
+            "competitor_name": competitor.competitor_name,
+            "competitor_url": competitor.competitor_url,
+            "deep_analysis_enabled": True,
+            "message": f"Competitor '{competitor_name}' added. Run ci_run_competitor_audit to analyze.",
+        }
+
+
+@mcp.tool()
+def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
+    """Discover competitors automatically using AI analysis of the product. Returns a job ID.
+
+    Args:
+        product_id: The product to discover competitors for.
+        max_competitors: Maximum number of competitors to discover (1-20, default 5).
+    """
+    from app.models.queue import JobType
+    from app.services.queue_service import QueueService
+    from app.queue.tasks import discover_competitors_task
+
+    max_competitors = max(1, min(20, max_competitors))
+
+    with get_session() as db:
+        queue_service = QueueService(db)
+        job = queue_service.create_job(
+            job_type=JobType.COMPETITOR_DISCOVERY,
+            input_data={"max_competitors": max_competitors},
+            product_id=product_id,
+        )
+
+        from mcp_server.db import dispatch_task
+        result = dispatch_task(discover_competitors_task, job.id)
+        queue_service.mark_queued(job.id, result.id)
+
+        return {
+            "job_id": job.id,
+            "job_uuid": job.job_uuid,
+            "max_competitors": max_competitors,
+            "status": "queued",
+            "message": f"Competitor discovery queued (max {max_competitors}). Use job_get_status to check progress.",
+        }
+
+
+@mcp.tool()
 def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
     """Trigger a functional audit for a single competitor. Returns a job ID to check status with job_get_status."""
     from app.models.competitor_intelligence import ProductCompetitor

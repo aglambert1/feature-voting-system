@@ -171,6 +171,106 @@ def ideas_submit(product_id: int, title: str, description: str) -> dict:
 
 
 @mcp.tool()
+def ideas_vote(idea_id: int) -> dict:
+    """Toggle an upvote on an idea. Voting again removes the vote. Returns updated vote count.
+
+    Args:
+        idea_id: The ID of the idea to vote on.
+    """
+    from app.models.idea import Idea
+    from app.models.vote import Vote
+    from sqlalchemy import func
+
+    with get_session() as db:
+        idea = db.query(Idea).get(idea_id)
+        if not idea:
+            return {"error": f"Idea {idea_id} not found"}
+
+        # Check for existing vote from MCP user (user_id=0 convention)
+        mcp_user_id = 0
+        existing = db.query(Vote).filter(
+            Vote.idea_id == idea_id,
+            Vote.user_id == mcp_user_id,
+        ).first()
+
+        if existing:
+            db.delete(existing)
+            db.flush()
+            action = "removed"
+        else:
+            vote = Vote(idea_id=idea_id, user_id=mcp_user_id, vote_value=1)
+            db.add(vote)
+            db.flush()
+            action = "added"
+
+        vote_count = db.query(func.count(Vote.id)).filter(
+            Vote.idea_id == idea_id
+        ).scalar() or 0
+
+        return {
+            "idea_id": idea_id,
+            "title": idea.title,
+            "action": action,
+            "vote_count": vote_count,
+        }
+
+
+@mcp.tool()
+def ideas_review(idea_id: int, action: str, notes: str = "") -> dict:
+    """Review an idea as PM: approve, reject, or mark as duplicate.
+
+    Args:
+        idea_id: The ID of the idea to review.
+        action: One of: "approve" (accept for voting), "reject" (mark not appropriate), "duplicate" (mark as duplicate).
+        notes: Optional review notes explaining the decision.
+    """
+    from app.models.idea import Idea, IdeaStatus
+    from app.models.idea_status_history import IdeaStatusHistory
+
+    valid_actions = {"approve", "reject", "duplicate"}
+    if action not in valid_actions:
+        return {"error": f"Invalid action '{action}'. Must be one of: {sorted(valid_actions)}"}
+
+    with get_session() as db:
+        idea = db.query(Idea).get(idea_id)
+        if not idea:
+            return {"error": f"Idea {idea_id} not found"}
+
+        old_status = idea.status
+
+        if action == "approve":
+            idea.status = IdeaStatus.ACCEPTED
+            idea.is_active = True
+        elif action == "reject":
+            idea.status = IdeaStatus.NOT_APPROPRIATE
+            idea.is_active = False
+        elif action == "duplicate":
+            idea.status = IdeaStatus.DUPLICATE
+            idea.is_active = False
+
+        # Record status change
+        history = IdeaStatusHistory(
+            idea_id=idea.id,
+            previous_status=old_status,
+            new_status=idea.status,
+            change_source="mcp_review",
+            comment=notes or None,
+        )
+        db.add(history)
+        db.flush()
+
+        return {
+            "idea_id": idea.id,
+            "title": idea.title,
+            "action": action,
+            "old_status": old_status.value if old_status else None,
+            "new_status": idea.status.value,
+            "is_active": idea.is_active,
+            "notes": notes or None,
+        }
+
+
+@mcp.tool()
 def ideas_get_by_category(product_id: int) -> dict:
     """Get ideas grouped by category with vote counts, showing demand patterns."""
     from app.models.idea import Idea
