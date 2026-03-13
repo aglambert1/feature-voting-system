@@ -1,7 +1,12 @@
 """Internal feedback tools for MCP server."""
 
+import json
+import logging
+
 from mcp_server import mcp
 from mcp_server.db import get_session
+
+logger = logging.getLogger(__name__)
 
 
 @mcp.tool()
@@ -106,4 +111,74 @@ def internal_get_signals(product_id: int, query: str) -> dict:
             "query": query,
             "winloss_matches": matching_wl,
             "support_matches": matching_st,
+        }
+
+
+@mcp.tool()
+def internal_submit_feedback(
+    product_id: int,
+    deals_json: str = "[]",
+    tickets_json: str = "[]",
+    source: str = "mcp",
+) -> dict:
+    """Submit internal feedback data (win/loss deals and/or support tickets) for theme extraction. The data will be processed asynchronously by an AI agent to extract themes.
+
+    Args:
+        product_id: The product this feedback relates to.
+        deals_json: JSON array of deal records. Each deal: {"company_name": "Acme", "deal_value": 50000, "outcome": "lost", "loss_reason": "Missing time tracking", "competitor": "Asana"}. Fields: company_name (required), deal_value, outcome (won/lost), loss_reason, win_reason, competitor.
+        tickets_json: JSON array of support tickets. Each ticket: {"subject": "Need time tracking", "category": "feature_request", "priority": "high"}. Fields: subject (required), category, priority, description.
+        source: Label for where this data came from (default: "mcp").
+    """
+    from app.models.internal_feedback import InternalFeedbackImport
+    from app.models.queue import JobType
+    from app.services.queue_service import QueueService
+    from app.queue.tasks import internal_discovery_task
+
+    try:
+        deals = json.loads(deals_json) if deals_json else []
+    except json.JSONDecodeError:
+        return {"error": "Invalid deals_json — must be a valid JSON array."}
+
+    try:
+        tickets = json.loads(tickets_json) if tickets_json else []
+    except json.JSONDecodeError:
+        return {"error": "Invalid tickets_json — must be a valid JSON array."}
+
+    if not deals and not tickets:
+        return {"error": "At least one deal or ticket must be provided."}
+
+    with get_session() as db:
+        # Create import record
+        fb_import = InternalFeedbackImport(
+            product_id=product_id,
+            filename=f"mcp_import_{source}",
+            source_type=source,
+            status="pending",
+            deals_count=len(deals),
+            tickets_count=len(tickets),
+            raw_deals=deals if deals else None,
+            raw_tickets=tickets if tickets else None,
+        )
+        db.add(fb_import)
+        db.flush()
+
+        queue_service = QueueService(db)
+        job = queue_service.create_job(
+            job_type=JobType.INTERNAL_DISCOVERY,
+            input_data={"import_id": fb_import.id},
+            product_id=product_id,
+        )
+
+        from mcp_server.db import dispatch_task
+        result = dispatch_task(internal_discovery_task, job.id)
+        queue_service.mark_queued(job.id, result.id)
+
+        return {
+            "import_id": fb_import.id,
+            "job_id": job.id,
+            "job_uuid": job.job_uuid,
+            "deals_count": len(deals),
+            "tickets_count": len(tickets),
+            "status": "queued",
+            "message": "Internal feedback import queued for theme extraction. Use job_get_status to check progress.",
         }
