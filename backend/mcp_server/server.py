@@ -17,6 +17,7 @@ from mcp_server.tools import synthesis  # noqa: E402, F401
 from mcp_server.tools import internal  # noqa: E402, F401
 from mcp_server.tools import jobs  # noqa: E402, F401
 from mcp_server.tools import composite  # noqa: E402, F401
+from mcp_server.tools import evidence  # noqa: E402, F401
 from mcp_server import resources  # noqa: E402, F401
 from mcp_server import prompts  # noqa: E402, F401
 

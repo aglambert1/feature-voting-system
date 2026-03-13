@@ -65,6 +65,7 @@ from app.models.cost_tracking import (
     OperationType,
 )
 from app.models.product_invite import ProductInviteCode
+from app.models.evidence import Evidence, EvidenceType
 
 __all__ = [
     "User", "UserRole", "ProductAccessMode",
@@ -83,4 +84,5 @@ __all__ = [
     "SynthesisRun", "SynthesizedOpportunity", "SynthesisStatus", "SynthesisSourceType",
     "LLMUsageLog", "OperationType",
     "ProductInviteCode",
+    "Evidence", "EvidenceType",
 ]

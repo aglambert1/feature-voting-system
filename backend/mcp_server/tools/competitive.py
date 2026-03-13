@@ -57,6 +57,13 @@ def ci_get_competitor_report(product_id: int, competitor_name: str) -> dict:
         if not report:
             return {"error": f"No report available for {competitor.competitor_name}"}
 
+        # Include any evidence linked to this competitor
+        from app.models.evidence import Evidence
+        linked_evidence = db.query(Evidence).filter(
+            Evidence.product_id == product_id,
+            Evidence.competitor_id == competitor.id,
+        ).order_by(Evidence.created_at.desc()).limit(20).all()
+
         return {
             "competitor_name": competitor.competitor_name,
             "report_version": report.report_version,
@@ -66,6 +73,7 @@ def ci_get_competitor_report(product_id: int, competitor_name: str) -> dict:
             "gaps_deep_dive": report.gaps_deep_dive,
             "technical_constraints": report.technical_constraints,
             "changes_from_previous": report.changes_from_previous,
+            "additional_evidence": [e.to_summary_dict() for e in linked_evidence],
         }
 
 
@@ -96,15 +104,24 @@ def ci_get_landscape(product_id: int) -> dict:
 
 @mcp.tool()
 def ci_search_features(product_id: int, query: str) -> dict:
-    """Search across all competitor reports for a specific capability using semantic matching."""
+    """Search across all competitor reports and competitive evidence for a specific capability using semantic matching. Returns both structured competitor features and ad-hoc competitive intelligence from the factbase."""
     from app.services.embedding_service import generate_embedding
     from app.services.vector_service import VectorService
+    from app.models.evidence import COMPETITIVE_EVIDENCE_TYPES
 
     with get_session() as db:
         query_emb = generate_embedding(query, input_type="query")
         matches = VectorService.find_similar_competitor_features(
             db, query_emb, product_id, limit=10
         )
+
+        # Also search competitive evidence
+        competitive_types = [et.value for et in COMPETITIVE_EVIDENCE_TYPES]
+        evidence_matches = VectorService.find_similar_evidence(
+            db, query_emb, product_id, limit=5,
+            evidence_types=competitive_types,
+        )
+
         return {
             "query": query,
             "matches": [
@@ -116,6 +133,17 @@ def ci_search_features(product_id: int, query: str) -> dict:
                     "similarity": round(float(m[4]), 3) if len(m) > 4 else None,
                 }
                 for m in matches
+            ],
+            "evidence": [
+                {
+                    "evidence_id": e["evidence_id"],
+                    "title": e["title"],
+                    "evidence_type": e["evidence_type"],
+                    "source_url": e["source_url"],
+                    "source_description": e["source_description"],
+                    "similarity": round(1 - float(e["distance"]) / 2, 3),
+                }
+                for e in evidence_matches
             ],
         }
 
@@ -160,7 +188,8 @@ def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
         )
 
         from app.queue.tasks import functional_audit_task
-        result = functional_audit_task.delay(job.id)
+        from mcp_server.db import dispatch_task
+        result = dispatch_task(functional_audit_task, job.id)
         queue_service.mark_queued(job.id, result.id)
 
         return {
@@ -187,7 +216,8 @@ def ci_run_analysis(product_id: int) -> dict:
         )
 
         from app.queue.tasks import landscape_synthesis_task
-        result = landscape_synthesis_task.delay(job.id)
+        from mcp_server.db import dispatch_task
+        result = dispatch_task(landscape_synthesis_task, job.id)
         queue_service.mark_queued(job.id, result.id)
 
         return {

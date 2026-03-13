@@ -812,3 +812,99 @@ class VectorService:
             }
             for r in results
         ]
+
+    # ============================================================================
+    # Evidence Embedding Methods
+    # ============================================================================
+
+    @staticmethod
+    def find_similar_evidence(
+        db: Session,
+        query_embedding: List[float],
+        product_id: int,
+        limit: int = 10,
+        evidence_types: List[str] = None,
+    ) -> List[dict]:
+        """Find evidence records with similar content embeddings.
+
+        Args:
+            db: Database session
+            query_embedding: 1024-dim embedding of the search query
+            product_id: Filter to this product's evidence
+            limit: Max results to return
+            evidence_types: Optional list of evidence_type values to filter by
+
+        Returns:
+            List of dicts with evidence_id, title, evidence_type, source_url,
+            competitor_id, jtbd_statement, distance
+        """
+        if VectorService.is_postgres(db):
+            type_filter = ""
+            params = {
+                "query_emb": str(query_embedding),
+                "product_id": product_id,
+                "limit": limit,
+            }
+            if evidence_types:
+                placeholders = ", ".join(f":et_{i}" for i in range(len(evidence_types)))
+                type_filter = f"AND e.evidence_type IN ({placeholders})"
+                for i, et in enumerate(evidence_types):
+                    params[f"et_{i}"] = et
+
+            results = db.execute(text(f"""
+                SELECT e.id, e.title, e.evidence_type, e.source_url,
+                       e.competitor_id, e.jtbd_statement, e.source_description,
+                       e.content_embedding::vector <=> CAST(:query_emb AS vector) AS distance
+                FROM evidence e
+                WHERE e.product_id = :product_id
+                  AND e.content_embedding IS NOT NULL
+                  {type_filter}
+                ORDER BY distance ASC
+                LIMIT :limit
+            """), params).fetchall()
+        else:
+            # SQLite fallback: scan all
+            import json as json_mod
+            import numpy as np
+
+            type_filter = ""
+            params = {"product_id": product_id}
+            if evidence_types:
+                placeholders = ", ".join(f":et_{i}" for i in range(len(evidence_types)))
+                type_filter = f"AND e.evidence_type IN ({placeholders})"
+                for i, et in enumerate(evidence_types):
+                    params[f"et_{i}"] = et
+
+            all_ev = db.execute(text(f"""
+                SELECT e.id, e.title, e.evidence_type, e.source_url,
+                       e.competitor_id, e.jtbd_statement, e.source_description,
+                       e.content_embedding
+                FROM evidence e
+                WHERE e.product_id = :product_id
+                  AND e.content_embedding IS NOT NULL
+                  {type_filter}
+            """), params).fetchall()
+
+            scored = []
+            query_arr = np.array(query_embedding)
+            for row in all_ev:
+                emb = json_mod.loads(row[7]) if isinstance(row[7], str) else row[7]
+                emb_arr = np.array(emb)
+                dist = float(np.linalg.norm(query_arr - emb_arr))
+                scored.append((*row[:7], dist))
+            scored.sort(key=lambda x: x[7])
+            results = scored[:limit]
+
+        return [
+            {
+                "evidence_id": r[0],
+                "title": r[1],
+                "evidence_type": r[2],
+                "source_url": r[3],
+                "competitor_id": r[4],
+                "jtbd_statement": r[5],
+                "source_description": r[6],
+                "distance": float(r[7]),
+            }
+            for r in results
+        ]

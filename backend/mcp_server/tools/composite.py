@@ -75,39 +75,65 @@ def evaluate_feature_evidence(product_id: int, feature_description: str) -> dict
                     "urgency_indicator": t.urgency_indicator,
                 })
 
+        # Search factbase evidence
+        evidence_signals = VectorService.find_similar_evidence(
+            db, query_emb, product_id, limit=5
+        )
+        factbase_evidence = [
+            {
+                "evidence_id": e["evidence_id"],
+                "title": e["title"],
+                "evidence_type": e["evidence_type"],
+                "source_url": e["source_url"],
+                "source_description": e["source_description"],
+                "jtbd_statement": e["jtbd_statement"],
+                "similarity": round(1 - float(e["distance"]) / 2, 3),
+            }
+            for e in evidence_signals
+        ]
+
         # Build signal summary
         source_count = sum([
             1 if competitive_signals else 0,
             1 if customer_signals else 0,
             1 if internal_signals else 0,
+            1 if factbase_evidence else 0,
         ])
         competitors_with = list(set(
             s["competitor_name"] for s in competitive_signals if s.get("competitor_name")
         ))
+
+        # Dynamic evidence gaps based on what's actually available
+        evidence_gaps = []
+        if not factbase_evidence:
+            evidence_gaps.append("no factbase evidence found — use evidence_add to capture relevant intel")
+        if not any(e["evidence_type"] == "customer_interview" for e in factbase_evidence):
+            evidence_gaps.append("no customer interview data available")
+        evidence_gaps.extend([
+            "market sizing not available",
+            "engineering effort not estimated",
+        ])
 
         return {
             "feature_description": feature_description,
             "competitive_signals": competitive_signals,
             "customer_signals": customer_signals,
             "internal_signals": internal_signals,
+            "factbase_evidence": factbase_evidence,
             "signal_summary": {
                 "source_count": source_count,
                 "competitors_with_feature": competitors_with,
                 "customer_ideas_found": len(customer_signals),
                 "internal_themes_found": len(internal_signals),
+                "factbase_evidence_found": len(factbase_evidence),
             },
-            "evidence_gaps": [
-                "market sizing not available",
-                "engineering effort not estimated",
-                "usability not validated",
-                "customer interview data not included",
-            ],
+            "evidence_gaps": evidence_gaps,
         }
 
 
 @mcp.tool()
 def get_jobs_cluster(product_id: int, job_query: str) -> dict:
-    """Find all evidence related to a customer job across ideas, competitive features, internal themes, and synthesized opportunities. Groups related signals by the underlying job customers are trying to accomplish."""
+    """Find all evidence related to a customer job across ideas, competitive features, internal themes, synthesized opportunities, and factbase evidence. Groups related signals by the underlying job customers are trying to accomplish."""
     from app.services.embedding_service import generate_embedding
     from app.services.vector_service import VectorService
 
@@ -137,9 +163,26 @@ def get_jobs_cluster(product_id: int, job_query: str) -> dict:
             for m in comp_matches
         ]
 
+        # Search factbase evidence
+        evidence_matches = VectorService.find_similar_evidence(
+            db, query_emb, product_id, limit=5
+        )
+        factbase_evidence = [
+            {
+                "evidence_id": e["evidence_id"],
+                "title": e["title"],
+                "evidence_type": e["evidence_type"],
+                "source_url": e["source_url"],
+                "jtbd_statement": e["jtbd_statement"],
+                "similarity": round(1 - float(e["distance"]) / 2, 3),
+            }
+            for e in evidence_matches
+        ]
+
         return {
             "job_query": job_query,
             "related_ideas": idea_jtbds,
             "related_opportunities": opp_jtbds,
             "competitive_coverage": competitive_coverage,
+            "factbase_evidence": factbase_evidence,
         }

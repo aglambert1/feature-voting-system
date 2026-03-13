@@ -26,6 +26,18 @@ def ideas_search(product_id: int, query: str, search_type: str = "ideas") -> dic
         matches = VectorService.find_similar(
             db, query_emb, product_id, limit=10
         )
+
+        # Also search non-competitive evidence (customer interviews, research, etc.)
+        from app.models.evidence import EvidenceType, COMPETITIVE_EVIDENCE_TYPES
+        non_competitive_types = [
+            et.value for et in EvidenceType
+            if et not in COMPETITIVE_EVIDENCE_TYPES
+        ]
+        evidence_matches = VectorService.find_similar_evidence(
+            db, query_emb, product_id, limit=5,
+            evidence_types=non_competitive_types,
+        )
+
         return {
             "query": query,
             "search_type": "ideas",
@@ -36,6 +48,17 @@ def ideas_search(product_id: int, query: str, search_type: str = "ideas") -> dic
                     "similarity": round(float(m[2]), 3) if len(m) > 2 else None,
                 }
                 for m in matches
+            ],
+            "related_evidence": [
+                {
+                    "evidence_id": e["evidence_id"],
+                    "title": e["title"],
+                    "evidence_type": e["evidence_type"],
+                    "source_url": e["source_url"],
+                    "source_description": e["source_description"],
+                    "similarity": round(1 - float(e["distance"]) / 2, 3),
+                }
+                for e in evidence_matches
             ],
         }
 
@@ -133,7 +156,8 @@ def ideas_submit(product_id: int, title: str, description: str) -> dict:
             product_id=product_id,
         )
 
-        result = submit_and_triage_idea_task.delay(
+        from mcp_server.db import dispatch_task
+        result = dispatch_task(submit_and_triage_idea_task,
             job.id, product_id, title, description, description
         )
         queue_service.mark_queued(job.id, result.id)
