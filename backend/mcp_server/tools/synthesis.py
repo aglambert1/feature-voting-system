@@ -8,7 +8,7 @@ from mcp_server.db import get_session
 def synthesis_get_opportunities(
     product_id: int, min_sources: int = 1, limit: int = 15
 ) -> dict:
-    """Get prioritized product opportunities backed by evidence from competitive intelligence, customer votes, and internal feedback. Higher source_count means stronger convergent evidence."""
+    """Get prioritized product opportunities backed by evidence from competitive intelligence, customer votes, internal feedback, and factbase evidence/research. Higher source_count (1-4) means stronger convergent evidence."""
     from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
 
     with get_session() as db:
@@ -86,6 +86,7 @@ def synthesis_get_evidence(opportunity_id: int) -> dict:
             "competitive_evidence": opp.competitive_evidence,
             "customer_evidence": opp.customer_evidence,
             "internal_evidence": opp.internal_evidence,
+            "evidence_signals": opp.evidence_signals,
             "recommended_action": opp.recommended_action,
             "evidence_gaps": [
                 "market sizing not available",
@@ -96,7 +97,7 @@ def synthesis_get_evidence(opportunity_id: int) -> dict:
 
 @mcp.tool()
 def synthesis_run(product_id: int) -> dict:
-    """Trigger a new opportunity synthesis combining competitive, customer, and internal data. Returns job ID."""
+    """Trigger a new opportunity synthesis combining competitive, customer, internal, and factbase evidence data. Returns job ID."""
     from app.models.queue import JobType
     from app.models.synthesis import SynthesisRun
     from app.services.queue_service import QueueService
@@ -135,6 +136,7 @@ def synthesis_run(product_id: int) -> dict:
 def synthesis_get_sources(product_id: int) -> dict:
     """Check what data sources are available for synthesis and when they were last updated."""
     from app.models.competitive_reports import LandscapeOpportunityReport
+    from app.models.evidence import Evidence
     from app.models.idea import Idea
     from app.models.internal_feedback import InternalFeedbackImport
     from sqlalchemy import func
@@ -158,6 +160,17 @@ def synthesis_get_sources(product_id: int) -> dict:
             .first()
         )
 
+        evidence_count = db.query(func.count(Evidence.id)).filter(
+            Evidence.product_id == product_id
+        ).scalar() or 0
+
+        latest_evidence = (
+            db.query(Evidence)
+            .filter(Evidence.product_id == product_id)
+            .order_by(Evidence.created_at.desc())
+            .first()
+        )
+
         return {
             "product_id": product_id,
             "sources": {
@@ -176,6 +189,11 @@ def synthesis_get_sources(product_id: int) -> dict:
                     "last_imported": latest_import.processed_at.isoformat() if latest_import and latest_import.processed_at else None,
                     "deals_count": latest_import.deals_count if latest_import else 0,
                     "tickets_count": latest_import.tickets_count if latest_import else 0,
+                },
+                "factbase_evidence": {
+                    "available": evidence_count > 0,
+                    "total_evidence": evidence_count,
+                    "last_added": latest_evidence.created_at.isoformat() if latest_evidence and latest_evidence.created_at else None,
                 },
             },
         }

@@ -6,10 +6,11 @@ When a product has partial overrides, missing keys fall back to defaults.
 """
 
 DEFAULT_SCORING_WEIGHTS = {
-    "source_count": {"three": 40, "two": 25, "one": 10},
+    "source_count": {"four": 50, "three": 40, "two": 25, "one": 10},
     "competitive_prevalence": {"table_stakes": 20, "emerging": 15, "differentiator": 10},
     "customer_votes": {"high": 20, "medium": 15, "low": 10},
     "internal_signal": {"high": 20, "medium": 10},
+    "evidence_research": {"strong": 15, "moderate": 10},
     "confidence_bonus": 10,
 }
 
@@ -57,13 +58,15 @@ def format_scoring_prompt(weights: dict) -> str:
     cp = weights["competitive_prevalence"]
     cv = weights["customer_votes"]
     is_ = weights["internal_signal"]
+    er = weights.get("evidence_research", {"strong": 15, "moderate": 10})
     cb = weights["confidence_bonus"]
 
     return f"""## Priority Scoring Guidelines (0-100)
 
 Calculate priority_score using these factors:
-- **Source count**: 3 sources = +{sc['three']}, 2 sources = +{sc['two']}, 1 source = +{sc['one']}
+- **Source count**: 4 sources = +{sc['four']}, 3 sources = +{sc['three']}, 2 sources = +{sc['two']}, 1 source = +{sc['one']}
 - **Competitive prevalence**: Table Stakes = +{cp['table_stakes']}, Emerging = +{cp['emerging']}, Differentiator = +{cp['differentiator']}
 - **Customer votes**: {VOTE_THRESHOLDS['high']}+ votes = +{cv['high']}, {VOTE_THRESHOLDS['medium']}-{VOTE_THRESHOLDS['high'] - 1} = +{cv['medium']}, {VOTE_THRESHOLDS['low']}-{VOTE_THRESHOLDS['medium'] - 1} = +{cv['low']}
 - **Internal signal**: Lost deals OR high urgency support = +{is_['high']}, medium = +{is_['medium']}
+- **Evidence/research signal**: Multiple corroborating evidence items = +{er['strong']}, single evidence item = +{er['moderate']}
 - **Internal confidence**: High confidence (structured + activity agree) = +{cb} bonus"""
