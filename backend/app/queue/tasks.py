@@ -2554,6 +2554,55 @@ def opportunity_synthesis_task(self, job_id: int):
         # Track which internal sources were used
         internal_sources_used = merged_evidence.sources_used  # ["structured", "activity"]
 
+        queue_service.update_progress(job_id, 45.0, "Gathering factbase evidence...")
+
+        # 4. Evidence/research from factbase (hybrid routing)
+        from app.models.evidence import Evidence, COMPETITIVE_EVIDENCE_TYPES
+        all_evidence = db.query(Evidence).filter(
+            Evidence.product_id == product_id
+        ).order_by(Evidence.created_at.desc()).limit(100).all()
+
+        # Split by hybrid routing:
+        # - Competitive-typed → enrich competitive input
+        # - Non-competitive → 4th source (research_signals)
+        competitive_evidence_enrichment = []
+        research_signals = []
+
+        for ev in all_evidence:
+            ev_dict = {
+                'id': ev.id,
+                'evidence_id': ev.id,
+                'title': ev.title,
+                'evidence_type': ev.evidence_type.value if ev.evidence_type else None,
+                'content': ev.content,
+                'source_url': ev.source_url,
+                'source_description': ev.source_description,
+                'jtbd_statement': ev.jtbd_statement,
+                'competitor_id': ev.competitor_id,
+            }
+            if ev.is_competitive():
+                competitive_evidence_enrichment.append(ev_dict)
+            else:
+                research_signals.append(ev_dict)
+
+        # Enrich competitive opportunities with factbase evidence
+        if competitive_evidence_enrichment:
+            for opp in competitive_opportunities:
+                opp.setdefault('factbase_evidence', [])
+            # Append competitive evidence as additional context
+            for ev in competitive_evidence_enrichment:
+                competitive_opportunities.append({
+                    'feature_name': ev['title'],
+                    'prevalence': 'Factbase Evidence',
+                    'our_status': 'Evidence',
+                    'competitors_with_feature': [],
+                    'priority_score': 0,
+                    'factbase_evidence_id': ev['id'],
+                    'factbase_evidence_type': ev['evidence_type'],
+                    'factbase_source': ev['source_description'] or ev['source_url'] or '',
+                    'factbase_content': (ev['content'] or '')[:300],
+                })
+
         # Update source snapshot
         sources_used = []
         if competitive_opportunities:
@@ -2562,6 +2611,8 @@ def opportunity_synthesis_task(self, job_id: int):
             sources_used.append("customer")
         if winloss_themes or support_themes:
             sources_used.append("internal")
+        if research_signals:
+            sources_used.append("evidence_research")
 
         # Count high-confidence themes (those with evidence from both structured + activity)
         high_confidence_winloss = sum(1 for t in winloss_themes if t.get('confidence') == 'high')
@@ -2579,7 +2630,10 @@ def opportunity_synthesis_task(self, job_id: int):
             'winloss_themes_count': len(winloss_themes),
             'support_themes_count': len(support_themes),
             'high_confidence_winloss_count': high_confidence_winloss,
-            'high_confidence_support_count': high_confidence_support
+            'high_confidence_support_count': high_confidence_support,
+            'evidence_count': len(all_evidence),
+            'competitive_evidence_count': len(competitive_evidence_enrichment),
+            'research_evidence_count': len(research_signals),
         }
 
         synthesis_run.source_snapshot = source_snapshot
@@ -2611,7 +2665,8 @@ def opportunity_synthesis_task(self, job_id: int):
                 'competitive_opportunities': competitive_opportunities,
                 'customer_ideas': customer_ideas,
                 'winloss_themes': winloss_themes,
-                'support_themes': support_themes
+                'support_themes': support_themes,
+                'research_signals': research_signals,
             },
             max_tokens=8000  # Higher limit for complex synthesis output
         )
@@ -2625,6 +2680,7 @@ def opportunity_synthesis_task(self, job_id: int):
             output = OpportunitySynthesisOutput(**result)
 
         # Store synthesized opportunities
+        four_way = 0
         three_way = 0
         two_way = 0
         single_source = 0
@@ -2641,6 +2697,7 @@ def opportunity_synthesis_task(self, job_id: int):
                 competitive_evidence=opp.competitive_evidence.model_dump() if opp.competitive_evidence else None,
                 customer_evidence=opp.customer_evidence.model_dump() if opp.customer_evidence else None,
                 internal_evidence=opp.internal_evidence.model_dump() if opp.internal_evidence else None,
+                evidence_signals=opp.evidence_signals.model_dump() if opp.evidence_signals else None,
                 recommended_action=opp.recommended_action,
                 feature_keywords=opp.feature_keywords,
                 jtbd_statement=opp.jtbd_statement
@@ -2656,7 +2713,9 @@ def opportunity_synthesis_task(self, job_id: int):
 
             db.add(db_opp)
 
-            if opp.source_count >= 3:
+            if opp.source_count >= 4:
+                four_way += 1
+            elif opp.source_count == 3:
                 three_way += 1
             elif opp.source_count == 2:
                 two_way += 1
@@ -2667,6 +2726,7 @@ def opportunity_synthesis_task(self, job_id: int):
         synthesis_run.status = 'completed'
         synthesis_run.analysis_summary = output.analysis_summary
         synthesis_run.summary_stats = {
+            'four_way_matches': four_way,
             'three_way_matches': three_way,
             'two_way_matches': two_way,
             'single_source': single_source,
@@ -2680,6 +2740,7 @@ def opportunity_synthesis_task(self, job_id: int):
         queue_service.mark_success(job_id, {
             'synthesis_run_id': synthesis_run_id,
             'opportunities_count': len(output.opportunities),
+            'four_way_matches': four_way,
             'three_way_matches': three_way,
             'two_way_matches': two_way,
             'single_source': single_source

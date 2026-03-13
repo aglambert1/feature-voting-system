@@ -88,6 +88,26 @@ class InternalEvidence(BaseModel):
     support: Optional[SupportEvidence] = None
 
 
+class EvidenceResearchItem(BaseModel):
+    """A single factbase evidence item contributing to an opportunity."""
+    evidence_id: int = Field(description="ID of the evidence record")
+    title: str = Field(description="Evidence title")
+    evidence_type: str = Field(description="Type of evidence")
+    source_url: Optional[str] = Field(default=None, description="Source URL if available")
+    source_description: Optional[str] = Field(default=None, description="Source description")
+    relevance: Optional[str] = Field(
+        default=None,
+        description="Brief explanation of how this evidence relates to the opportunity"
+    )
+
+
+class EvidenceResearchSignals(BaseModel):
+    """Evidence/research from the product factbase (4th source)."""
+    items: List[EvidenceResearchItem] = Field(
+        default=[], description="Evidence items supporting this opportunity"
+    )
+
+
 # =============================================================================
 # Agent Output Schema
 # =============================================================================
@@ -109,15 +129,16 @@ class SynthesizedOpportunityOutput(BaseModel):
     )
     source_count: int = Field(
         ge=1,
-        le=3,
-        description="Number of sources contributing (1, 2, or 3)"
+        le=4,
+        description="Number of sources contributing (1-4)"
     )
-    sources: List[Literal["competitive", "customer", "internal"]] = Field(
+    sources: List[Literal["competitive", "customer", "internal", "evidence_research"]] = Field(
         description="Which sources contributed to this opportunity"
     )
     competitive_evidence: Optional[CompetitiveEvidence] = None
     customer_evidence: Optional[CustomerEvidence] = None
     internal_evidence: Optional[InternalEvidence] = None
+    evidence_signals: Optional[EvidenceResearchSignals] = None
     recommended_action: str = Field(
         description="Recommended action: high_priority, monitor, investigate, quick_win"
     )
@@ -168,6 +189,7 @@ class SourceSnapshot(BaseModel):
 
 class SummaryStats(BaseModel):
     """Summary statistics from synthesis."""
+    four_way_matches: int = 0
     three_way_matches: int = 0
     two_way_matches: int = 0
     single_source: int = 0
@@ -206,6 +228,7 @@ class SynthesizedOpportunityResponse(BaseModel):
     competitive_evidence: Optional[Dict[str, Any]] = None
     customer_evidence: Optional[Dict[str, Any]] = None
     internal_evidence: Optional[Dict[str, Any]] = None
+    evidence_signals: Optional[Dict[str, Any]] = None
     recommended_action: Optional[str] = None
     feature_keywords: List[str] = []
     linked_idea_id: Optional[int] = None

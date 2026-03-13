@@ -1,5 +1,5 @@
 """
-Synthesis models for three-source opportunity synthesis.
+Synthesis models for multi-source opportunity synthesis.
 
 This module defines database models for:
 1. SynthesisRun - Tracks a synthesis run combining multiple sources
@@ -36,6 +36,7 @@ class SourceType(str, enum.Enum):
     COMPETITIVE = "competitive"
     CUSTOMER = "customer"
     INTERNAL = "internal"
+    EVIDENCE_RESEARCH = "evidence_research"
 
 
 class SynthesisRun(Base):
@@ -170,12 +171,12 @@ class SynthesizedOpportunity(Base):
     # Priority scoring (0-100)
     priority_score = Column(Float, nullable=False, default=0.0)
 
-    # Source count (1, 2, or 3)
+    # Source count (1-4: competitive, customer, internal, evidence/research)
     source_count = Column(Integer, nullable=False, default=1)
 
     # Which sources contributed to this opportunity
     sources = Column(JSON, nullable=True)
-    # Example: ["competitive", "customer", "internal"]
+    # Example: ["competitive", "customer", "internal", "evidence_research"]
 
     # Evidence from each source
     competitive_evidence = Column(JSON, nullable=True)
@@ -211,6 +212,16 @@ class SynthesizedOpportunity(Base):
     #     "ticket_count": 23,
     #     "category": "feature_request"
     #   }
+    # }
+
+    # Evidence/research from factbase (4th source)
+    evidence_signals = Column(JSON, nullable=True)
+    # Example: {
+    #   "evidence_ids": [1, 5, 12],
+    #   "items": [
+    #     {"evidence_id": 1, "title": "Asana launches AI triage", "evidence_type": "competitive_intel", "source_url": "..."},
+    #     {"evidence_id": 5, "title": "Customer interview - Acme", "evidence_type": "customer_interview"}
+    #   ]
     # }
 
     # Recommended action from synthesis
@@ -263,6 +274,7 @@ class SynthesizedOpportunity(Base):
             "competitive_evidence": self.competitive_evidence,
             "customer_evidence": self.customer_evidence,
             "internal_evidence": self.internal_evidence,
+            "evidence_signals": self.evidence_signals,
             "recommended_action": self.recommended_action,
             "feature_keywords": self.feature_keywords,
             "linked_idea_id": self.linked_idea_id,
@@ -272,7 +284,9 @@ class SynthesizedOpportunity(Base):
 
     def get_match_type_label(self) -> str:
         """Get human-readable match type label."""
-        if self.source_count >= 3:
+        if self.source_count >= 4:
+            return "Four-Way Match"
+        elif self.source_count == 3:
             return "Three-Way Match"
         elif self.source_count == 2:
             return "Two-Way Match"
@@ -291,6 +305,7 @@ class SynthesizedOpportunity(Base):
                 "competitive": self.competitive_evidence,
                 "customer": self.customer_evidence,
                 "internal": self.internal_evidence,
+                "evidence_research": self.evidence_signals,
             },
             "recommended_action": self.recommended_action,
             "keywords": self.feature_keywords,

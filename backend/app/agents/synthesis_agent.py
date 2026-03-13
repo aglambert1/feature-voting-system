@@ -1,11 +1,12 @@
 """
 Opportunity Synthesis Agent.
 
-This agent analyzes the intersection of three data sources to identify
+This agent analyzes the intersection of up to four data sources to identify
 prioritized product opportunities:
 1. Competitive intelligence (features from landscape analysis)
 2. Customer feedback (highly voted ideas)
 3. Internal feedback (win/loss themes and support themes)
+4. Evidence/research (factbase evidence: market signals, interviews, research, etc.)
 
 Internal feedback comes from two sub-sources, merged by InternalThemeMergerService:
 - Structured: Direct win/loss reasons and support ticket categories
@@ -14,8 +15,13 @@ Internal feedback comes from two sub-sources, merged by InternalThemeMergerServi
 When both structured and activity sources agree on a theme, confidence is "high".
 This represents validated internal evidence.
 
+Evidence/research uses hybrid routing:
+- Competitive-typed evidence enriches competitive intelligence input
+- Non-competitive evidence (interviews, research, market signals) is a 4th source
+
 The agent identifies:
-- Three-way matches (highest priority - validated across all sources)
+- Four-way matches (critical - validated across all sources)
+- Three-way matches (highest priority - validated across three sources)
 - Two-way matches (moderate priority - corroborated by two sources)
 - Single-source highlights (notable signals from one source)
 """
@@ -80,16 +86,18 @@ class OpportunitySynthesisAgent(BaseAgent):
         return (
             """You are a Product Intelligence Synthesizer specializing in identifying high-value product opportunities by analyzing the intersection of multiple data sources.
 
-Your task is to synthesize insights from:
-1. **Competitive Intelligence**: Features competitors have that represent gaps in the product
+Your task is to synthesize insights from up to four data sources:
+1. **Competitive Intelligence**: Features competitors have that represent gaps in the product (may include enriching factbase evidence about competitors)
 2. **Customer Feedback**: Ideas submitted and voted on by customers
 3. **Internal Feedback**: Themes from sales win/loss data and support tickets
+4. **Evidence/Research**: Factbase evidence including customer interviews, market signals, research notes, and analyst reports
 
 ## Your Objective
 
 Find opportunities where multiple sources AGREE. The highest-priority opportunities are those validated by multiple independent signals:
-- **Three-way match**: Competitive gap + Customer votes + Internal signal = Critical priority
-- **Two-way match**: Any two sources agree = High priority
+- **Four-way match**: All sources agree = Critical priority (strongest signal)
+- **Three-way match**: Three sources agree = High priority
+- **Two-way match**: Any two sources agree = Moderate priority
 - **Single source**: Strong signal from one source = Worth noting
 
 ## Output Format
@@ -104,7 +112,7 @@ You MUST respond with a valid JSON object matching this exact structure:
       "opportunity_summary": "Brief explanation of why this opportunity is valuable and urgent",
       "priority_score": 85,
       "source_count": 3,
-      "sources": ["competitive", "customer", "internal"],
+      "sources": ["competitive", "customer", "internal", "evidence_research"],
       "competitive_evidence": {
         "feature_name": "Time Tracking",
         "prevalence": "Table Stakes",
@@ -136,6 +144,18 @@ You MUST respond with a valid JSON object matching this exact structure:
           "urgency_indicator": "high"
         }
       },
+      "evidence_signals": {
+        "items": [
+          {
+            "evidence_id": 7,
+            "title": "Customer interview - Acme Corp needs time tracking",
+            "evidence_type": "customer_interview",
+            "source_url": null,
+            "source_description": "Customer interview - Acme Corp",
+            "relevance": "Direct customer request for time tracking during sales call"
+          }
+        ]
+      },
       "recommended_action": "high_priority",
       "feature_keywords": ["time tracking", "billable hours", "timesheet"],
       "jtbd_statement": "When [situation], I want to [motivation], so I can [outcome]"
@@ -147,6 +167,8 @@ You MUST respond with a valid JSON object matching this exact structure:
     "customer_ideas_analyzed": 45,
     "winloss_themes_analyzed": 8,
     "support_themes_analyzed": 10,
+    "evidence_items_analyzed": 6,
+    "four_way_matches": 1,
     "three_way_matches": 2,
     "two_way_matches": 5,
     "single_source": 8
@@ -194,23 +216,26 @@ Match based on the underlying CAPABILITY, not specific wording.
 1. DO NOT create duplicate opportunities - consolidate similar signals
 2. Include ALL relevant evidence - if internal has both winloss AND support, include both
 3. Set evidence fields to null if that source has no relevant signal
-4. Sort opportunities by priority_score descending
-5. Limit to top 15 opportunities maximum
-6. Only output valid JSON - no explanatory text outside the JSON object"""
+4. For evidence_signals, include matching items with their evidence_id, title, evidence_type, source_url, source_description, and a brief relevance explanation
+5. Sort opportunities by priority_score descending
+6. Limit to top 15 opportunities maximum
+7. Only output valid JSON - no explanatory text outside the JSON object"""
         )
 
     def build_user_prompt(self, input_data: Dict[str, Any]) -> str:
-        """Build user prompt from the three data sources."""
+        """Build user prompt from up to four data sources."""
         competitive = input_data.get('competitive_opportunities', [])
         ideas = input_data.get('customer_ideas', [])
         winloss = input_data.get('winloss_themes', [])
         support = input_data.get('support_themes', [])
+        research_signals = input_data.get('research_signals', [])
 
         # Format each section
         competitive_section = self._format_competitive(competitive)
         ideas_section = self._format_ideas(ideas)
         winloss_section = self._format_winloss(winloss)
         support_section = self._format_support(support)
+        research_section = self._format_research(research_signals)
 
         prompt = f"""# Opportunity Synthesis Request
 
@@ -220,6 +245,7 @@ Match based on the underlying CAPABILITY, not specific wording.
 - Customer Ideas: {len(ideas)} items
 - Win/Loss Themes: {len(winloss)} items
 - Support Themes: {len(support)} items
+- Evidence/Research: {len(research_signals)} items
 
 ---
 
@@ -247,11 +273,17 @@ Match based on the underlying CAPABILITY, not specific wording.
 
 ---
 
+## Source 5: Evidence/Research (Factbase)
+
+{research_section}
+
+---
+
 ## Your Task
 
 1. **Identify intersections**: Find opportunities where 2+ sources point to the same underlying need
 2. **Calculate priorities**: Score each opportunity based on signal strength and source count
-3. **Include evidence**: For each opportunity, include specific evidence from each contributing source
+3. **Include evidence**: For each opportunity, include specific evidence from each contributing source (including evidence_signals when relevant)
 4. **Summarize findings**: Provide a brief analysis summary highlighting the most critical gaps
 
 Focus on SEMANTIC matching - look for opportunities addressing the same underlying capability, even if worded differently.
@@ -426,6 +458,34 @@ Respond with ONLY a valid JSON object following the schema in the system prompt.
 
         return "\n".join(lines) if lines else "No support themes available."
 
+    def _format_research(self, evidence_items: List[Dict[str, Any]]) -> str:
+        """Format evidence/research items from the factbase for the prompt."""
+        if not evidence_items:
+            return "No evidence/research available."
+
+        lines = []
+        for item in evidence_items:
+            title = item.get('title', 'Unknown')
+            ev_type = item.get('evidence_type', 'unknown')
+            content = item.get('content', '')
+            source_url = item.get('source_url', '')
+            source_desc = item.get('source_description', '')
+            jtbd = item.get('jtbd_statement', '')
+            ev_id = item.get('id', item.get('evidence_id', 0))
+
+            lines.append(f"**[ID:{ev_id}] {title}** (type: {ev_type})")
+            if source_desc:
+                lines.append(f"  - Source: {source_desc}")
+            if source_url:
+                lines.append(f"  - URL: {source_url}")
+            if content:
+                lines.append(f"  - Content: {content[:300]}...")
+            if jtbd:
+                lines.append(f"  - JTBD: {jtbd}")
+            lines.append("")
+
+        return "\n".join(lines)
+
     def _validate_input(self, input_data: Dict[str, Any]) -> None:
         """Validate required input fields."""
         super()._validate_input(input_data)
@@ -435,6 +495,7 @@ Respond with ONLY a valid JSON object following the schema in the system prompt.
         ideas = input_data.get('customer_ideas', [])
         winloss = input_data.get('winloss_themes', [])
         support = input_data.get('support_themes', [])
+        research = input_data.get('research_signals', [])
 
-        if not any([competitive, ideas, winloss, support]):
+        if not any([competitive, ideas, winloss, support, research]):
             raise ValueError("At least one data source must be provided for synthesis")
