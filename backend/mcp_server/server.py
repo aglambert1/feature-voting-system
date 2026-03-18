@@ -22,4 +22,4 @@ from mcp_server import resources  # noqa: E402, F401
 from mcp_server import prompts  # noqa: E402, F401
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport="stdio", show_banner=False)

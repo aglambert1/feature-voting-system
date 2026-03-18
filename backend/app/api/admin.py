@@ -18,7 +18,7 @@ from app.database import get_db
 from app.models.user import User
 from app.models.idea import Idea
 from app.models.idea_lifecycle_status import IdeaLifecycleStatus
-from app.utils.security import get_current_admin_user
+from app.utils.security import get_current_admin_user, get_product_owner_or_admin
 from app.services.cost_tracking_service import CostTrackingService
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -129,11 +129,11 @@ def get_today_costs(
 # --- Idea Lifecycle Status CRUD ---
 
 @router.get("/idea-lifecycle-statuses")
-def list_lifecycle_statuses(
+async def list_lifecycle_statuses(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(get_product_owner_or_admin)
 ):
-    """List all idea lifecycle statuses with idea counts. Admin only."""
+    """List all idea lifecycle statuses with idea counts. PO and Admin."""
     statuses = db.query(IdeaLifecycleStatus).order_by(IdeaLifecycleStatus.position).all()
 
     result = []
