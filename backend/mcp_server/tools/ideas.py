@@ -2,6 +2,7 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.user_context import get_mcp_user_id
 
 
 @mcp.tool()
@@ -186,8 +187,8 @@ def ideas_vote(idea_id: int) -> dict:
         if not idea:
             return {"error": f"Idea {idea_id} not found"}
 
-        # Check for existing vote from MCP user (user_id=0 convention)
-        mcp_user_id = 0
+        # Use authenticated user_id (HTTP) or 0 (stdio)
+        mcp_user_id = get_mcp_user_id()
         existing = db.query(Vote).filter(
             Vote.idea_id == idea_id,
             Vote.user_id == mcp_user_id,

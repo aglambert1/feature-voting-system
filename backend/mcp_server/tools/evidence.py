@@ -6,6 +6,7 @@ from typing import Optional
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.user_context import get_mcp_user_label
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ def evidence_add(
             jtbd_statement=jtbd_statement,
             jtbd_embedding=jtbd_embedding,
             content_embedding=content_embedding,
-            created_by="mcp",
+            created_by=get_mcp_user_label(),
         )
         db.add(evidence)
         db.flush()
