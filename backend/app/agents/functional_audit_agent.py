@@ -127,12 +127,16 @@ You MUST respond with a valid JSON object matching this exact structure:
         competitor_url = input_data.get('competitor_url', '')
         product_context = input_data.get('product_context', {})
         web_search_results = input_data.get('web_search_results', [])
+        user_provided_evidence = input_data.get('user_provided_evidence', [])
 
         # Format product context
         product_info = self._format_product_context(product_context)
 
         # Format search results (clean HTML if needed)
         search_content = self._format_search_results(web_search_results)
+
+        # Format user-provided evidence
+        evidence_content = self._format_user_evidence(user_provided_evidence)
 
         # Try to load external prompt template for additional context
         prompt_loader = get_prompt_loader()
@@ -154,6 +158,8 @@ You MUST respond with a valid JSON object matching this exact structure:
 
 ## Competitor Source Data
 {search_content}
+
+{evidence_content}
 
 {task_context}
 
@@ -216,6 +222,40 @@ Respond with ONLY a valid JSON object following the schema in the system prompt.
             return html_cleaner.clean_search_results(results)
 
         return "No web search results available. Analyze based on general knowledge."
+
+    def _format_user_evidence(self, evidence_list: list) -> str:
+        """Format user-provided evidence records for the prompt.
+
+        This is high-trust, user-curated information that should be
+        given significant weight alongside web search results.
+        """
+        if not evidence_list:
+            return ""
+
+        parts = ["## User-Provided Evidence",
+                  "",
+                  "The following evidence was curated by the product team. "
+                  "Treat this as high-confidence information.",
+                  ""]
+
+        for i, ev in enumerate(evidence_list, 1):
+            title = ev.get('title', 'Untitled')
+            content = ev.get('content', '')
+            ev_type = ev.get('evidence_type', 'unknown')
+            source_url = ev.get('source_url', '')
+            source_desc = ev.get('source_description', '')
+
+            parts.append(f"### Evidence {i}: {title}")
+            parts.append(f"**Type:** {ev_type}")
+            if source_desc:
+                parts.append(f"**Source:** {source_desc}")
+            if source_url:
+                parts.append(f"**URL:** {source_url}")
+            parts.append("")
+            parts.append(content)
+            parts.append("")
+
+        return "\n".join(parts)
 
     def _extract_task_context(self, external_prompt: str) -> str:
         """

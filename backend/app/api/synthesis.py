@@ -30,6 +30,11 @@ from app.models.internal_feedback import (
     WinLossTheme,
     SupportTheme
 )
+from app.models.activity_insights import (
+    ActivityImport,
+    DealActivityInsight,
+    SupportActivityInsight
+)
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.vote import Vote
 from sqlalchemy import func
@@ -160,22 +165,53 @@ async def get_synthesis_status(
         sources.customer = True
         sources.customer_detail = f"{ideas_count} ideas with {total_votes} total votes"
 
-    # Check internal feedback
-    latest_import = db.query(InternalFeedbackImport).filter(
+    # Check internal feedback (structured imports + activity imports)
+    internal_details = []
+
+    # Structured CRM imports (win/loss themes, support themes)
+    latest_structured = db.query(InternalFeedbackImport).filter(
         InternalFeedbackImport.product_id == product_id,
         InternalFeedbackImport.themes_extracted == True
     ).order_by(desc(InternalFeedbackImport.imported_at)).first()
 
-    if latest_import:
+    if latest_structured:
         winloss_count = db.query(WinLossTheme).filter(
-            WinLossTheme.import_id == latest_import.id
+            WinLossTheme.import_id == latest_structured.id
         ).count()
         support_count = db.query(SupportTheme).filter(
-            SupportTheme.import_id == latest_import.id
+            SupportTheme.import_id == latest_structured.id
         ).count()
         if winloss_count > 0 or support_count > 0:
-            sources.internal = True
-            sources.internal_detail = f"{winloss_count} win/loss themes, {support_count} support themes"
+            internal_details.append(f"{winloss_count} win/loss themes, {support_count} support themes")
+
+    # Activity imports (deal insights, support insights)
+    latest_activity = db.query(ActivityImport).filter(
+        ActivityImport.product_id == product_id,
+        ActivityImport.status == "completed"
+    ).order_by(desc(ActivityImport.imported_at)).first()
+
+    if latest_activity:
+        deal_insight_count = db.query(DealActivityInsight).filter(
+            DealActivityInsight.import_id == latest_activity.id
+        ).count()
+        support_insight_count = db.query(SupportActivityInsight).filter(
+            SupportActivityInsight.import_id == latest_activity.id
+        ).count()
+        if deal_insight_count > 0 or support_insight_count > 0:
+            internal_details.append(f"{deal_insight_count} deal insights, {support_insight_count} support insights")
+
+    if internal_details:
+        sources.internal = True
+        sources.internal_detail = "; ".join(internal_details)
+
+    # Check factbase evidence
+    from app.models.evidence import Evidence
+    evidence_count = db.query(Evidence).filter(
+        Evidence.product_id == product_id
+    ).count()
+    if evidence_count > 0:
+        sources.evidence = True
+        sources.evidence_detail = f"{evidence_count} evidence record{'s' if evidence_count != 1 else ''} in factbase"
 
     # Check for previous run
     previous_run = db.query(SynthesisRun).filter(
@@ -638,6 +674,7 @@ def _to_opportunity_response(opp: SynthesizedOpportunity) -> SynthesizedOpportun
         competitive_evidence=opp.competitive_evidence,
         customer_evidence=opp.customer_evidence,
         internal_evidence=opp.internal_evidence,
+        evidence_signals=opp.evidence_signals,
         recommended_action=opp.recommended_action,
         feature_keywords=opp.feature_keywords or [],
         linked_idea_id=opp.linked_idea_id,

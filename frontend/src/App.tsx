@@ -30,6 +30,7 @@ import ProductDashboardPage from './pages/ProductDashboardPage';
 import IntelligenceHubPage from './pages/CompetitorIntelligence/IntelligenceHubPage';
 import InternalFeedbackPage from './pages/CompetitorIntelligence/InternalFeedbackPage';
 import SynthesisHubPage from './pages/CompetitorIntelligence/SynthesisHubPage';
+import EvidencePage from './pages/CompetitorIntelligence/EvidencePage';
 import IdeaLifecycleSettingsPage from './pages/IdeaLifecycleSettingsPage';
 import JoinPage from './pages/JoinPage';
 
@@ -180,6 +181,16 @@ function App() {
               <ProtectedRoute>
                 <ProductOwnerRoute>
                   <InternalFeedbackPage />
+                </ProductOwnerRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/product-intelligence/products/:productId/evidence"
+            element={
+              <ProtectedRoute>
+                <ProductOwnerRoute>
+                  <EvidencePage />
                 </ProductOwnerRoute>
               </ProtectedRoute>
             }

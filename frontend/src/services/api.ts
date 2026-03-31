@@ -1701,5 +1701,71 @@ export const setUserProducts = async (userId: number, productIds: number[]): Pro
   return response.data;
 };
 
+// ============================================================================
+// EVIDENCE / FACTBASE API METHODS
+// ============================================================================
+
+import type { EvidenceDetail, EvidenceListResponse, CreateEvidenceRequest, CompetitorSuggestion } from '../types';
+
+export const getEvidence = async (
+  productId: number,
+  competitorId?: number,
+  evidenceType?: string,
+  limit: number = 50,
+  offset: number = 0
+): Promise<EvidenceListResponse> => {
+  const params: Record<string, string | number> = { limit, offset };
+  if (competitorId !== undefined) params.competitor_id = competitorId;
+  if (evidenceType) params.evidence_type = evidenceType;
+  const response = await api.get<EvidenceListResponse>(
+    `/product-intelligence/products/${productId}/evidence`,
+    { params }
+  );
+  return response.data;
+};
+
+export const getEvidenceDetail = async (
+  productId: number,
+  evidenceId: number
+): Promise<EvidenceDetail> => {
+  const response = await api.get<EvidenceDetail>(
+    `/product-intelligence/products/${productId}/evidence/${evidenceId}`
+  );
+  return response.data;
+};
+
+export const createEvidence = async (
+  productId: number,
+  data: CreateEvidenceRequest
+): Promise<EvidenceDetail> => {
+  const response = await api.post<EvidenceDetail>(
+    `/product-intelligence/products/${productId}/evidence`,
+    data
+  );
+  return response.data;
+};
+
+export const deleteEvidence = async (
+  productId: number,
+  evidenceId: number
+): Promise<{ message: string; id: number }> => {
+  const response = await api.delete<{ message: string; id: number }>(
+    `/product-intelligence/products/${productId}/evidence/${evidenceId}`
+  );
+  return response.data;
+};
+
+export const suggestCompetitorForEvidence = async (
+  productId: number,
+  title: string,
+  content: string
+): Promise<CompetitorSuggestion> => {
+  const response = await api.post<CompetitorSuggestion>(
+    `/product-intelligence/products/${productId}/evidence/suggest-competitor`,
+    { title, content }
+  );
+  return response.data;
+};
+
 // Export the axios instance for custom requests
 export default api;

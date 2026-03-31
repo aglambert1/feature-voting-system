@@ -16,8 +16,9 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import Navigation from "../../components/Navigation";
+import LandscapeTab from "./components/LandscapeTab";
 import {
   getSynthesisStatus,
   triggerSynthesis,
@@ -39,9 +40,13 @@ interface ProductInfo {
   product_name: string;
 }
 
+type SynthesisTabId = "synthesis" | "landscape";
+
 export default function SynthesisHubPage() {
   const { productId } = useParams<{ productId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = (searchParams.get("tab") as SynthesisTabId) || "synthesis";
 
   // Product info
   const [product, setProduct] = useState<ProductInfo | null>(null);
@@ -295,7 +300,7 @@ export default function SynthesisHubPage() {
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Opportunity Synthesis</h1>
               <p className="text-gray-600 mt-1">
-                Combining competitive, customer, and internal signals
+                Combining competitive, customer, internal, and evidence signals
               </p>
             </div>
             <div className="flex space-x-3">
@@ -347,6 +352,42 @@ export default function SynthesisHubPage() {
           </div>
         </div>
 
+        {/* Tab Navigation */}
+        <div className="border-b border-gray-200 mb-6">
+          <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+            {([
+              { id: "synthesis" as SynthesisTabId, label: "Synthesis Results" },
+              { id: "landscape" as SynthesisTabId, label: "Landscape Analysis" },
+            ]).map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setSearchParams({ tab: tab.id })}
+                  className={`
+                    py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap
+                    ${isActive
+                      ? "border-indigo-500 text-indigo-600"
+                      : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                    }
+                  `}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
+        {/* Landscape Analysis Tab */}
+        {activeTab === "landscape" && (
+          <div className="bg-white rounded-lg shadow">
+            <LandscapeTab productId={parseInt(productId!, 10)} />
+          </div>
+        )}
+
+        {/* Synthesis Results Tab */}
+        {activeTab === "synthesis" && <>
         {/* Error message */}
         {synthError && (
           <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
@@ -358,7 +399,7 @@ export default function SynthesisHubPage() {
         {status && (
           <div className="bg-white rounded-lg shadow mb-6 p-6">
             <h2 className="text-lg font-medium text-gray-900 mb-4">Available Sources</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Competitive */}
               <div className={`p-4 rounded-lg border-2 ${status.sources_available.competitive ? "border-green-200 bg-green-50" : "border-gray-200 bg-gray-50"}`}>
                 <div className="flex items-center mb-2">
@@ -413,6 +454,25 @@ export default function SynthesisHubPage() {
                 </div>
                 <p className="text-sm text-gray-600">
                   {status.sources_available.internal_detail || "No internal feedback imported"}
+                </p>
+              </div>
+
+              {/* Evidence */}
+              <div className={`p-4 rounded-lg border-2 ${status.sources_available.evidence ? "border-green-200 bg-green-50" : "border-gray-200 bg-gray-50"}`}>
+                <div className="flex items-center mb-2">
+                  {status.sources_available.evidence ? (
+                    <svg className="w-5 h-5 text-green-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5 text-gray-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                    </svg>
+                  )}
+                  <span className="font-medium text-gray-900">Evidence</span>
+                </div>
+                <p className="text-sm text-gray-600">
+                  {status.sources_available.evidence_detail || "No evidence in factbase"}
                 </p>
               </div>
             </div>
@@ -513,7 +573,7 @@ export default function SynthesisHubPage() {
                 {/* Expanded Content */}
                 {expandedId === opp.id && (
                   <div className="border-t border-gray-200 p-4 bg-gray-50">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                       {/* Competitive Evidence */}
                       <div className={`p-3 rounded-lg ${opp.competitive_evidence ? "bg-blue-50 border border-blue-200" : "bg-gray-100 border border-gray-200"}`}>
                         <h4 className="font-medium text-gray-900 mb-2">Competitive</h4>
@@ -574,6 +634,31 @@ export default function SynthesisHubPage() {
                           <p className="text-sm text-gray-500">No internal signal</p>
                         )}
                       </div>
+
+                      {/* Evidence / Factbase */}
+                      <div className={`p-3 rounded-lg ${opp.evidence_signals?.items?.length ? "bg-indigo-50 border border-indigo-200" : "bg-gray-100 border border-gray-200"}`}>
+                        <h4 className="font-medium text-gray-900 mb-2">Evidence</h4>
+                        {opp.evidence_signals?.items?.length ? (
+                          <div className="text-sm space-y-1">
+                            <p className="text-gray-700">
+                              <strong>{opp.evidence_signals.items.length}</strong> evidence record{opp.evidence_signals.items.length !== 1 ? "s" : ""}
+                            </p>
+                            {opp.evidence_signals.items.slice(0, 2).map((item, i) => (
+                              <p key={i} className="text-gray-600 truncate" title={item.relevance}>
+                                {item.title}
+                                {item.source_url && (
+                                  <a href={item.source_url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 ml-1">[link]</a>
+                                )}
+                              </p>
+                            ))}
+                            {opp.evidence_signals.items.length > 2 && (
+                              <p className="text-gray-500">+{opp.evidence_signals.items.length - 2} more</p>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-gray-500">No evidence signal</p>
+                        )}
+                      </div>
                     </div>
 
                     {/* Keywords */}
@@ -632,7 +717,7 @@ export default function SynthesisHubPage() {
             </svg>
             <h3 className="text-lg font-medium text-gray-900 mb-2">Ready to Synthesize</h3>
             <p className="text-gray-600 mb-4">
-              Click "Run Synthesis" to combine your competitive, customer, and internal data
+              Click "Run Synthesis" to combine your competitive, customer, internal, and evidence data
               into prioritized opportunities.
             </p>
             <button
@@ -683,6 +768,7 @@ export default function SynthesisHubPage() {
             </div>
           </div>
         )}
+        </>}
       </div>
     </div>
   );

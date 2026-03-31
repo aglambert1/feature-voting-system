@@ -29,6 +29,7 @@ import api, {
   getInviteCodes,
   deactivateInviteCode,
   getProductMembers,
+  getEvidence,
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
 import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, TriageSettings, JobType, QueueJob, JobStatus, InviteCode, ProductMember } from '../../types';
@@ -120,6 +121,12 @@ export default function ProductDetailPage() {
     sourcesAvailable: 0
   });
 
+  // Evidence stats
+  const [evidenceStats, setEvidenceStats] = useState<{
+    totalCount: number;
+    loaded: boolean;
+  }>({ totalCount: 0, loaded: false });
+
   // UI state
   const [expandedVersions, setExpandedVersions] = useState<Set<number>>(new Set());
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
@@ -159,7 +166,8 @@ export default function ProductDetailPage() {
       const sourcesAvailable = [
         synthesisStatusRes?.sources_available?.competitive,
         synthesisStatusRes?.sources_available?.customer,
-        synthesisStatusRes?.sources_available?.internal
+        synthesisStatusRes?.sources_available?.internal,
+        synthesisStatusRes?.sources_available?.evidence,
       ].filter(Boolean).length;
 
       if (synthesisResultsRes && synthesisResultsRes.run && synthesisResultsRes.run.status !== 'none') {
@@ -185,6 +193,17 @@ export default function ProductDetailPage() {
       }
     } catch (err) {
       console.error('Failed to fetch synthesis stats:', err);
+    }
+  }, [productId]);
+
+  // Fetch evidence stats
+  const fetchEvidenceStats = useCallback(async () => {
+    if (!productId) return;
+    try {
+      const data = await getEvidence(parseInt(productId), undefined, undefined, 1, 0);
+      setEvidenceStats({ totalCount: data.count, loaded: true });
+    } catch {
+      setEvidenceStats({ totalCount: 0, loaded: true });
     }
   }, [productId]);
 
@@ -263,7 +282,8 @@ export default function ProductDetailPage() {
       const sourcesAvailable = [
         synthesisStatusRes?.sources_available?.competitive,
         synthesisStatusRes?.sources_available?.customer,
-        synthesisStatusRes?.sources_available?.internal
+        synthesisStatusRes?.sources_available?.internal,
+        synthesisStatusRes?.sources_available?.evidence,
       ].filter(Boolean).length;
 
       if (synthesisResultsRes && synthesisResultsRes.run && synthesisResultsRes.run.status !== 'none') {
@@ -288,12 +308,15 @@ export default function ProductDetailPage() {
         });
       }
 
+      // Fetch evidence stats
+      fetchEvidenceStats();
+
     } catch (err: any) {
       setError(err.message || err.data?.detail || 'Failed to load product');
     } finally {
       setLoading(false);
     }
-  }, [productId]);
+  }, [productId, fetchEvidenceStats]);
 
   useEffect(() => {
     fetchAllData();
@@ -732,6 +755,46 @@ export default function ProductDetailPage() {
             </div>
           </div>
 
+          {/* Evidence Tile */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900">Evidence</h3>
+              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                evidenceStats.totalCount > 0
+                  ? 'bg-indigo-100 text-indigo-800'
+                  : 'bg-gray-100 text-gray-600'
+              }`}>
+                {evidenceStats.totalCount} Record{evidenceStats.totalCount !== 1 ? 's' : ''}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              <div className="text-sm text-gray-600">
+                {evidenceStats.totalCount > 0 ? (
+                  <Link
+                    to={`/product-intelligence/products/${productId}/evidence`}
+                    className="text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    View all evidence →
+                  </Link>
+                ) : (
+                  <span className="text-gray-500">
+                    Add competitive intel, customer insights, and market signals
+                  </span>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <Link
+                  to={`/product-intelligence/products/${productId}/evidence`}
+                  className="flex-1 px-3 py-2 text-sm text-center bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                >
+                  {evidenceStats.totalCount > 0 ? 'View Evidence' : 'Add Evidence'}
+                </Link>
+              </div>
+            </div>
+          </div>
+
           {/* Opportunity Synthesis Agent Tile */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between mb-4">
@@ -746,7 +809,7 @@ export default function ProductDetailPage() {
                 {synthesisStats.hasRun && synthesisStats.status === 'completed'
                   ? `${synthesisStats.opportunityCount} Opportunities`
                   : synthesisStats.sourcesAvailable > 0
-                    ? `${synthesisStats.sourcesAvailable}/3 Sources`
+                    ? `${synthesisStats.sourcesAvailable}/4 Sources`
                     : 'No Sources'}
               </span>
             </div>
@@ -779,7 +842,7 @@ export default function ProductDetailPage() {
               </div>
 
               <div className="text-sm text-gray-500">
-                {synthesisStats.sourcesAvailable}/3 sources available for synthesis
+                {synthesisStats.sourcesAvailable}/4 sources available for synthesis
               </div>
 
               {synthesisStats.lastRunDate && (

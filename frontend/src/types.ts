@@ -809,6 +809,7 @@ export interface AgentCompetitor {
   deep_analysis_status: string | null;
   deep_analysis_last_run: string | null;
   feature_count: number;
+  evidence_count: number;
 }
 
 /**
@@ -1249,6 +1250,8 @@ export interface SynthesisSourcesAvailable {
   customer_detail: string | null;
   internal: boolean;
   internal_detail: string | null;
+  evidence: boolean;
+  evidence_detail: string | null;
 }
 
 /**
@@ -1349,6 +1352,19 @@ export interface InternalEvidence {
 /**
  * Synthesized opportunity.
  */
+export interface EvidenceSignalItem {
+  evidence_id: number;
+  title: string;
+  evidence_type: string;
+  source_url: string | null;
+  source_description: string | null;
+  relevance: string;
+}
+
+export interface EvidenceSignals {
+  items: EvidenceSignalItem[];
+}
+
 export interface SynthesizedOpportunity {
   id: number;
   synthesis_run_id: number;
@@ -1361,6 +1377,7 @@ export interface SynthesizedOpportunity {
   competitive_evidence: CompetitiveEvidence | null;
   customer_evidence: CustomerEvidence | null;
   internal_evidence: InternalEvidence | null;
+  evidence_signals: EvidenceSignals | null;
   recommended_action: string | null;
   feature_keywords: string[];
   linked_idea_id: number | null;
@@ -1405,4 +1422,64 @@ export interface IdeaFunnelData {
   lifecycle_counts: Record<string, number>;
   auto_triaged_count: number;
   manual_triaged_count: number;
+}
+
+// ============================================================================
+// Evidence / Factbase
+// ============================================================================
+
+export type EvidenceType =
+  | 'competitive_intel'
+  | 'customer_interview'
+  | 'market_signal'
+  | 'internal_note'
+  | 'research'
+  | 'pricing_change'
+  | 'partnership'
+  | 'product_launch'
+  | 'analyst_report';
+
+export interface EvidenceRecord {
+  id: number;
+  evidence_type: EvidenceType;
+  title: string;
+  source_url: string | null;
+  source_description: string | null;
+  competitor_id: number | null;
+  competitor_name?: string | null;
+  tags: string[] | null;
+  jtbd_statement: string | null;
+  created_at: string;
+}
+
+export interface EvidenceDetail extends EvidenceRecord {
+  product_id: number;
+  content: string;
+  created_by: string;
+  updated_at: string | null;
+}
+
+export interface EvidenceListResponse {
+  product_id: number;
+  count: number;
+  evidence: EvidenceRecord[];
+}
+
+export interface CreateEvidenceRequest {
+  evidence_type: EvidenceType;
+  title: string;
+  content: string;
+  source_url?: string;
+  source_description?: string;
+  competitor_id?: number;
+  competitor_name?: string;
+  competitor_url?: string;
+  tags?: string[];
+}
+
+export interface CompetitorSuggestion {
+  suggested_name: string | null;
+  matched_competitor_id: number | null;
+  matched_competitor_name: string | null;
+  is_new: boolean;
 }
