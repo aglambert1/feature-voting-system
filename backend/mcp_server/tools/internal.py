@@ -169,7 +169,11 @@ def internal_submit_feedback(
         queue_service = QueueService(db)
         job = queue_service.create_job(
             job_type=JobType.INTERNAL_DISCOVERY,
-            input_data={"import_id": fb_import.id},
+            input_data={
+                "import_id": fb_import.id,
+                "deals": deals,
+                "support_tickets": tickets,
+            },
             product_id=product_id,
         )
 

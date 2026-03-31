@@ -7,6 +7,7 @@ for connecting external MCP clients (Claude Desktop, Cursor, etc.).
 
 import secrets
 from datetime import datetime, timedelta
+from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -49,7 +50,7 @@ class APIKeyResponse(BaseModel):
     name: str
     created_at: str
     expires_at: str
-    last_used_at: str | None
+    last_used_at: Optional[str]
     is_revoked: bool
 
 
@@ -59,7 +60,7 @@ class APIKeyCreateResponse(APIKeyResponse):
 
 # --- Helpers ---
 
-def _generate_api_key() -> tuple[str, str]:
+def _generate_api_key() -> Tuple[str, str]:
     """Generate a new API key and its display prefix."""
     raw = secrets.token_urlsafe(32)
     full_key = f"{API_KEY_PREFIX}{raw}"
@@ -106,7 +107,7 @@ async def create_api_key(
 async def list_api_keys(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_product_owner),
-) -> list[APIKeyResponse]:
+) -> List[APIKeyResponse]:
     """List all API keys for the current user (prefix only, never the full key)."""
     keys = (
         db.query(UserAPIKey)

@@ -149,18 +149,17 @@ def ideas_submit(product_id: int, title: str, description: str) -> dict:
         job = queue_service.create_job(
             job_type=JobType.IDEA_TRIAGE,
             input_data={
-                "product_id": product_id,
-                "title": title,
-                "description": description,
-                "source_type": "mcp",
+                "source_type": "customer_submission",
+                "raw_input": {
+                    "product_id": product_id,
+                    "freeform_text": f"{title}\n\n{description}",
+                },
             },
             product_id=product_id,
         )
 
         from mcp_server.db import dispatch_task
-        result = dispatch_task(submit_and_triage_idea_task,
-            job.id, product_id, title, description, description
-        )
+        result = dispatch_task(submit_and_triage_idea_task, job.id)
         queue_service.mark_queued(job.id, result.id)
 
         return {
