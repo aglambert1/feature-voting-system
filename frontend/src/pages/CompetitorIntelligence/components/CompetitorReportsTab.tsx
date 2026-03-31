@@ -42,6 +42,7 @@ import type {
 import { JobType, JobStatus } from '../../../types';
 import AgentJobStatus from '../../../components/AgentJobStatus';
 import AddCompetitorModal from './AddCompetitorModal';
+import CompetitorEvidencePanel from './CompetitorEvidencePanel';
 
 interface Props {
   productId: number;
@@ -1003,6 +1004,13 @@ export default function CompetitorReportsTab({ productId, refreshKey, onAnalysis
                       </div>
                     </div>
                   </div>
+
+                  {/* Evidence panel */}
+                  <CompetitorEvidencePanel
+                    productId={productId}
+                    competitorId={competitor.id}
+                    competitorName={competitor.competitor_name}
+                  />
                 </div>
               );
             })}

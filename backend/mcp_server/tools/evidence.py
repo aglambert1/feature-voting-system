@@ -2,7 +2,6 @@
 
 import json
 import logging
-from typing import Optional
 
 from mcp_server import mcp
 from mcp_server.db import get_session
@@ -35,8 +34,8 @@ def evidence_add(
         competitor_name: Optional — name of a tracked competitor this evidence relates to. Will be fuzzy-matched.
         tags: JSON array of tags for categorization (e.g. '["pricing", "enterprise"]'). Default: [].
     """
-    from app.models.evidence import Evidence, EvidenceType
-    from app.models.competitor_intelligence import ProductCompetitor
+    from app.models.evidence import EvidenceType
+    from app.services.evidence_service import create_evidence, resolve_competitor_by_name
 
     # Validate evidence_type
     try:
@@ -56,34 +55,13 @@ def evidence_add(
         competitor_id = None
         resolved_competitor = None
         if competitor_name:
-            competitor = db.query(ProductCompetitor).filter(
-                ProductCompetitor.product_id == product_id,
-                ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
-            ).first()
+            competitor = resolve_competitor_by_name(db, product_id, competitor_name)
             if competitor:
                 competitor_id = competitor.id
                 resolved_competitor = competitor.competitor_name
 
-        # Generate content embedding
-        content_embedding = None
-        try:
-            from app.services.embedding_service import generate_embedding
-            content_embedding = generate_embedding(content[:8000], input_type="document")
-        except Exception as e:
-            logger.warning("Failed to generate content embedding: %s", e)
-
-        # Extract JTBD statement and generate JTBD embedding
-        jtbd_statement = None
-        jtbd_embedding = None
-        try:
-            jtbd_statement = _extract_jtbd(title, content, evidence_type)
-            if jtbd_statement:
-                from app.services.embedding_service import generate_embedding
-                jtbd_embedding = generate_embedding(jtbd_statement, input_type="document")
-        except Exception as e:
-            logger.warning("Failed to extract JTBD: %s", e)
-
-        evidence = Evidence(
+        evidence = create_evidence(
+            db=db,
             product_id=product_id,
             evidence_type=ev_type,
             title=title,
@@ -92,20 +70,15 @@ def evidence_add(
             source_description=source_description or None,
             competitor_id=competitor_id,
             tags=parsed_tags if parsed_tags else None,
-            jtbd_statement=jtbd_statement,
-            jtbd_embedding=jtbd_embedding,
-            content_embedding=content_embedding,
             created_by="mcp",
         )
-        db.add(evidence)
-        db.flush()
 
         result = {
             "evidence_id": evidence.id,
             "title": evidence.title,
             "evidence_type": evidence_type,
-            "has_embedding": content_embedding is not None,
-            "jtbd_statement": jtbd_statement,
+            "has_embedding": evidence.content_embedding is not None,
+            "jtbd_statement": evidence.jtbd_statement,
             "message": f"Evidence '{title}' added to factbase.",
         }
         if resolved_competitor:
@@ -197,49 +170,3 @@ def evidence_get(evidence_id: int) -> dict:
         return result
 
 
-def _extract_jtbd(title: str, content: str, evidence_type: str) -> Optional[str]:
-    """Extract a JTBD statement from evidence using LLM.
-
-    Returns a statement in the format:
-    'When [situation], I want to [motivation], so I can [outcome]'
-    or None if not applicable.
-    """
-    from app.services.llm_service import LLMService
-
-    # Skip JTBD extraction for types where it doesn't make sense
-    skip_types = {"internal_note"}
-    if evidence_type in skip_types:
-        return None
-
-    llm = LLMService()
-    system_prompt = """You extract Jobs-to-be-Done statements from product intelligence.
-
-Given a piece of evidence (competitive intel, customer feedback, market signal, etc.),
-extract the underlying customer job in this format:
-"When [situation], I want to [motivation], so I can [outcome]"
-
-Rules:
-- Focus on the customer's job, not the product feature
-- Be specific to the evidence provided
-- If the evidence doesn't clearly imply a customer job, respond with just "NONE"
-- Respond with ONLY the JTBD statement or "NONE" — no other text"""
-
-    user_prompt = f"""Evidence type: {evidence_type}
-Title: {title}
-Content: {content[:3000]}"""
-
-    try:
-        result = llm.call_agent(
-            agent_name="evidence_jtbd_extractor",
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.3,
-            max_tokens=200,
-        )
-        statement = result["content"].strip().strip('"')
-        if statement.upper() == "NONE" or len(statement) < 20:
-            return None
-        return statement
-    except Exception as e:
-        logger.warning("JTBD extraction failed: %s", e)
-        return None
