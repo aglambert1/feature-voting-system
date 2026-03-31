@@ -134,6 +134,13 @@ For each feature opportunity, extract the underlying customer job:
 - Focus on the UNDERLYING NEED the feature serves, not the feature itself
 - Multiple features may serve the same job — that's expected
 
+## User-Provided Evidence
+
+Some competitors may include "User-Provided Evidence" — curated intelligence from the product team (competitive intel, pricing changes, product launches, etc.). Treat this as HIGH-CONFIDENCE data that should:
+- Inform opportunity identification and prioritization
+- Be cited in source_evidence when relevant
+- Supplement or confirm findings from the functional audit
+
 ## Important Guidelines
 
 1. Analyze patterns across ALL competitor reports provided
@@ -291,6 +298,24 @@ Respond with ONLY a valid JSON object following the schema in the system prompt.
                     lines.append(f"- **{gap.get('feature_name', 'Unknown')}**: {gap.get('user_problem', '')[:150]}")
                 lines.append("")
 
+            # User-provided evidence for this competitor
+            evidence = report.get('evidence', [])
+            if evidence:
+                lines.append(f"**User-Provided Evidence ({len(evidence)} records):**")
+                lines.append("*(High-confidence, curated by the product team)*")
+                lines.append("")
+                for ev in evidence:
+                    ev_title = ev.get('title', 'Untitled')
+                    ev_type = ev.get('evidence_type', '')
+                    ev_content = ev.get('content', '')
+                    ev_source = ev.get('source_description') or ev.get('source_url') or ''
+                    lines.append(f"- **{ev_title}** ({ev_type})")
+                    if ev_source:
+                        lines.append(f"  Source: {ev_source}")
+                    if ev_content:
+                        lines.append(f"  {ev_content[:300]}")
+                    lines.append("")
+
             formatted_reports.append("\n".join(lines))
 
         return "\n---\n".join(formatted_reports)
@@ -309,6 +334,38 @@ Respond with ONLY a valid JSON object following the schema in the system prompt.
             return external_prompt[start:].strip()
 
         return ""
+
+    def build_concise_user_prompt(self, input_data: Dict[str, Any]) -> str:
+        """
+        Build a shorter prompt for truncation recovery.
+
+        When the full response exceeds max_tokens, this produces a more
+        constrained prompt asking for fewer items.
+        """
+        product_context = input_data.get('product_context', {})
+        competitor_reports = input_data.get('competitor_reports', [])
+
+        product_name = product_context.get('product_name', 'Our product')
+        competitor_count = len(competitor_reports)
+
+        # Summarize competitors very briefly
+        competitor_names = [r.get('competitor_name', f'Competitor {i+1}')
+                           for i, r in enumerate(competitor_reports)]
+
+        return f"""# Concise Landscape Synthesis (Reduced Scope)
+
+**Product:** {product_name}
+**Competitors analyzed:** {', '.join(competitor_names)} ({competitor_count} total)
+
+The previous response was too long. Please produce a CONCISE version:
+- feature_cluster_matrix: Limit to the 10 most important features
+- feature_opportunities: Limit to 8 opportunities maximum
+- high_impact_gaps: Top 3 only
+- Keep all descriptions to 1 sentence
+- Keep source_evidence to 1 entry per opportunity
+
+Use the same JSON schema from the system prompt. Prioritize quality over quantity.
+Respond with ONLY valid JSON."""
 
     def _validate_input(self, input_data: Dict[str, Any]) -> None:
         """Validate required input fields."""

@@ -1446,6 +1446,23 @@ def functional_audit_task(self, job_id: int):
             # For now, use any cached search data
             pass
 
+        # Query user-provided evidence for this competitor
+        from app.models.evidence import Evidence
+        competitor_evidence = db.query(Evidence).filter(
+            Evidence.competitor_id == competitor_id,
+            Evidence.product_id == product_id,
+        ).order_by(Evidence.created_at.desc()).limit(20).all()
+
+        user_provided_evidence = []
+        for ev in competitor_evidence:
+            user_provided_evidence.append({
+                'title': ev.title,
+                'content': ev.content[:2000] if ev.content else '',
+                'evidence_type': ev.evidence_type.value if ev.evidence_type else None,
+                'source_url': ev.source_url,
+                'source_description': ev.source_description,
+            })
+
         # Initialize LLM service and agent
         llm_service = LLMService()
         agent = CompetitorFunctionalAuditAgent(
@@ -1462,6 +1479,7 @@ def functional_audit_task(self, job_id: int):
             'competitor_url': competitor.competitor_url or '',
             'product_context': product_context,
             'web_search_results': web_search_results,
+            'user_provided_evidence': user_provided_evidence,
         }
 
         # Use higher max_tokens for detailed audit output
@@ -1649,12 +1667,34 @@ def landscape_synthesis_task(self, job_id: int):
         report_ids = []
         report_tuples = []  # For export service
 
+        # Query all competitor-linked evidence for this product
+        from app.models.evidence import Evidence
+        all_competitor_evidence = db.query(Evidence).filter(
+            Evidence.product_id == product_id,
+            Evidence.competitor_id.isnot(None),
+        ).order_by(Evidence.created_at.desc()).all()
+
+        # Group evidence by competitor_id
+        evidence_by_competitor: dict = {}
+        for ev in all_competitor_evidence:
+            evidence_by_competitor.setdefault(ev.competitor_id, []).append(ev)
+
         for report in functional_reports:
             # Get competitor name
             competitor = db.query(ProductCompetitor).filter(
                 ProductCompetitor.id == report.product_competitor_id
             ).first()
             competitor_name = competitor.competitor_name if competitor else f"Competitor {report.product_competitor_id}"
+
+            # Get evidence for this competitor (limit to 10 most recent)
+            competitor_evidence = evidence_by_competitor.get(report.product_competitor_id, [])[:10]
+            evidence_data = [{
+                'title': ev.title,
+                'content': (ev.content or '')[:1500],
+                'evidence_type': ev.evidence_type.value if ev.evidence_type else None,
+                'source_url': ev.source_url,
+                'source_description': ev.source_description,
+            } for ev in competitor_evidence]
 
             competitor_reports.append({
                 'competitor_name': competitor_name,
@@ -1663,7 +1703,8 @@ def landscape_synthesis_task(self, job_id: int):
                     'functional_comparison': report.functional_comparison,
                     'gaps_deep_dive': report.gaps_deep_dive,
                     'technical_constraints': report.technical_constraints,
-                }
+                },
+                'evidence': evidence_data,
             })
             report_ids.append(report.id)
             report_tuples.append((report, competitor_name))
@@ -1684,8 +1725,9 @@ def landscape_synthesis_task(self, job_id: int):
             'competitor_reports': competitor_reports,
         }
 
-        # Use higher max_tokens for synthesis output
-        result = agent.execute(agent_input, max_tokens=8000)
+        # Use higher max_tokens for synthesis output (increased from 8000 to
+        # accommodate larger analyses with more competitors and evidence)
+        result = agent.execute(agent_input, max_tokens=12000)
 
         # Convert dict to Pydantic for markdown generation
         result_model = LandscapeSynthesisOutput(**result)
@@ -2210,6 +2252,68 @@ def internal_discovery_task(self, job_id: int):
             )
             db.add(db_theme)
 
+        # Bridge themes to evidence factbase
+        from app.models.evidence import EvidenceType
+        from app.services.evidence_service import create_evidence, resolve_competitor_by_name
+
+        evidence_count = 0
+        for theme in output.winloss_themes:
+            # Build content from theme details
+            content_parts = [f"Win/Loss Theme: {theme.theme_name}"]
+            content_parts.append(f"Outcome: {theme.outcome}")
+            content_parts.append(f"Deal count: {theme.deal_count}, Total value: ${theme.total_value:,.0f}")
+            if theme.sample_reasons:
+                content_parts.append("Sample reasons: " + "; ".join(theme.sample_reasons[:3]))
+            if theme.jtbd_statement:
+                content_parts.append(f"JTBD: {theme.jtbd_statement}")
+
+            # Resolve competitor if correlated
+            competitor_id = None
+            if theme.competitor_correlation:
+                matched = resolve_competitor_by_name(db, import_record.product_id, theme.competitor_correlation)
+                if matched:
+                    competitor_id = matched.id
+
+            try:
+                create_evidence(
+                    db=db,
+                    product_id=import_record.product_id,
+                    evidence_type=EvidenceType.CUSTOMER_INTERVIEW,
+                    title=f"Win/Loss: {theme.theme_name}",
+                    content="\n".join(content_parts),
+                    source_description=f"CRM import #{import_id}",
+                    competitor_id=competitor_id,
+                    tags=theme.feature_keywords[:5] if theme.feature_keywords else None,
+                    created_by="crm_import",
+                )
+                evidence_count += 1
+            except Exception as e:
+                print(f"[internal_discovery_task] Evidence creation failed for winloss theme: {e}")
+
+        for theme in output.support_themes:
+            content_parts = [f"Support Theme: {theme.theme_name}"]
+            content_parts.append(f"Category: {theme.category}, Urgency: {theme.urgency_indicator}")
+            content_parts.append(f"Ticket count: {theme.ticket_count}")
+            if theme.sample_subjects:
+                content_parts.append("Sample subjects: " + "; ".join(theme.sample_subjects[:3]))
+            if theme.jtbd_statement:
+                content_parts.append(f"JTBD: {theme.jtbd_statement}")
+
+            try:
+                create_evidence(
+                    db=db,
+                    product_id=import_record.product_id,
+                    evidence_type=EvidenceType.CUSTOMER_INTERVIEW,
+                    title=f"Support: {theme.theme_name}",
+                    content="\n".join(content_parts),
+                    source_description=f"CRM import #{import_id}",
+                    tags=theme.feature_keywords[:5] if theme.feature_keywords else None,
+                    created_by="crm_import",
+                )
+                evidence_count += 1
+            except Exception as e:
+                print(f"[internal_discovery_task] Evidence creation failed for support theme: {e}")
+
         # Update import record
         import_record.status = "completed"
         import_record.themes_extracted = True
@@ -2223,6 +2327,7 @@ def internal_discovery_task(self, job_id: int):
             'import_id': import_id,
             'winloss_themes_count': len(output.winloss_themes),
             'support_themes_count': len(output.support_themes),
+            'evidence_created': evidence_count,
             'deals_analyzed': output.deals_analyzed,
             'tickets_analyzed': output.tickets_analyzed
         })

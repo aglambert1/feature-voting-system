@@ -252,6 +252,8 @@ class SynthesisSourcesAvailable(BaseModel):
     customer_detail: Optional[str] = None
     internal: bool = False
     internal_detail: Optional[str] = None
+    evidence: bool = False
+    evidence_detail: Optional[str] = None
 
 
 class SynthesisStatusResponse(BaseModel):

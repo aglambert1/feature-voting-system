@@ -109,6 +109,7 @@ class CompetitorResponse(BaseModel):
     deep_analysis_status: Optional[str]
     deep_analysis_last_run: Optional[datetime]
     feature_count: int = 0
+    evidence_count: int = 0
 
     class Config:
         from_attributes = True
@@ -726,6 +727,10 @@ def list_competitors(
 
     # Get feature counts from functional reports (V2)
     from app.models.competitive_reports import CompetitorFunctionalReport
+    from app.services.evidence_service import get_evidence_count_by_competitor
+
+    # Get evidence counts in bulk
+    evidence_counts = get_evidence_count_by_competitor(db, product_id)
 
     result = []
     for comp in competitors:
@@ -747,7 +752,8 @@ def list_competitors(
             deep_analysis_enabled=comp.deep_analysis_enabled or False,
             deep_analysis_status=comp.deep_analysis_status,
             deep_analysis_last_run=comp.deep_analysis_last_run,
-            feature_count=feature_count
+            feature_count=feature_count,
+            evidence_count=evidence_counts.get(comp.id, 0),
         ))
 
     return result
