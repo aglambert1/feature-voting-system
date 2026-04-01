@@ -21,7 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import settings
 from app.logging_config import setup_logging
 from app.database import init_db, create_initial_admin
-from app.api import auth, ideas, votes, submissions, products, pm_review, monitoring, competitive_agents, internal_feedback, synthesis, admin, invites, evidence
+from app.api import auth, ideas, votes, submissions, products, pm_review, monitoring, competitive_agents, internal_feedback, synthesis, admin, invites, evidence, api_keys
 from app.utils.security import create_access_token
 
 setup_logging(debug=settings.debug)
