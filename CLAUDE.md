@@ -8,6 +8,12 @@ Before writing code that references existing models or services:
 2. Check imports at top of the file being edited to see what's already available
 3. Look at similar existing code in the same file for patterns to follow
 
+For any feature development or code change, evaluate whether new or updated CI tests are needed:
+- New endpoints or services → add tests
+- Changed business logic or data flows → update existing tests or add new ones
+- Bug fixes → add a regression test when feasible
+- If no tests are needed, briefly explain why
+
 ### Quick Reference (update when changing these)
 Common patterns - verify against source if unsure:
 
@@ -24,6 +30,12 @@ Common patterns - verify against source if unsure:
 **Celery Tasks** (`backend/app/queue/tasks.py`):
 - Use `@shared_task` decorator (not `@celery_app.task`)
 - Import models inside task functions to avoid circular imports
+
+**Database Migrations** (`backend/alembic/versions/`):
+- When adding, removing, or modifying SQLAlchemy models, always create an Alembic migration file
+- Migration runs automatically on local startup (`start.sh`) and Render deploy (`preDeployCommand`)
+- Follow existing naming pattern: `{revision_id}_{description}.py`
+- Register new models in `backend/app/models/__init__.py` so `Base.metadata` picks them up
 
 **When to update this section:**
 - Adding/renaming model fields
