@@ -28,7 +28,7 @@ interface ConsentDetails {
 export default function OAuthConsentPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { user, isLoading: authLoading } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
   const [details, setDetails] = useState<ConsentDetails | null>(null);
   const [loading, setLoading] = useState(true);
