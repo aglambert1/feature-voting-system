@@ -33,6 +33,7 @@ import SynthesisHubPage from './pages/CompetitorIntelligence/SynthesisHubPage';
 import EvidencePage from './pages/CompetitorIntelligence/EvidencePage';
 import IdeaLifecycleSettingsPage from './pages/IdeaLifecycleSettingsPage';
 import JoinPage from './pages/JoinPage';
+import OAuthConsentPage from './pages/OAuthConsentPage';
 
 // Redirect from old /report route to new V2 IntelligenceHub
 function ReportRedirect() {
@@ -53,6 +54,7 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/join/:code" element={<JoinPage />} />
+          <Route path="/oauth/consent" element={<OAuthConsentPage />} />
 
           {/* Protected routes */}
           <Route

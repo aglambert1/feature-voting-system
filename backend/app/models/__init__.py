@@ -67,6 +67,7 @@ from app.models.cost_tracking import (
 from app.models.product_invite import ProductInviteCode
 from app.models.evidence import Evidence, EvidenceType
 from app.models.api_key import UserAPIKey
+from mcp_server.oauth_models import OAuthClient, OAuthAuthorizationCode, OAuthRefreshToken
 
 __all__ = [
     "User", "UserRole", "ProductAccessMode",
@@ -87,4 +88,5 @@ __all__ = [
     "ProductInviteCode",
     "Evidence", "EvidenceType",
     "UserAPIKey",
+    "OAuthClient", "OAuthAuthorizationCode", "OAuthRefreshToken",
 ]

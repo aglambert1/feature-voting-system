@@ -98,6 +98,10 @@ services:
         sync: false
       - key: VOYAGE_API_KEY
         sync: false
+      - key: MCP_BASE_URL
+        value: "https://feature-iq-mcp.onrender.com"
+      - key: FRONTEND_URL
+        value: "https://feature-iq.onrender.com"
       - key: DEBUG
         value: "false"
 
