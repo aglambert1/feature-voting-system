@@ -145,10 +145,19 @@ if [ -f "${BACKEND_DIR}/feature_voting.db" ]; then
     fi
 fi
 
-# Start backend server
-echo -e "${BLUE}==>${NC} Starting backend server..."
+# Run database migrations
+echo -e "${BLUE}==>${NC} Running database migrations..."
 cd "${BACKEND_DIR}"
 source venv/bin/activate
+alembic upgrade head 2>&1 | tail -5
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✓${NC} Database migrations up to date"
+else
+    echo -e "${YELLOW}!${NC} Migration warning (may be OK if already up to date)"
+fi
+
+# Start backend server
+echo -e "${BLUE}==>${NC} Starting backend server..."
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 > "$BACKEND_LOG" 2>&1 &
 BACKEND_PID=$!
 
