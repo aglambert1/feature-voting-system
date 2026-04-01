@@ -964,6 +964,7 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         input_data = job.input_data or {}
         raw_input = input_data.get('raw_input', {})
         source_type_str = input_data.get('source_type')
+        user_id = job.user_id
 
         # Parse source type
         source_type = None
@@ -1005,7 +1006,7 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         product_feature_result = similarity_service.find_product_feature_matches(
             idea_text=idea_text,
             product_id=idea.product_id,
-            threshold=0.80
+            similarity_threshold=0.80
         )
 
         # Get product context

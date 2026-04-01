@@ -18,6 +18,7 @@ import app.models.queue  # noqa: F401
 import app.models.competitive_agent  # noqa: F401
 import app.models.competitive_reports  # noqa: F401
 import app.models.idea_lifecycle_status  # noqa: F401
+import app.models.api_key  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

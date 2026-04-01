@@ -5,6 +5,7 @@ import logging
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.user_context import get_mcp_user_label
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,10 @@ def evidence_add(
             source_description=source_description or None,
             competitor_id=competitor_id,
             tags=parsed_tags if parsed_tags else None,
-            created_by="mcp",
+            jtbd_statement=jtbd_statement,
+            jtbd_embedding=jtbd_embedding,
+            content_embedding=content_embedding,
+            created_by=get_mcp_user_label(),
         )
 
         result = {

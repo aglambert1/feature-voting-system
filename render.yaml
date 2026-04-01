@@ -71,6 +71,36 @@ services:
       - key: DEBUG
         value: "false"
 
+  # MCP HTTP Server (remote MCP client access)
+  - type: web
+    name: feature-iq-mcp
+    plan: starter
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    dockerCommand: python -m mcp_server.http_server
+    envVars:
+      - key: SECRET_KEY
+        fromService:
+          name: feature-iq-api
+          type: web
+          envVarKey: SECRET_KEY
+      - key: DATABASE_URL
+        fromDatabase:
+          name: feature-iq-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: feature-iq-redis
+          type: redis
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false
+      - key: DEBUG
+        value: "false"
+
   # Frontend static site
   - type: web
     name: feature-iq

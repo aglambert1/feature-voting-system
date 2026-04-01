@@ -66,6 +66,7 @@ from app.models.cost_tracking import (
 )
 from app.models.product_invite import ProductInviteCode
 from app.models.evidence import Evidence, EvidenceType
+from app.models.api_key import UserAPIKey
 
 __all__ = [
     "User", "UserRole", "ProductAccessMode",
@@ -85,4 +86,5 @@ __all__ = [
     "LLMUsageLog", "OperationType",
     "ProductInviteCode",
     "Evidence", "EvidenceType",
+    "UserAPIKey",
 ]

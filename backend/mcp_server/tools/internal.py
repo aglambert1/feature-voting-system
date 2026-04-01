@@ -5,6 +5,7 @@ import logging
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.user_context import get_mcp_user_label
 
 logger = logging.getLogger(__name__)
 
@@ -147,12 +148,15 @@ def internal_submit_feedback(
     if not deals and not tickets:
         return {"error": "At least one deal or ticket must be provided."}
 
+    # Use authenticated user label when source is the default
+    effective_source = get_mcp_user_label() if source == "mcp" else source
+
     with get_session() as db:
         # Create import record
         fb_import = InternalFeedbackImport(
             product_id=product_id,
-            filename=f"mcp_import_{source}",
-            source_type=source,
+            filename=f"mcp_import_{effective_source}",
+            source_type=effective_source,
             status="pending",
             deals_count=len(deals),
             tickets_count=len(tickets),
@@ -165,7 +169,11 @@ def internal_submit_feedback(
         queue_service = QueueService(db)
         job = queue_service.create_job(
             job_type=JobType.INTERNAL_DISCOVERY,
-            input_data={"import_id": fb_import.id},
+            input_data={
+                "import_id": fb_import.id,
+                "deals": deals,
+                "support_tickets": tickets,
+            },
             product_id=product_id,
         )
 

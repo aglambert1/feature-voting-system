@@ -1,10 +1,11 @@
-import { useState, useEffect, ChangeEvent, FormEvent } from 'react';
+import { useState, useEffect, useCallback, ChangeEvent, FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 import { AxiosError } from 'axios';
 import type { ApiError } from '../types';
+import { UserRole } from '../types';
 
-type ActiveTab = 'profile' | 'password';
+type ActiveTab = 'profile' | 'password' | 'api-keys';
 
 interface ProfileFormData {
   email: string;
@@ -18,9 +19,25 @@ interface PasswordFormData {
   confirm_password: string;
 }
 
+interface APIKey {
+  id: number;
+  key_prefix: string;
+  name: string;
+  created_at: string;
+  expires_at: string;
+  last_used_at: string | null;
+  is_revoked: boolean;
+}
+
+interface APIKeyCreateResponse extends APIKey {
+  api_key: string;
+}
+
 export default function ProfilePage() {
   const { user, setUser } = useAuth();
   const [activeTab, setActiveTab] = useState<ActiveTab>('profile');
+
+  const isPO = user?.role === UserRole.PRODUCT_OWNER;
 
   // Profile edit state
   const [profileData, setProfileData] = useState<ProfileFormData>({
@@ -42,6 +59,17 @@ export default function ProfilePage() {
   const [passwordError, setPasswordError] = useState<string>('');
   const [passwordSuccess, setPasswordSuccess] = useState<string>('');
 
+  // API keys state
+  const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
+  const [apiKeysLoading, setApiKeysLoading] = useState<boolean>(false);
+  const [apiKeysError, setApiKeysError] = useState<string>('');
+  const [newKeyName, setNewKeyName] = useState<string>('');
+  const [creatingKey, setCreatingKey] = useState<boolean>(false);
+  const [showNewKeyForm, setShowNewKeyForm] = useState<boolean>(false);
+  const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
+  const [copied, setCopied] = useState<boolean>(false);
+  const [revokingId, setRevokingId] = useState<number | null>(null);
+
   // Initialize profile data
   useEffect(() => {
     if (user) {
@@ -52,6 +80,27 @@ export default function ProfilePage() {
       });
     }
   }, [user]);
+
+  const fetchApiKeys = useCallback(async () => {
+    setApiKeysLoading(true);
+    setApiKeysError('');
+    try {
+      const response = await api.get<APIKey[]>('/api-keys');
+      setApiKeys(response.data);
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setApiKeysError(error.response?.data?.detail || 'Failed to load API keys');
+    } finally {
+      setApiKeysLoading(false);
+    }
+  }, []);
+
+  // Fetch API keys when tab is selected
+  useEffect(() => {
+    if (activeTab === 'api-keys' && isPO) {
+      fetchApiKeys();
+    }
+  }, [activeTab, isPO, fetchApiKeys]);
 
   const handleProfileSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -115,6 +164,54 @@ export default function ProfilePage() {
     }
   };
 
+  const handleCreateKey = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setCreatingKey(true);
+    setApiKeysError('');
+
+    try {
+      const response = await api.post<APIKeyCreateResponse>('/api-keys', { name: newKeyName });
+      setNewlyCreatedKey(response.data.api_key);
+      setNewKeyName('');
+      setShowNewKeyForm(false);
+      fetchApiKeys();
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setApiKeysError(error.response?.data?.detail || 'Failed to create API key');
+    } finally {
+      setCreatingKey(false);
+    }
+  };
+
+  const handleRevokeKey = async (keyId: number) => {
+    setRevokingId(keyId);
+    try {
+      await api.delete(`/api-keys/${keyId}`);
+      fetchApiKeys();
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setApiKeysError(error.response?.data?.detail || 'Failed to revoke API key');
+    } finally {
+      setRevokingId(null);
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+
+  const isExpired = (dateStr: string) => new Date(dateStr) < new Date();
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -126,7 +223,7 @@ export default function ProfilePage() {
               href="/ideas"
               className="text-blue-600 hover:text-blue-800 transition-colors"
             >
-              ← Back to Ideas
+              &larr; Back to Ideas
             </a>
           </div>
         </div>
@@ -173,6 +270,18 @@ export default function ProfilePage() {
               >
                 Change Password
               </button>
+              {isPO && (
+                <button
+                  onClick={() => setActiveTab('api-keys')}
+                  className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                    activeTab === 'api-keys'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  API Keys
+                </button>
+              )}
             </nav>
           </div>
 
@@ -309,6 +418,168 @@ export default function ProfilePage() {
                   </button>
                 </div>
               </form>
+            )}
+
+            {/* API Keys Tab */}
+            {activeTab === 'api-keys' && isPO && (
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900 mb-1">MCP API Keys</h3>
+                  <p className="text-sm text-gray-600">
+                    Generate API keys to connect Claude Desktop, Cursor, or other MCP clients to Feature-IQ.
+                  </p>
+                </div>
+
+                {/* Newly created key banner */}
+                {newlyCreatedKey && (
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <p className="text-sm font-medium text-green-800 mb-2">
+                      API key created. Copy it now — it won't be shown again.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 bg-white border border-green-300 rounded px-3 py-2 text-sm font-mono text-gray-800 break-all">
+                        {newlyCreatedKey}
+                      </code>
+                      <button
+                        onClick={() => copyToClipboard(newlyCreatedKey)}
+                        className="px-3 py-2 text-sm bg-green-600 text-white rounded hover:bg-green-700 whitespace-nowrap"
+                      >
+                        {copied ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => setNewlyCreatedKey(null)}
+                      className="mt-2 text-sm text-green-700 hover:text-green-900"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
+                {apiKeysError && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                    {apiKeysError}
+                  </div>
+                )}
+
+                {/* Create new key */}
+                {showNewKeyForm ? (
+                  <form onSubmit={handleCreateKey} className="flex items-end gap-3">
+                    <div className="flex-1">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Key Name</label>
+                      <input
+                        type="text"
+                        value={newKeyName}
+                        onChange={(e) => setNewKeyName(e.target.value)}
+                        placeholder="e.g., Claude Desktop"
+                        required
+                        maxLength={100}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={creatingKey || !newKeyName.trim()}
+                      className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
+                    >
+                      {creatingKey ? 'Creating...' : 'Create'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowNewKeyForm(false); setNewKeyName(''); }}
+                      className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <button
+                    onClick={() => setShowNewKeyForm(true)}
+                    className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
+                    Generate New Key
+                  </button>
+                )}
+
+                {/* Keys list */}
+                {apiKeysLoading ? (
+                  <p className="text-sm text-gray-500">Loading keys...</p>
+                ) : apiKeys.length === 0 ? (
+                  <p className="text-sm text-gray-500">No API keys yet.</p>
+                ) : (
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
+                          <th className="text-left px-4 py-3 font-medium text-gray-600">Key</th>
+                          <th className="text-left px-4 py-3 font-medium text-gray-600">Created</th>
+                          <th className="text-left px-4 py-3 font-medium text-gray-600">Expires</th>
+                          <th className="text-left px-4 py-3 font-medium text-gray-600">Last Used</th>
+                          <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
+                          <th className="px-4 py-3"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {apiKeys.map((key) => (
+                          <tr key={key.id} className={key.is_revoked ? 'bg-gray-50 opacity-60' : ''}>
+                            <td className="px-4 py-3 font-medium text-gray-900">{key.name}</td>
+                            <td className="px-4 py-3 font-mono text-gray-600">{key.key_prefix}...</td>
+                            <td className="px-4 py-3 text-gray-600">{formatDate(key.created_at)}</td>
+                            <td className={`px-4 py-3 ${isExpired(key.expires_at) ? 'text-red-600' : 'text-gray-600'}`}>
+                              {formatDate(key.expires_at)}
+                              {isExpired(key.expires_at) && <span className="ml-1 text-xs">(expired)</span>}
+                            </td>
+                            <td className="px-4 py-3 text-gray-600">
+                              {key.last_used_at ? formatDate(key.last_used_at) : 'Never'}
+                            </td>
+                            <td className="px-4 py-3">
+                              {key.is_revoked ? (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700">Revoked</span>
+                              ) : isExpired(key.expires_at) ? (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">Expired</span>
+                              ) : (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">Active</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {!key.is_revoked && (
+                                <button
+                                  onClick={() => handleRevokeKey(key.id)}
+                                  disabled={revokingId === key.id}
+                                  className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50"
+                                >
+                                  {revokingId === key.id ? 'Revoking...' : 'Revoke'}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Setup instructions */}
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-gray-800 mb-2">Claude Desktop Setup</h4>
+                  <p className="text-xs text-gray-600 mb-2">
+                    Add this to your Claude Desktop configuration file:
+                  </p>
+                  <pre className="bg-gray-900 text-gray-100 rounded p-3 text-xs overflow-x-auto">
+{`{
+  "mcpServers": {
+    "feature-iq": {
+      "url": "https://feature-iq-mcp.onrender.com/mcp",
+      "headers": {
+        "Authorization": "Bearer fiq_your_key_here"
+      }
+    }
+  }
+}`}
+                  </pre>
+                </div>
+              </div>
             )}
           </div>
         </div>

@@ -266,6 +266,11 @@ def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
         if not competitor:
             return {"error": f"No competitor matching '{competitor_name}' found for product {product_id}"}
 
+        # Auditing a competitor implies it should be included in synthesis
+        if not competitor.deep_analysis_enabled:
+            competitor.deep_analysis_enabled = True
+            db.flush()
+
         queue_service = QueueService(db)
         job = queue_service.create_job(
             job_type=JobType.FUNCTIONAL_AUDIT,
@@ -284,6 +289,37 @@ def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
             "competitor_name": competitor.competitor_name,
             "status": "queued",
             "message": f"Functional audit for {competitor.competitor_name} queued. Use job_get_status to check progress.",
+        }
+
+
+@mcp.tool()
+def ci_set_deep_analysis(product_id: int, competitor_name: str, enabled: bool = True) -> dict:
+    """Enable or disable a competitor for deep analysis and synthesis inclusion.
+
+    Args:
+        product_id: The product the competitor belongs to.
+        competitor_name: Name (or partial name) of the competitor.
+        enabled: True to include in synthesis, False to exclude.
+    """
+    from app.models.competitor_intelligence import ProductCompetitor
+
+    with get_session() as db:
+        competitor = db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id == product_id,
+            ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
+        ).first()
+
+        if not competitor:
+            return {"error": f"No competitor matching '{competitor_name}' found for product {product_id}"}
+
+        competitor.deep_analysis_enabled = enabled
+        db.flush()
+
+        return {
+            "competitor_id": competitor.id,
+            "competitor_name": competitor.competitor_name,
+            "deep_analysis_enabled": competitor.deep_analysis_enabled,
+            "message": f"{'Enabled' if enabled else 'Disabled'} deep analysis for {competitor.competitor_name}.",
         }
 
 
