@@ -10,7 +10,7 @@ services:
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
     healthCheckPath: /health
-    preDeployCommand: "alembic stamp head"
+    preDeployCommand: "alembic upgrade head"
     envVars:
       - key: SECRET_KEY
         generateValue: true
