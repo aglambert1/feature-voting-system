@@ -87,28 +87,48 @@ class FeatureIQOAuthProvider(OAuthProvider):
     # ---- Client Registration ----
 
     async def get_client(self, client_id: str) -> Optional[OAuthClientInformationFull]:
+        # Extract redirect_uri from the current request if available
+        # (needed to auto-register clients that skip /register)
+        from fastmcp.server.http import _current_http_request
+        request_redirect_uri = None
+        request = _current_http_request.get(None)
+        if request:
+            request_redirect_uri = request.query_params.get("redirect_uri")
+
         with get_session() as db:
             row = db.query(OAuthClient).filter(OAuthClient.client_id == client_id).first()
             if not row:
                 # Auto-register unknown clients (e.g., mcp-remote generates its
                 # own client_id without calling /register)
                 logger.info("Auto-registering unknown client: %s", client_id)
+                redirect_uris = [request_redirect_uri] if request_redirect_uri else ["http://localhost"]
                 row = OAuthClient(
                     client_id=client_id,
                     client_name="MCP Client",
-                    redirect_uris=[],
+                    redirect_uris=redirect_uris,
                     grant_types=["authorization_code", "refresh_token"],
                     response_types=["code"],
                     token_endpoint_auth_method="none",
                     scope="mcp",
                 )
                 db.add(row)
+            else:
+                # Ensure the redirect_uri from this request is registered
+                if request_redirect_uri:
+                    uris = list(row.redirect_uris or [])
+                    if request_redirect_uri not in uris:
+                        uris.append(request_redirect_uri)
+                        row.redirect_uris = uris
+
+            redirect_uris = row.redirect_uris or []
+            if request_redirect_uri and request_redirect_uri not in redirect_uris:
+                redirect_uris = redirect_uris + [request_redirect_uri]
 
             return OAuthClientInformationFull(
                 client_id=row.client_id,
                 client_secret=None,
                 client_name=row.client_name,
-                redirect_uris=row.redirect_uris or [],
+                redirect_uris=redirect_uris if redirect_uris else ["http://localhost"],
                 grant_types=row.grant_types or [],
                 response_types=row.response_types or [],
                 token_endpoint_auth_method=row.token_endpoint_auth_method or "none",

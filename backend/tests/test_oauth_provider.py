@@ -122,9 +122,12 @@ class TestClientRegistration:
         assert client.client_id == "test-client-123"
         assert client.client_name == "Test MCP Client"
 
-    def test_get_nonexistent_client(self, provider, mock_get_session):
-        client = run_async(provider.get_client("nonexistent"))
-        assert client is None
+    def test_get_unknown_client_auto_registers(self, provider, mock_get_session):
+        """Unknown clients are auto-registered (mcp-remote skips /register)."""
+        client = run_async(provider.get_client("auto-registered"))
+        assert client is not None
+        assert client.client_id == "auto-registered"
+        assert client.client_name == "MCP Client"
 
     def test_re_registration_is_idempotent(self, provider, mock_get_session, sample_client_info):
         run_async(provider.register_client(sample_client_info))
