@@ -501,55 +501,56 @@ def product_get_jobs(product_id: int, limit: int = 10) -> dict:
 
 @mcp.tool()
 def product_full_analysis(product_id: int) -> dict:
-    """Start a full analysis workflow: product analysis → competitor discovery → functional audits → landscape synthesis. Returns a parent job ID to track overall progress.
+    """Start a full analysis workflow by queuing a product analysis. After it completes, follow up with ci_run_discovery, then ci_run_competitor_audit for each competitor, then ci_run_analysis for landscape synthesis.
 
     Args:
-        product_id: The product to run full analysis on.
+        product_id: The product to analyze. Must have a detailed description (50+ characters).
     """
-    from app.queue.workflows import WorkflowService, WorkflowError
-    from app.services.queue_service import QueueService
-    from app.models.queue import JobType
     from app.models.competitor_intelligence import CIProduct
+    from app.models.queue import JobType
+    from app.services.queue_service import QueueService
 
     with get_session() as db:
         denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
         if denied:
             return denied
 
-        # Validate product has enough data for analysis
         product = db.query(CIProduct).get(product_id)
         if not product:
             return {"error": f"Product {product_id} not found"}
         if len(product.product_description or "") < 50:
             return {
-                "error": "Product description is too short for full analysis. "
+                "error": "Product description is too short for analysis. "
                          "Update the product with a detailed description or use product_run_analysis with a source_url first.",
             }
 
-        # Check for already-active workflow
-        queue_service = QueueService(db)
-        active_jobs = queue_service.get_active_jobs(product_id=product_id)
-        workflow_jobs = [j for j in active_jobs if j.job_type == JobType.FULL_WORKFLOW]
-        if workflow_jobs:
-            return {
-                "error": f"Workflow already active for product {product_id}.",
-                "active_job_uuid": workflow_jobs[0].job_uuid,
-            }
+        conflict = require_no_active_job(db, product_id, JobType.PRODUCT_ANALYSIS, "Product analysis")
+        if conflict:
+            return conflict
 
-        workflow_service = WorkflowService(db)
-        try:
-            workflow_job = workflow_service.start_full_analysis_workflow(
-                product_id=product_id,
-                user_id=get_mcp_user_id() or None,
-            )
-        except WorkflowError as e:
-            return {"error": str(e)}
+        queue_service = QueueService(db)
+        job = queue_service.create_job(
+            job_type=JobType.PRODUCT_ANALYSIS,
+            input_data={
+                "product_id": product_id,
+                "product_description": product.product_description,
+                "source_type": product.product_source_type or "text",
+            },
+            product_id=product_id,
+        )
+
+        from app.queue.tasks import analyze_product_task
+        from mcp_server.db import dispatch_task
+        result = dispatch_task(analyze_product_task, job.id)
+        queue_service.mark_queued(job.id, result.id)
 
         return {
-            "job_id": workflow_job.id,
-            "job_uuid": workflow_job.job_uuid,
-            "status": workflow_job.status.value if workflow_job.status else "queued",
-            "message": "Full analysis workflow started. Use job_get_status to track progress.",
+            "job_id": job.id,
+            "job_uuid": job.job_uuid,
+            "status": "queued",
+            "message": "Product analysis queued (step 1 of 4). After this completes, run: "
+                       "ci_run_discovery → ci_run_competitor_audit (for each) → ci_run_analysis. "
+                       "Use job_get_status to check progress.",
         }
 
 
