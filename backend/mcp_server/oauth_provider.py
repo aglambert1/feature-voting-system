@@ -18,7 +18,6 @@ Reference: fastmcp/server/auth/providers/in_memory.py
 import hashlib
 import logging
 import secrets
-import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -196,7 +195,6 @@ class FeatureIQOAuthProvider(OAuthProvider):
             raise AuthorizeError(error="invalid_client", error_description="Client ID required")
 
         code_value = secrets.token_urlsafe(32)
-        expires_at = time.time() + AUTH_CODE_EXPIRY_SECONDS
         scopes = params.scopes or []
 
         with get_session() as db:
@@ -208,7 +206,7 @@ class FeatureIQOAuthProvider(OAuthProvider):
                 redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
                 scopes=scopes,
                 code_challenge=params.code_challenge,
-                expires_at=datetime.utcfromtimestamp(expires_at),
+                expires_at=datetime.utcnow() + timedelta(seconds=AUTH_CODE_EXPIRY_SECONDS),
                 consumed=False,
             )
             db.add(auth_code)
