@@ -2,7 +2,7 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
-from mcp_server.permissions import require_product_access
+from mcp_server.permissions import require_product_access, require_product_analyzed, require_no_active_job
 
 from app.models.competitor_intelligence import ProductPermissionLevel
 
@@ -260,6 +260,12 @@ def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
         denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
         if denied:
             return denied
+        not_ready = require_product_analyzed(db, product_id)
+        if not_ready:
+            return not_ready
+        conflict = require_no_active_job(db, product_id, JobType.COMPETITOR_DISCOVERY, "Competitor discovery")
+        if conflict:
+            return conflict
 
         queue_service = QueueService(db)
         job = queue_service.create_job(
@@ -300,6 +306,11 @@ def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
 
         if not competitor:
             return {"error": f"No competitor matching '{competitor_name}' found for product {product_id}"}
+
+        # Check for active audit job
+        conflict = require_no_active_job(db, product_id, JobType.FUNCTIONAL_AUDIT, "Functional audit")
+        if conflict:
+            return conflict
 
         # Auditing a competitor implies it should be included in synthesis
         if not competitor.deep_analysis_enabled:
@@ -366,12 +377,28 @@ def ci_set_deep_analysis(product_id: int, competitor_name: str, enabled: bool = 
 def ci_run_analysis(product_id: int) -> dict:
     """Trigger a landscape synthesis across all competitors. Returns a job ID to check status with job_get_status."""
     from app.models.queue import JobType
+    from app.models.competitive_reports import CompetitorFunctionalReport
     from app.services.queue_service import QueueService
 
     with get_session() as db:
         denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
         if denied:
             return denied
+
+        # Need at least one functional report
+        report_count = db.query(CompetitorFunctionalReport).join(
+            CompetitorFunctionalReport.competitor
+        ).filter(
+            CompetitorFunctionalReport.competitor.has(product_id=product_id)
+        ).count()
+        if report_count == 0:
+            return {
+                "error": "No functional reports found. Run ci_run_competitor_audit for at least one competitor first.",
+            }
+
+        conflict = require_no_active_job(db, product_id, JobType.LANDSCAPE_SYNTHESIS, "Landscape synthesis")
+        if conflict:
+            return conflict
 
         queue_service = QueueService(db)
         job = queue_service.create_job(

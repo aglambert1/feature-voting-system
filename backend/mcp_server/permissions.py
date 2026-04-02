@@ -45,6 +45,40 @@ def require_product_access(
     return {"error": f"Permission denied: you need {level_label} access to product {product_id}."}
 
 
+def require_product_analyzed(db: Session, product_id: int) -> Optional[dict]:
+    """Check that a product has been analyzed (has structured_product_data).
+
+    Many operations (discovery, feature search, audits) require analysis
+    data to function. Returns an error dict with guidance if not analyzed.
+    """
+    product = db.query(CIProduct).get(product_id)
+    if not product:
+        return {"error": f"Product {product_id} not found"}
+    if not product.structured_product_data:
+        return {
+            "error": f"Product '{product.product_name}' has not been analyzed yet. "
+                     "Run product_run_analysis first (provide a source_url or ensure the product has a detailed description).",
+        }
+    return None
+
+
+def require_no_active_job(db: Session, product_id: int, job_type, label: str) -> Optional[dict]:
+    """Check that no active job of the given type is running for this product.
+
+    Returns error dict with the active job UUID if one exists.
+    """
+    from app.services.queue_service import QueueService
+    queue_service = QueueService(db)
+    active = queue_service.get_active_jobs(product_id=product_id)
+    conflicts = [j for j in active if j.job_type == job_type]
+    if conflicts:
+        return {
+            "error": f"{label} already in progress for this product.",
+            "active_job_uuid": conflicts[0].job_uuid,
+        }
+    return None
+
+
 def get_permitted_products(db: Session) -> List[CIProduct]:
     """Return the list of products the current MCP user can view.
 

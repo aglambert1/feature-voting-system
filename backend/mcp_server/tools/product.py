@@ -4,7 +4,12 @@ import json
 
 from mcp_server import mcp
 from mcp_server.db import get_session
-from mcp_server.permissions import get_permitted_products, require_product_access
+from mcp_server.permissions import (
+    get_permitted_products,
+    require_product_access,
+    require_product_analyzed,
+    require_no_active_job,
+)
 from mcp_server.user_context import get_mcp_user_id
 
 from app.models.competitor_intelligence import ProductPermissionLevel
@@ -293,6 +298,9 @@ def product_search_features(product_id: int, query: str) -> dict:
         denied = require_product_access(db, product_id)
         if denied:
             return denied
+        not_ready = require_product_analyzed(db, product_id)
+        if not_ready:
+            return not_ready
 
         query_emb = generate_embedding(query, input_type="query")
         matches = VectorService.find_similar_product_features(
@@ -369,9 +377,21 @@ def product_run_analysis(product_id: int, source_url: str = "") -> dict:
         if denied:
             return denied
 
+        # Check for active analysis job
+        conflict = require_no_active_job(db, product_id, JobType.PRODUCT_ANALYSIS, "Product analysis")
+        if conflict:
+            return conflict
+
         product = db.query(CIProduct).get(product_id)
         if not product:
             return {"error": f"Product {product_id} not found"}
+
+        # Validate there's enough data to analyze
+        if not source_url and len(product.product_description or "") < 50:
+            return {
+                "error": "Product description is too short for meaningful analysis. "
+                         "Either provide a source_url or update the product with a detailed description first.",
+            }
 
         input_data = {"product_id": product_id}
         source_type = "text"
@@ -489,11 +509,22 @@ def product_full_analysis(product_id: int) -> dict:
     from app.queue.workflows import WorkflowService, WorkflowError
     from app.services.queue_service import QueueService
     from app.models.queue import JobType
+    from app.models.competitor_intelligence import CIProduct
 
     with get_session() as db:
         denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
         if denied:
             return denied
+
+        # Validate product has enough data for analysis
+        product = db.query(CIProduct).get(product_id)
+        if not product:
+            return {"error": f"Product {product_id} not found"}
+        if len(product.product_description or "") < 50:
+            return {
+                "error": "Product description is too short for full analysis. "
+                         "Update the product with a detailed description or use product_run_analysis with a source_url first.",
+            }
 
         # Check for already-active workflow
         queue_service = QueueService(db)
