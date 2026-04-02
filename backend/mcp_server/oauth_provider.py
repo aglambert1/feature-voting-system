@@ -90,10 +90,23 @@ class FeatureIQOAuthProvider(OAuthProvider):
         with get_session() as db:
             row = db.query(OAuthClient).filter(OAuthClient.client_id == client_id).first()
             if not row:
-                return None
+                # Auto-register unknown clients (e.g., mcp-remote generates its
+                # own client_id without calling /register)
+                logger.info("Auto-registering unknown client: %s", client_id)
+                row = OAuthClient(
+                    client_id=client_id,
+                    client_name="MCP Client",
+                    redirect_uris=[],
+                    grant_types=["authorization_code", "refresh_token"],
+                    response_types=["code"],
+                    token_endpoint_auth_method="none",
+                    scope="mcp",
+                )
+                db.add(row)
+
             return OAuthClientInformationFull(
                 client_id=row.client_id,
-                client_secret=None,  # Never return the secret
+                client_secret=None,
                 client_name=row.client_name,
                 redirect_uris=row.redirect_uris or [],
                 grant_types=row.grant_types or [],
