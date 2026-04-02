@@ -2,7 +2,7 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
-from mcp_server.permissions import require_product_access, require_product_analyzed, require_no_active_job
+from mcp_server.permissions import require_product_access, require_product_analyzed, require_no_active_job, resolve_user_id_for_job
 
 from app.models.competitor_intelligence import ProductPermissionLevel
 
@@ -272,6 +272,7 @@ def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
             job_type=JobType.COMPETITOR_DISCOVERY,
             input_data={"max_competitors": max_competitors},
             product_id=product_id,
+            user_id=resolve_user_id_for_job(db, product_id),
         )
 
         from mcp_server.db import dispatch_task
@@ -322,6 +323,7 @@ def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
             job_type=JobType.FUNCTIONAL_AUDIT,
             input_data={"competitor_id": competitor.id},
             product_id=product_id,
+            user_id=resolve_user_id_for_job(db, product_id),
         )
 
         from app.queue.tasks import functional_audit_task
@@ -405,6 +407,7 @@ def ci_run_analysis(product_id: int) -> dict:
             job_type=JobType.LANDSCAPE_SYNTHESIS,
             input_data={"product_id": product_id},
             product_id=product_id,
+            user_id=resolve_user_id_for_job(db, product_id),
         )
 
         from app.queue.tasks import landscape_synthesis_task

@@ -2,7 +2,7 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
-from mcp_server.permissions import require_product_access, require_no_active_job
+from mcp_server.permissions import require_product_access, require_no_active_job, resolve_user_id_for_job
 
 from app.models.competitor_intelligence import ProductPermissionLevel
 
@@ -160,6 +160,7 @@ def synthesis_run(product_id: int) -> dict:
             job_type=JobType.OPPORTUNITY_SYNTHESIS,
             input_data={"synthesis_run_id": synthesis_run.id},
             product_id=product_id,
+            user_id=resolve_user_id_for_job(db, product_id),
         )
 
         from mcp_server.db import dispatch_task

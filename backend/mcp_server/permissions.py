@@ -79,6 +79,22 @@ def require_no_active_job(db: Session, product_id: int, job_type, label: str) ->
     return None
 
 
+def resolve_user_id_for_job(db: Session, product_id: int) -> Optional[int]:
+    """Get a valid user_id for job creation.
+
+    OAuth users return their real user_id. Stdio (user_id=0) falls back
+    to the product's created_by_user_id so Celery tasks that require a
+    real user (e.g. product_analysis_history.analyzed_by_user_id) don't fail.
+    """
+    user_id = get_mcp_user_id()
+    if user_id:
+        return user_id
+    product = db.query(CIProduct).get(product_id)
+    if product and product.created_by_user_id:
+        return product.created_by_user_id
+    return None
+
+
 def get_permitted_products(db: Session) -> List[CIProduct]:
     """Return the list of products the current MCP user can view.
 

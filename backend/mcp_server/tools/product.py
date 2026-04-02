@@ -9,6 +9,7 @@ from mcp_server.permissions import (
     require_product_access,
     require_product_analyzed,
     require_no_active_job,
+    resolve_user_id_for_job,
 )
 from mcp_server.user_context import get_mcp_user_id
 
@@ -418,6 +419,7 @@ def product_run_analysis(product_id: int, source_url: str = "") -> dict:
             job_type=JobType.PRODUCT_ANALYSIS,
             input_data=input_data,
             product_id=product_id,
+            user_id=resolve_user_id_for_job(db, product_id),
         )
 
         from app.queue.tasks import analyze_product_task
@@ -537,6 +539,7 @@ def product_full_analysis(product_id: int) -> dict:
                 "source_type": product.product_source_type or "text",
             },
             product_id=product_id,
+            user_id=resolve_user_id_for_job(db, product_id),
         )
 
         from app.queue.tasks import analyze_product_task
