@@ -9,7 +9,7 @@ all HTTP auth middleware wiring automatically.
 import logging
 from datetime import datetime
 
-from fastmcp.server.auth import AuthProvider, AccessToken
+from fastmcp.server.auth import TokenVerifier, AccessToken
 
 from app.models.api_key import UserAPIKey
 from app.utils.security import pwd_context
@@ -18,8 +18,11 @@ from mcp_server.db import get_session
 logger = logging.getLogger(__name__)
 
 
-class APIKeyAuthProvider(AuthProvider):
-    """Validates Feature-IQ API keys (fiq_...) for MCP HTTP access."""
+class APIKeyAuthProvider(TokenVerifier):
+    """Validates Feature-IQ API keys (fiq_...) for MCP HTTP access.
+
+    Used as a fallback verifier in MultiAuth alongside the OAuth provider.
+    """
 
     async def verify_token(self, token: str) -> AccessToken | None:
         """Verify an API key and return access info if valid.

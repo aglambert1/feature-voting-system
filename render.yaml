@@ -10,6 +10,7 @@ services:
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
     healthCheckPath: /health
+    preDeployCommand: "alembic upgrade head"
     envVars:
       - key: SECRET_KEY
         generateValue: true
@@ -98,6 +99,10 @@ services:
         sync: false
       - key: VOYAGE_API_KEY
         sync: false
+      - key: MCP_BASE_URL
+        value: "https://feature-iq-mcp.onrender.com"
+      - key: FRONTEND_URL
+        value: "https://feature-iq.onrender.com"
       - key: DEBUG
         value: "false"
 

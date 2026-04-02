@@ -53,7 +53,6 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/join/:code" element={<JoinPage />} />
-
           {/* Protected routes */}
           <Route
             path="/ideas"

@@ -11,6 +11,9 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 
+# Import all models so SQLAlchemy metadata knows about all tables
+# (needed for FK resolution when OAuth models reference users table)
+import app.models  # noqa: F401
 
 _connect_args = (
     {"check_same_thread": False} if "sqlite" in settings.database_url else {}

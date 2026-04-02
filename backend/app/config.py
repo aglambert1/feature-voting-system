@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     brave_api_key: str = "your-brave-api-key-here"  # Get free key at https://brave.com/search/api/
     enable_web_search: bool = True  # Enable web search for competitor discovery
 
+    # MCP HTTP server settings
+    mcp_base_url: str = "http://localhost:8001"  # Public URL of MCP server (for OAuth metadata)
+    frontend_url: str = "http://localhost:5173"  # Frontend URL (for OAuth consent redirect)
+
     # Redis/Celery settings (for background task processing)
     redis_url: str = "redis://localhost:6379/0"
     celery_broker_url: str = ""  # Defaults to redis_url if not set
