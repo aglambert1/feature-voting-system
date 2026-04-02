@@ -5,6 +5,13 @@ Implements the 9 required OAuthProvider methods backed by PostgreSQL.
 Access tokens are stateless JWTs; refresh tokens and auth codes are
 stored in the database.
 
+Client Registration Strategy:
+    MCP clients (mcp-remote, Claude Desktop) generate their own client_id
+    and skip Dynamic Client Registration. This provider auto-registers
+    unknown clients on first access, capturing the redirect_uri from the
+    current HTTP request so redirect validation succeeds. This is the
+    standard pattern for MCP OAuth servers — DCR is optional per the spec.
+
 Reference: fastmcp/server/auth/providers/in_memory.py
 """
 
@@ -59,10 +66,30 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _get_redirect_uri_from_request() -> Optional[str]:
+    """Extract redirect_uri from the current HTTP request.
+
+    MCP clients that skip Dynamic Client Registration pass their
+    redirect_uri in the /authorize query params. We capture it here
+    so auto-registered clients have the correct URI for validation.
+
+    Uses FastMCP's request context variable, which is set by
+    RequestContextMiddleware for every HTTP request.
+    """
+    try:
+        from fastmcp.server.http import _current_http_request
+        request = _current_http_request.get(None)
+        if request:
+            return request.query_params.get("redirect_uri")
+    except (ImportError, LookupError):
+        pass
+    return None
+
+
 class FeatureIQOAuthProvider(OAuthProvider):
     """OAuth provider backed by PostgreSQL.
 
-    - Clients stored in oauth_clients table (Dynamic Client Registration)
+    - Clients auto-registered on first access (MCP clients skip DCR)
     - Auth codes stored in oauth_authorization_codes table (5 min TTL)
     - Refresh tokens stored as SHA-256 hashes in oauth_refresh_tokens table
     - Access tokens are JWTs (not stored, verified by signature)
@@ -87,21 +114,17 @@ class FeatureIQOAuthProvider(OAuthProvider):
     # ---- Client Registration ----
 
     async def get_client(self, client_id: str) -> Optional[OAuthClientInformationFull]:
-        # Extract redirect_uri from the current request if available
-        # (needed to auto-register clients that skip /register)
-        from fastmcp.server.http import _current_http_request
-        request_redirect_uri = None
-        request = _current_http_request.get(None)
-        if request:
-            request_redirect_uri = request.query_params.get("redirect_uri")
+        redirect_uri = _get_redirect_uri_from_request()
 
         with get_session() as db:
             row = db.query(OAuthClient).filter(OAuthClient.client_id == client_id).first()
+
             if not row:
-                # Auto-register unknown clients (e.g., mcp-remote generates its
-                # own client_id without calling /register)
-                logger.info("Auto-registering unknown client: %s", client_id)
-                redirect_uris = [request_redirect_uri] if request_redirect_uri else ["http://localhost"]
+                # Auto-register: MCP clients (mcp-remote, Claude Desktop)
+                # generate their own client_id without calling /register.
+                # This is expected behavior — DCR is optional per MCP spec.
+                logger.info("Auto-registering MCP client: %s", client_id)
+                redirect_uris = [redirect_uri] if redirect_uri else ["http://localhost"]
                 row = OAuthClient(
                     client_id=client_id,
                     client_name="MCP Client",
@@ -112,23 +135,19 @@ class FeatureIQOAuthProvider(OAuthProvider):
                     scope="mcp",
                 )
                 db.add(row)
-            else:
-                # Ensure the redirect_uri from this request is registered
-                if request_redirect_uri:
-                    uris = list(row.redirect_uris or [])
-                    if request_redirect_uri not in uris:
-                        uris.append(request_redirect_uri)
-                        row.redirect_uris = uris
-
-            redirect_uris = row.redirect_uris or []
-            if request_redirect_uri and request_redirect_uri not in redirect_uris:
-                redirect_uris = redirect_uris + [request_redirect_uri]
+            elif redirect_uri:
+                # Ensure redirect_uri is registered (mcp-remote uses dynamic
+                # localhost ports that change between sessions)
+                uris = list(row.redirect_uris or [])
+                if redirect_uri not in uris:
+                    uris.append(redirect_uri)
+                    row.redirect_uris = uris
 
             return OAuthClientInformationFull(
                 client_id=row.client_id,
                 client_secret=None,
                 client_name=row.client_name,
-                redirect_uris=redirect_uris if redirect_uris else ["http://localhost"],
+                redirect_uris=row.redirect_uris or ["http://localhost"],
                 grant_types=row.grant_types or [],
                 response_types=row.response_types or [],
                 token_endpoint_auth_method=row.token_endpoint_auth_method or "none",
@@ -195,7 +214,7 @@ class FeatureIQOAuthProvider(OAuthProvider):
             db.add(auth_code)
 
         # Redirect to login page served by this MCP server
-        from urllib.parse import urlencode, quote
+        from urllib.parse import urlencode
         login_params = urlencode({
             "txn_id": code_value,
             "client_name": client.client_name or "MCP Client",
