@@ -21,45 +21,27 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _is_pg() -> bool:
+    from alembic import context
+    return context.get_bind().dialect.name == "postgresql"
+
+
 def upgrade() -> None:
-    # On PostgreSQL the enum type never included 'admin', so comparing
-    # against it raises InvalidTextRepresentation.  Cast through text
-    # to let the WHERE clause run safely (matching zero rows on PG,
-    # matching any leftover rows on SQLite where enums are plain text).
-    op.execute(
-        "UPDATE product_permissions SET permission_level = 'owner'"
-        " WHERE permission_level::text = 'admin'"
-        if _is_pg() else
-        "UPDATE product_permissions SET permission_level = 'owner'"
-        " WHERE permission_level = 'admin'"
-    )
-    op.execute(
-        "UPDATE product_invite_codes SET permission_level = 'owner'"
-        " WHERE permission_level::text = 'admin'"
-        if _is_pg() else
-        "UPDATE product_invite_codes SET permission_level = 'owner'"
-        " WHERE permission_level = 'admin'"
-    )
+    if _is_pg():
+        # PostgreSQL: rename the enum value at the type level.
+        # The enum was created as ('view', 'edit', 'admin') by
+        # Base.metadata.create_all(); the code now expects 'owner'.
+        # ALTER TYPE ... RENAME VALUE was added in PostgreSQL 10.
+        op.execute("ALTER TYPE productpermissionlevel RENAME VALUE 'admin' TO 'owner'")
+    else:
+        # SQLite: enums are plain text columns, just update the data.
+        op.execute("UPDATE product_permissions SET permission_level = 'owner' WHERE permission_level = 'admin'")
+        op.execute("UPDATE product_invite_codes SET permission_level = 'owner' WHERE permission_level = 'admin'")
 
 
 def downgrade() -> None:
-    op.execute(
-        "UPDATE product_permissions SET permission_level = 'admin'"
-        " WHERE permission_level::text = 'owner'"
-        if _is_pg() else
-        "UPDATE product_permissions SET permission_level = 'admin'"
-        " WHERE permission_level = 'owner'"
-    )
-    op.execute(
-        "UPDATE product_invite_codes SET permission_level = 'admin'"
-        " WHERE permission_level::text = 'owner'"
-        if _is_pg() else
-        "UPDATE product_invite_codes SET permission_level = 'admin'"
-        " WHERE permission_level = 'owner'"
-    )
-
-
-def _is_pg() -> bool:
-    """Check if the current migration target is PostgreSQL."""
-    from alembic import context
-    return context.get_bind().dialect.name == "postgresql"
+    if _is_pg():
+        op.execute("ALTER TYPE productpermissionlevel RENAME VALUE 'owner' TO 'admin'")
+    else:
+        op.execute("UPDATE product_permissions SET permission_level = 'admin' WHERE permission_level = 'owner'")
+        op.execute("UPDATE product_invite_codes SET permission_level = 'admin' WHERE permission_level = 'owner'")
