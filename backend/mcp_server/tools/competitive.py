@@ -2,6 +2,9 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.permissions import require_product_access
+
+from app.models.competitor_intelligence import ProductPermissionLevel
 
 
 @mcp.tool()
@@ -11,6 +14,10 @@ def ci_get_competitor_list(product_id: int) -> dict:
     from app.models.competitive_reports import CompetitorFunctionalReport
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         competitors = db.query(ProductCompetitor).filter(
             ProductCompetitor.product_id == product_id,
             ProductCompetitor.status == "active",
@@ -41,6 +48,10 @@ def ci_get_competitor_report(product_id: int, competitor_name: str) -> dict:
     from app.models.competitive_reports import CompetitorFunctionalReport
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         # Fuzzy match on competitor name
         competitor = db.query(ProductCompetitor).filter(
             ProductCompetitor.product_id == product_id,
@@ -83,6 +94,10 @@ def ci_get_landscape(product_id: int) -> dict:
     from app.models.competitive_reports import LandscapeOpportunityReport
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         report = db.query(LandscapeOpportunityReport).filter(
             LandscapeOpportunityReport.product_id == product_id
         ).first()
@@ -110,6 +125,10 @@ def ci_search_features(product_id: int, query: str) -> dict:
     from app.models.evidence import COMPETITIVE_EVIDENCE_TYPES
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         query_emb = generate_embedding(query, input_type="query")
         matches = VectorService.find_similar_competitor_features(
             db, query_emb, product_id, limit=10
@@ -154,6 +173,10 @@ def ci_get_alerts(product_id: int, limit: int = 20) -> dict:
     from app.models.competitor_intelligence import CompetitorAlert
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         alerts = db.query(CompetitorAlert).filter(
             CompetitorAlert.product_id == product_id
         ).order_by(CompetitorAlert.created_at.desc()).limit(limit).all()
@@ -177,6 +200,10 @@ def ci_add_competitor(product_id: int, competitor_name: str, competitor_url: str
     from urllib.parse import urlparse
 
     with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
         # Check for duplicate by name
         existing = db.query(ProductCompetitor).filter(
             ProductCompetitor.product_id == product_id,
@@ -230,6 +257,10 @@ def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
     max_competitors = max(1, min(20, max_competitors))
 
     with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
         queue_service = QueueService(db)
         job = queue_service.create_job(
             job_type=JobType.COMPETITOR_DISCOVERY,
@@ -258,6 +289,10 @@ def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
     from app.services.queue_service import QueueService
 
     with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
         competitor = db.query(ProductCompetitor).filter(
             ProductCompetitor.product_id == product_id,
             ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
@@ -304,6 +339,10 @@ def ci_set_deep_analysis(product_id: int, competitor_name: str, enabled: bool = 
     from app.models.competitor_intelligence import ProductCompetitor
 
     with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
         competitor = db.query(ProductCompetitor).filter(
             ProductCompetitor.product_id == product_id,
             ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
@@ -330,6 +369,10 @@ def ci_run_analysis(product_id: int) -> dict:
     from app.services.queue_service import QueueService
 
     with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
         queue_service = QueueService(db)
         job = queue_service.create_job(
             job_type=JobType.LANDSCAPE_SYNTHESIS,

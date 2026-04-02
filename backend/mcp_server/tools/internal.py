@@ -5,7 +5,10 @@ import logging
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.permissions import require_product_access
 from mcp_server.user_context import get_mcp_user_label
+
+from app.models.competitor_intelligence import ProductPermissionLevel
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +21,10 @@ def internal_get_themes(
     from app.models.internal_feedback import WinLossTheme, SupportTheme
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         wl_query = db.query(WinLossTheme).filter(
             WinLossTheme.product_id == product_id
         )
@@ -69,6 +76,10 @@ def internal_get_signals(product_id: int, query: str) -> dict:
     query_lower = query.lower()
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         # Text-based search across theme names and feature keywords
         wl_themes = db.query(WinLossTheme).filter(
             WinLossTheme.product_id == product_id
@@ -135,23 +146,27 @@ def internal_submit_feedback(
     from app.services.queue_service import QueueService
     from app.queue.tasks import internal_discovery_task
 
-    try:
-        deals = json.loads(deals_json) if deals_json else []
-    except json.JSONDecodeError:
-        return {"error": "Invalid deals_json — must be a valid JSON array."}
-
-    try:
-        tickets = json.loads(tickets_json) if tickets_json else []
-    except json.JSONDecodeError:
-        return {"error": "Invalid tickets_json — must be a valid JSON array."}
-
-    if not deals and not tickets:
-        return {"error": "At least one deal or ticket must be provided."}
-
-    # Use authenticated user label when source is the default
-    effective_source = get_mcp_user_label() if source == "mcp" else source
-
     with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        try:
+            deals = json.loads(deals_json) if deals_json else []
+        except json.JSONDecodeError:
+            return {"error": "Invalid deals_json — must be a valid JSON array."}
+
+        try:
+            tickets = json.loads(tickets_json) if tickets_json else []
+        except json.JSONDecodeError:
+            return {"error": "Invalid tickets_json — must be a valid JSON array."}
+
+        if not deals and not tickets:
+            return {"error": "At least one deal or ticket must be provided."}
+
+        # Use authenticated user label when source is the default
+        effective_source = get_mcp_user_label() if source == "mcp" else source
+
         # Create import record
         fb_import = InternalFeedbackImport(
             product_id=product_id,

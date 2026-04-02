@@ -5,7 +5,10 @@ import logging
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.permissions import require_product_access
 from mcp_server.user_context import get_mcp_user_label
+
+from app.models.competitor_intelligence import ProductPermissionLevel
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,10 @@ def evidence_add(
         parsed_tags = []
 
     with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
         # Resolve competitor name to ID if provided
         competitor_id = None
         resolved_competitor = None
@@ -71,9 +78,6 @@ def evidence_add(
             source_description=source_description or None,
             competitor_id=competitor_id,
             tags=parsed_tags if parsed_tags else None,
-            jtbd_statement=jtbd_statement,
-            jtbd_embedding=jtbd_embedding,
-            content_embedding=content_embedding,
             created_by=get_mcp_user_label(),
         )
 
@@ -114,6 +118,10 @@ def evidence_list(
     from app.models.competitor_intelligence import ProductCompetitor
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         query = db.query(Evidence).filter(
             Evidence.product_id == product_id
         )
@@ -167,10 +175,12 @@ def evidence_get(evidence_id: int) -> dict:
         if not evidence:
             return {"error": f"Evidence {evidence_id} not found"}
 
+        denied = require_product_access(db, evidence.product_id)
+        if denied:
+            return denied
+
         result = evidence.to_dict()
         # Add competitor name if linked
         if evidence.competitor_id and evidence.competitor:
             result["competitor_name"] = evidence.competitor.competitor_name
         return result
-
-

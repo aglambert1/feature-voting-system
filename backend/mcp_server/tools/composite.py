@@ -2,6 +2,7 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.permissions import require_product_access
 
 
 @mcp.tool()
@@ -12,6 +13,10 @@ def evaluate_feature_evidence(product_id: int, feature_description: str) -> dict
     from app.models.internal_feedback import WinLossTheme, SupportTheme
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         query_emb = generate_embedding(feature_description, input_type="query")
 
         # Search competitor features
@@ -138,6 +143,10 @@ def get_jobs_cluster(product_id: int, job_query: str) -> dict:
     from app.services.vector_service import VectorService
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         query_emb = generate_embedding(job_query, input_type="query")
 
         # Search JTBD across ideas

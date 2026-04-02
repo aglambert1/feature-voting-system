@@ -2,17 +2,20 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.permissions import get_permitted_products, require_product_access
+
+from app.models.competitor_intelligence import ProductPermissionLevel
 
 
 @mcp.tool()
 def product_list() -> dict:
     """List all products available for analysis."""
-    from app.models.competitor_intelligence import CIProduct, ProductCompetitor
+    from app.models.competitor_intelligence import ProductCompetitor
     from app.models.idea import Idea
     from sqlalchemy import func
 
     with get_session() as db:
-        products = db.query(CIProduct).all()
+        products = get_permitted_products(db)
         result = []
         for p in products:
             competitor_count = db.query(func.count(ProductCompetitor.id)).filter(
@@ -39,6 +42,10 @@ def product_get_context(product_id: int) -> dict:
     from app.models.competitive_reports import LandscapeOpportunityReport
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         product = db.query(CIProduct).get(product_id)
         if not product:
             return {"error": f"Product {product_id} not found"}
@@ -79,21 +86,25 @@ def product_update_scoring(product_id: int, weights_json: str) -> dict:
     from app.models.competitor_intelligence import CIProduct
     from app.services.scoring_defaults import get_weights_for_product, DEFAULT_SCORING_WEIGHTS
 
-    try:
-        overrides = json.loads(weights_json) if weights_json else {}
-    except json.JSONDecodeError:
-        return {"error": "Invalid JSON. Provide a valid JSON object with weight overrides."}
-
-    if not isinstance(overrides, dict):
-        return {"error": "Weights must be a JSON object, not a list or scalar."}
-
-    # Validate keys
-    valid_keys = set(DEFAULT_SCORING_WEIGHTS.keys())
-    invalid_keys = set(overrides.keys()) - valid_keys
-    if invalid_keys:
-        return {"error": f"Invalid weight keys: {sorted(invalid_keys)}. Valid keys: {sorted(valid_keys)}"}
-
     with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        try:
+            overrides = json.loads(weights_json) if weights_json else {}
+        except json.JSONDecodeError:
+            return {"error": "Invalid JSON. Provide a valid JSON object with weight overrides."}
+
+        if not isinstance(overrides, dict):
+            return {"error": "Weights must be a JSON object, not a list or scalar."}
+
+        # Validate keys
+        valid_keys = set(DEFAULT_SCORING_WEIGHTS.keys())
+        invalid_keys = set(overrides.keys()) - valid_keys
+        if invalid_keys:
+            return {"error": f"Invalid weight keys: {sorted(invalid_keys)}. Valid keys: {sorted(valid_keys)}"}
+
         product = db.query(CIProduct).get(product_id)
         if not product:
             return {"error": f"Product {product_id} not found"}
@@ -118,6 +129,10 @@ def product_search_features(product_id: int, query: str) -> dict:
     from app.services.vector_service import VectorService
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         query_emb = generate_embedding(query, input_type="query")
         matches = VectorService.find_similar_product_features(
             db, query_emb, product_id, limit=5
