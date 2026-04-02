@@ -146,7 +146,7 @@ class TestAuthorization:
         )
 
         redirect_url = run_async(provider.authorize(sample_client_info, params))
-        assert "oauth/consent" in redirect_url
+        assert "oauth/login" in redirect_url
         assert "txn_id=" in redirect_url
         assert "client_name=" in redirect_url
 

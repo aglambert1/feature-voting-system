@@ -22,7 +22,6 @@ from mcp.server.auth.provider import (
     AuthorizeError,
     RefreshToken,
     TokenError,
-    construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
@@ -136,11 +135,10 @@ class FeatureIQOAuthProvider(OAuthProvider):
     async def authorize(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
-        """Store auth code and redirect to frontend consent page.
+        """Store auth code and redirect to login page on the MCP server.
 
-        The consent page will authenticate the user and POST back to
-        /oauth/consent with their decision. That endpoint generates
-        the final redirect with the authorization code.
+        The login page authenticates the user, binds them to the auth code,
+        and redirects to the client's redirect_uri with the code.
         """
         if not client.client_id:
             raise AuthorizeError(error="invalid_client", error_description="Client ID required")
@@ -153,7 +151,7 @@ class FeatureIQOAuthProvider(OAuthProvider):
             auth_code = OAuthAuthorizationCode(
                 code=code_value,
                 client_id=client.client_id,
-                user_id=None,  # Set when user approves consent
+                user_id=None,  # Set when user logs in
                 redirect_uri=str(params.redirect_uri),
                 redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
                 scopes=scopes,
@@ -163,14 +161,15 @@ class FeatureIQOAuthProvider(OAuthProvider):
             )
             db.add(auth_code)
 
-        # Redirect to frontend consent page
-        consent_url = (
-            f"{self.frontend_url}/oauth/consent"
-            f"?txn_id={code_value}"
-            f"&client_name={client.client_name or 'MCP Client'}"
-            f"&state={params.state or ''}"
-        )
-        return consent_url
+        # Redirect to login page served by this MCP server
+        from urllib.parse import urlencode, quote
+        login_params = urlencode({
+            "txn_id": code_value,
+            "client_name": client.client_name or "MCP Client",
+            "state": params.state or "",
+        })
+        base = str(self.base_url).rstrip("/")
+        return f"{base}/oauth/login?{login_params}"
 
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
