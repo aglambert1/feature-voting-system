@@ -2,6 +2,9 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.permissions import require_product_access
+
+from app.models.competitor_intelligence import ProductPermissionLevel
 
 
 @mcp.tool()
@@ -12,6 +15,10 @@ def synthesis_get_opportunities(
     from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         latest_run = (
             db.query(SynthesisRun)
             .filter(
@@ -69,12 +76,19 @@ def synthesis_get_opportunities(
 @mcp.tool()
 def synthesis_get_evidence(opportunity_id: int) -> dict:
     """Get detailed evidence for a specific opportunity from all contributing sources."""
-    from app.models.synthesis import SynthesizedOpportunity
+    from app.models.synthesis import SynthesizedOpportunity, SynthesisRun
 
     with get_session() as db:
         opp = db.query(SynthesizedOpportunity).get(opportunity_id)
         if not opp:
             return {"error": f"Opportunity {opportunity_id} not found"}
+
+        # Resolve product_id through the synthesis run
+        run = db.query(SynthesisRun).get(opp.synthesis_run_id)
+        if run:
+            denied = require_product_access(db, run.product_id)
+            if denied:
+                return denied
 
         return {
             "opportunity_id": opp.id,
@@ -104,6 +118,10 @@ def synthesis_run(product_id: int) -> dict:
     from app.queue.tasks import opportunity_synthesis_task
 
     with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
         # Create SynthesisRun record first (same pattern as API)
         synthesis_run = SynthesisRun(
             product_id=product_id,
@@ -142,6 +160,10 @@ def synthesis_get_sources(product_id: int) -> dict:
     from sqlalchemy import func
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         landscape = db.query(LandscapeOpportunityReport).filter(
             LandscapeOpportunityReport.product_id == product_id
         ).first()

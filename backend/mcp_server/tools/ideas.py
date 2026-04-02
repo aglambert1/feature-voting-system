@@ -2,7 +2,10 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.permissions import require_product_access
 from mcp_server.user_context import get_mcp_user_id
+
+from app.models.competitor_intelligence import ProductPermissionLevel
 
 
 @mcp.tool()
@@ -12,6 +15,10 @@ def ideas_search(product_id: int, query: str, search_type: str = "ideas") -> dic
     from app.services.vector_service import VectorService
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         query_emb = generate_embedding(query, input_type="query")
 
         if search_type == "jobs":
@@ -72,6 +79,10 @@ def ideas_get_top_voted(product_id: int, limit: int = 10) -> dict:
     from sqlalchemy import func
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         results = (
             db.query(
                 Idea,
@@ -114,6 +125,10 @@ def ideas_get_status(idea_id: int) -> dict:
         if not idea:
             return {"error": f"Idea {idea_id} not found"}
 
+        denied = require_product_access(db, idea.product_id)
+        if denied:
+            return denied
+
         vote_count = db.query(func.count(Vote.id)).filter(
             Vote.idea_id == idea_id
         ).scalar() or 0
@@ -145,6 +160,10 @@ def ideas_submit(product_id: int, title: str, description: str) -> dict:
     from app.queue.tasks import submit_and_triage_idea_task
 
     with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
         queue_service = QueueService(db)
         job = queue_service.create_job(
             job_type=JobType.IDEA_TRIAGE,
@@ -185,6 +204,10 @@ def ideas_vote(idea_id: int) -> dict:
         idea = db.query(Idea).get(idea_id)
         if not idea:
             return {"error": f"Idea {idea_id} not found"}
+
+        denied = require_product_access(db, idea.product_id)
+        if denied:
+            return denied
 
         # Use authenticated user_id (HTTP) or 0 (stdio)
         mcp_user_id = get_mcp_user_id()
@@ -236,6 +259,10 @@ def ideas_review(idea_id: int, action: str, notes: str = "") -> dict:
         if not idea:
             return {"error": f"Idea {idea_id} not found"}
 
+        denied = require_product_access(db, idea.product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
         old_status = idea.status
 
         if action == "approve":
@@ -278,6 +305,10 @@ def ideas_get_by_category(product_id: int) -> dict:
     from sqlalchemy import func
 
     with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
         results = (
             db.query(
                 Idea.category,

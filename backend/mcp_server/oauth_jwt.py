@@ -51,6 +51,26 @@ def mint_access_token(
     return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 
 
+def verify_access_token_claims(token: str) -> dict:
+    """Decode JWT payload and return the full claims dict.
+
+    Returns empty dict if the token is invalid or not an MCP token.
+    Used by user_context.py to extract user_id from the token.
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+            options={"verify_exp": True},
+        )
+        if payload.get("iss") != TOKEN_ISSUER:
+            return {}
+        return payload
+    except JWTError:
+        return {}
+
+
 def verify_access_token(token: str) -> Optional[AccessToken]:
     """Decode and verify a JWT access token.
 

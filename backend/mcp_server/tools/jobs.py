@@ -2,6 +2,7 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.permissions import require_product_access
 
 
 @mcp.tool()
@@ -15,6 +16,12 @@ def job_get_status(job_uuid: str) -> dict:
 
         if not job:
             return {"error": f"Job {job_uuid} not found"}
+
+        # Permission check if job is tied to a product
+        if job.product_id:
+            denied = require_product_access(db, job.product_id)
+            if denied:
+                return denied
 
         result = {
             "job_uuid": job.job_uuid,
