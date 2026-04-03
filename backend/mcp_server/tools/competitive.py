@@ -103,7 +103,7 @@ def ci_get_landscape(product_id: int) -> dict:
         ).first()
 
         if not report:
-            return {"error": "No landscape analysis available. Run ci_run_analysis first."}
+            return {"error": "No landscape analysis available. Run ci_run_competitor_audit for at least one competitor, then ci_run_analysis."}
 
         return {
             "product_id": product_id,
@@ -246,6 +246,8 @@ def ci_add_competitor(product_id: int, competitor_name: str, competitor_url: str
 def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
     """Discover competitors automatically using AI analysis of the product. Returns a job ID.
 
+    Poll with job_get_status until complete. The completed job's output_data includes competitor_names — use each name to call ci_run_competitor_audit.
+
     Args:
         product_id: The product to discover competitors for.
         max_competitors: Maximum number of competitors to discover (1-20, default 5).
@@ -284,13 +286,15 @@ def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
             "job_uuid": job.job_uuid,
             "max_competitors": max_competitors,
             "status": "queued",
-            "message": f"Competitor discovery queued (max {max_competitors}). Use job_get_status to check progress.",
+            "message": f"Competitor discovery queued (max {max_competitors}). Poll with job_get_status until complete. "
+                       "The completed job's output_data.competitor_names lists discovered names — "
+                       "run ci_run_competitor_audit for each name.",
         }
 
 
 @mcp.tool()
 def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
-    """Trigger a functional audit for a single competitor. Returns a job ID to check status with job_get_status."""
+    """Trigger a functional audit for a single competitor. Returns a job ID — poll with job_get_status until complete. After all competitor audits finish, run ci_run_analysis for landscape synthesis."""
     from app.models.competitor_intelligence import ProductCompetitor
     from app.models.queue import JobType
     from app.services.queue_service import QueueService
@@ -336,7 +340,8 @@ def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
             "job_uuid": job.job_uuid,
             "competitor_name": competitor.competitor_name,
             "status": "queued",
-            "message": f"Functional audit for {competitor.competitor_name} queued. Use job_get_status to check progress.",
+            "message": f"Functional audit for {competitor.competitor_name} queued. Poll with job_get_status until complete. "
+                       "After all audits finish, run ci_run_analysis for landscape synthesis.",
         }
 
 
@@ -377,7 +382,7 @@ def ci_set_deep_analysis(product_id: int, competitor_name: str, enabled: bool = 
 
 @mcp.tool()
 def ci_run_analysis(product_id: int) -> dict:
-    """Trigger a landscape synthesis across all competitors. Returns a job ID to check status with job_get_status."""
+    """Trigger a landscape synthesis across all audited competitors. Returns a job ID — poll with job_get_status until complete. Requires at least one completed ci_run_competitor_audit."""
     from app.models.queue import JobType
     from app.models.competitive_reports import CompetitorFunctionalReport
     from app.services.queue_service import QueueService
@@ -395,7 +400,8 @@ def ci_run_analysis(product_id: int) -> dict:
         ).count()
         if report_count == 0:
             return {
-                "error": "No functional reports found. Run ci_run_competitor_audit for at least one competitor first.",
+                "error": "No functional reports found. Use ci_get_competitor_list to see competitors, "
+                         "then run ci_run_competitor_audit for at least one competitor first.",
             }
 
         conflict = require_no_active_job(db, product_id, JobType.LANDSCAPE_SYNTHESIS, "Landscape synthesis")

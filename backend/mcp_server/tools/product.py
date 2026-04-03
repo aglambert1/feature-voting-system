@@ -503,7 +503,14 @@ def product_get_jobs(product_id: int, limit: int = 10) -> dict:
 
 @mcp.tool()
 def product_full_analysis(product_id: int) -> dict:
-    """Start a full analysis workflow by queuing a product analysis. After it completes, follow up with ci_run_discovery, then ci_run_competitor_audit for each competitor, then ci_run_analysis for landscape synthesis.
+    """Start a full analysis workflow by queuing a product analysis (step 1 of 4).
+
+    After this job completes, follow these steps in order:
+    1. Run ci_run_discovery to discover competitors (poll with job_get_status until complete — output_data includes competitor_names).
+    2. Run ci_run_competitor_audit for EACH competitor name returned by discovery.
+    3. After all audits complete, run ci_run_analysis for landscape synthesis.
+
+    You can also call ci_get_competitor_list at any point to see all competitors and their analysis status.
 
     Args:
         product_id: The product to analyze. Must have a detailed description (50+ characters).
@@ -551,9 +558,10 @@ def product_full_analysis(product_id: int) -> dict:
             "job_id": job.id,
             "job_uuid": job.job_uuid,
             "status": "queued",
-            "message": "Product analysis queued (step 1 of 4). After this completes, run: "
-                       "ci_run_discovery → ci_run_competitor_audit (for each) → ci_run_analysis. "
-                       "Use job_get_status to check progress.",
+            "message": "Product analysis queued (step 1 of 4). Poll with job_get_status until complete, then: "
+                       "(2) ci_run_discovery → poll until complete → output_data.competitor_names lists discovered names → "
+                       "(3) ci_run_competitor_audit for EACH competitor name → "
+                       "(4) ci_run_analysis for landscape synthesis.",
         }
 
 
