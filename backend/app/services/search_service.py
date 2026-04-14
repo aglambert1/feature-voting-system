@@ -7,6 +7,7 @@ structured JSON results.
 """
 
 import logging
+import time
 from typing import Dict, List, Any
 
 import requests
@@ -22,12 +23,15 @@ class SearchService:
 
     Provides a clean interface for agents to search the web with error
     handling and graceful degradation on rate limits or outages.
+    Enforces 1 req/sec rate limit for Brave free tier.
     """
 
     BRAVE_API_URL = "https://api.search.brave.com/res/v1/web/search"
+    MIN_REQUEST_INTERVAL = 1.1  # seconds between requests (Brave free tier: 1/sec)
 
     def __init__(self):
         """Initialize search service."""
+        self._last_request_time = 0.0
         self.search_enabled = (
             settings.enable_web_search
             and settings.brave_api_key
@@ -50,6 +54,12 @@ class SearchService:
         """
         if not self.search_enabled:
             return []
+
+        # Throttle to stay within Brave free tier rate limit
+        elapsed = time.time() - self._last_request_time
+        if elapsed < self.MIN_REQUEST_INTERVAL:
+            time.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
+        self._last_request_time = time.time()
 
         try:
             resp = requests.get(
