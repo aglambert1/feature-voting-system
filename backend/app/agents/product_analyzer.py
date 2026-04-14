@@ -6,9 +6,9 @@ for competitive analysis. When web search is enabled (default), it supplements
 user-provided data with web research to build a comprehensive product profile.
 """
 
-from typing import Dict, Any, Optional, Type, List
+from typing import Any, Dict, Optional, Type, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.agents.base_agent import BaseAgent
 from app.services.search_service import get_search_service
@@ -40,6 +40,14 @@ class ProductAnalysisOutput(BaseModel):
         max_length=200
     )
     target_users: str = Field(..., description="Target users/customers description")
+
+    @field_validator("target_users", mode="before")
+    @classmethod
+    def coerce_target_users(cls, v):
+        """Accept string or list — join list into a single string."""
+        if isinstance(v, list):
+            return "; ".join(str(item) for item in v)
+        return v
     value_propositions: list[str] = Field(
         ...,
         description="Unique value propositions",
