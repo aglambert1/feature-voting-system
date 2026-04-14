@@ -88,13 +88,15 @@ def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
         queue_service.update_progress(job_id, 20.0, "Initializing product analyzer...")
 
         # Create LLM service and agent
+        web_research_enabled = input_data.get('web_research_enabled', True)
         llm_service = LLMService()
         agent = ProductAnalyzerAgent(
             db=db,
             llm_service=llm_service,
             product_id=product_id,
             user_id=user_id,
-            job_id=job.job_uuid
+            job_id=job.job_uuid,
+            web_research_enabled=web_research_enabled,
         )
 
         # Build input for agent
