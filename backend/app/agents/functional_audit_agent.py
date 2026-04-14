@@ -8,7 +8,7 @@ The agent uses an external prompt template (Competitor_Functional_Audit_Prompt.m
 for flexibility in production environments.
 """
 
-from typing import Dict, Any, Type
+from typing import Dict, Any, Type, List
 
 from pydantic import BaseModel
 
@@ -16,6 +16,7 @@ from app.agents.base_agent import BaseAgent
 from app.schemas.competitive_reports import FunctionalAuditOutput
 from app.services.prompt_loader import get_prompt_loader
 from app.services.html_cleaner import get_html_cleaner
+from app.services.search_service import get_search_service
 
 
 class CompetitorFunctionalAuditAgent(BaseAgent):
@@ -28,17 +29,51 @@ class CompetitorFunctionalAuditAgent(BaseAgent):
     - Deep-dive on gaps
     - Technical constraints
 
+    When web search is available, the agent can research the competitor
+    directly — searching for features, pricing, integrations, and reviews.
+
     Usage:
         agent = CompetitorFunctionalAuditAgent(db=db, llm_service=llm_service)
         result = agent.execute({
             'competitor_name': 'Acme Corp',
             'competitor_url': 'https://acme.com',
             'product_context': {...},  # Our product info
-            'web_search_results': [...]  # Search results about competitor
         })
     """
 
     PROMPT_FILENAME = "Competitor_Functional_Audit_Prompt.md"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.search_service = get_search_service()
+
+    def get_tools(self) -> List[Dict[str, Any]]:
+        """Provide web search tool if available."""
+        if self.search_service.is_available():
+            return [self.search_service.get_tool_definition()]
+        return []
+
+    def execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> Any:
+        """Execute web search tool."""
+        if tool_name == "web_search":
+            query = tool_input.get("query", "")
+            max_results = tool_input.get("max_results", 10)
+
+            results = self.search_service.search(query, max_results)
+
+            if not results:
+                return "No search results found. Continue with available information."
+
+            formatted = []
+            for i, result in enumerate(results, 1):
+                formatted.append(
+                    f"{i}. **{result.get('title', 'Untitled')}**\n"
+                    f"   URL: {result.get('url', 'N/A')}\n"
+                    f"   {result.get('snippet', 'No description available')}"
+                )
+            return "\n\n".join(formatted)
+        else:
+            raise ValueError(f"Unknown tool: {tool_name}")
 
     def get_stage(self) -> str:
         """Return the pipeline stage for this agent."""
@@ -55,45 +90,63 @@ class CompetitorFunctionalAuditAgent(BaseAgent):
         The role and task context come from the external prompt template.
         We append JSON formatting instructions here.
         """
-        return """You are a Technical Product Analyst specializing in B2B SaaS functional decomposition.
+        has_search = self.search_service.is_available()
+
+        search_section = ""
+        if has_search:
+            search_section = """
+## Research Strategy
+
+You have access to a web_search tool. Use it to gather comprehensive, current information:
+1. Search "[competitor] features" for official feature lists
+2. Search "[competitor] pricing plans" for pricing model and tier details
+3. Search "[competitor] integrations" for ecosystem/connectivity
+4. Search "[competitor] vs [our product]" for direct comparison perspectives
+5. Search "[competitor] reviews G2" for real user feedback on capabilities
+
+Make 3-5 targeted searches to supplement any pre-provided data. Cross-reference
+web results with provided evidence for accuracy.
+"""
+
+        return f"""You are a Technical Product Analyst specializing in B2B SaaS functional decomposition.
 
 Your task is to conduct a rigorous competitive and functional audit of a competitor product.
 Move past marketing language and identify specific "how-it-works" capabilities.
-
+{search_section}
 ## Output Format
 
 You MUST respond with a valid JSON object matching this exact structure:
 
 ```json
-{
-  "competitor_context": {
+{{
+  "competitor_context": {{
     "positioning": "Their hero message and self-description",
     "core_differentiation": "What makes them unique",
     "target_customer": "Their ideal customer profile",
     "key_features": ["Feature 1", "Feature 2", "Feature 3", "Feature 4", "Feature 5"]
-  },
+  }},
   "functional_comparison": [
-    {
+    {{
       "feature_category": "Category name",
       "competitor_feature_name": "Feature name",
       "functional_description": "What it actually does",
       "mapping_status": "Gap"
-    }
+    }}
   ],
   "gaps_deep_dive": [
-    {
+    {{
       "feature_name": "Feature name",
       "user_problem": "Pain point this solves",
       "evidence": "Quote or description proving value"
-    }
+    }}
   ],
-  "technical_constraints": {
+  "technical_constraints": {{
     "integrations": ["Integration 1", "Integration 2"],
     "api_capabilities": "API description or null",
     "platform_requirements": "Platform requirements or null",
     "additional_notes": "Other notes or null"
-  }
-}
+  }}
+}}
 ```
 
 ## Mapping Status Definitions
@@ -105,12 +158,13 @@ You MUST respond with a valid JSON object matching this exact structure:
 
 ## Important Guidelines
 
-1. Identify 8-15 key features (prioritize quality over quantity)
-2. Be specific but concise - describe functional capabilities in 1-2 sentences
-3. Focus on Gaps and Differentiators - these are most valuable
-4. Keep descriptions brief - avoid lengthy explanations
-5. Output ONLY valid JSON - no markdown code blocks, no explanatory text
-6. Ensure all strings are properly escaped and the JSON is complete"""
+1. Identify 15-25 features for comprehensive coverage (not just 8-15)
+2. Use standard categories: Core Functionality, UX/UI, Integrations, Security/Compliance, AI/Automation, Reporting/Analytics, Administration, Mobile, Collaboration
+3. Be specific: "AI-powered receipt scanning with OCR" not just "AI features"
+4. Focus on Gaps and Differentiators — these are most valuable for product strategy
+5. Include integration ecosystem in technical_constraints
+6. Output ONLY valid JSON — no markdown code blocks, no explanatory text
+7. Ensure all strings are properly escaped and the JSON is complete"""
 
     def build_user_prompt(self, input_data: Dict[str, Any]) -> str:
         """
@@ -147,6 +201,19 @@ You MUST respond with a valid JSON object matching this exact structure:
         except FileNotFoundError:
             task_context = ""
 
+        # Add search instructions if available
+        search_instructions = ""
+        if self.search_service.is_available():
+            search_instructions = f"""
+## Web Research Instructions
+Use the web_search tool to gather additional information about {competitor_name}. Suggested searches:
+1. "{competitor_name} features" — official feature list
+2. "{competitor_name} pricing" — pricing tiers and plans
+3. "{competitor_name} integrations" — ecosystem connections
+4. "{competitor_name} reviews" — user perspectives
+Cross-reference web results with any pre-provided data below.
+"""
+
         prompt = f"""# Competitor Analysis Request
 
 ## Competitor Information
@@ -155,7 +222,7 @@ You MUST respond with a valid JSON object matching this exact structure:
 
 ## Our Product Context
 {product_info}
-
+{search_instructions}
 ## Competitor Source Data
 {search_content}
 
@@ -167,6 +234,7 @@ You MUST respond with a valid JSON object matching this exact structure:
 
 Analyze {competitor_name} and produce a comprehensive functional audit report.
 Focus on identifying their actual capabilities, not marketing claims.
+Aim for 15-25 features across all categories for thorough coverage.
 For each feature gap identified, provide evidence of its value.
 
 Respond with ONLY a valid JSON object following the schema in the system prompt."""

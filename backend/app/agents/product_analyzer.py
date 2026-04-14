@@ -2,13 +2,16 @@
 Product Analyzer Agent for competitive intelligence.
 
 This agent analyzes product descriptions and extracts structured information
-for competitive analysis, including features, target users, and search keywords.
+for competitive analysis. When web search is enabled (default), it supplements
+user-provided data with web research to build a comprehensive product profile.
 """
 
-from typing import Dict, Any, Optional, Type
+from typing import Dict, Any, Optional, Type, List
+
 from pydantic import BaseModel, Field
 
 from app.agents.base_agent import BaseAgent
+from app.services.search_service import get_search_service
 
 
 class DetailedProductFeature(BaseModel):
@@ -17,7 +20,7 @@ class DetailedProductFeature(BaseModel):
     description: str = Field(..., description="Feature description (1-2 sentences)")
     category: str = Field(..., description="Feature category")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Extraction confidence")
-    source_reference: str = Field(None, description="Where this feature was found in the source")
+    source_reference: str = Field(None, description="Where this feature was found")
 
 
 class ProductAnalysisOutput(BaseModel):
@@ -32,9 +35,9 @@ class ProductAnalysisOutput(BaseModel):
     )
     detailed_features: list[DetailedProductFeature] = Field(
         ...,
-        description="All detailed tactical features extracted from the product",
+        description="All detailed tactical features extracted from all sources",
         min_length=5,
-        max_length=200  # Allow comprehensive extraction
+        max_length=200
     )
     target_users: str = Field(..., description="Target users/customers description")
     value_propositions: list[str] = Field(
@@ -49,29 +52,107 @@ class ProductAnalysisOutput(BaseModel):
         min_length=3,
         max_length=10
     )
+    pricing_tiers: Optional[list[dict]] = Field(
+        None,
+        description="Pricing tiers if discoverable (name, price, key features)"
+    )
+    integrations: Optional[list[str]] = Field(
+        None,
+        description="Known integrations/ecosystem connections"
+    )
+    data_sources: list[str] = Field(
+        default_factory=list,
+        description="Sources used for this analysis (e.g. 'provided_description', 'web:url')"
+    )
 
 
 class ProductAnalyzerAgent(BaseAgent):
     """
     Analyzes product descriptions and structures them for competitive analysis.
 
-    Handles input from:
-    - Text descriptions
-    - Uploaded documents (extracted text)
-    - URLs (webpage content)
+    When web_research_enabled=True (default), the agent uses web search to
+    supplement user-provided data — searching for features, pricing, integrations,
+    and reviews to build a comprehensive product profile.
 
-    Example:
-        agent = ProductAnalyzerAgent(db=db, llm_service=llm_service)
-        result = agent.execute({
-            'product_name': 'My CRM',
-            'product_description': 'A CRM for small businesses...',
-            'source_type': 'text'
-        })
+    When web_research_enabled=False, the agent only analyzes the provided text.
     """
 
+    def __init__(self, *args, web_research_enabled: bool = True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.search_service = get_search_service()
+        self.web_research_enabled = web_research_enabled
+
+    def get_tools(self) -> List[Dict[str, Any]]:
+        """Provide web search tool if enabled and available."""
+        if self.web_research_enabled and self.search_service.is_available():
+            return [self.search_service.get_tool_definition()]
+        return []
+
+    def execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> Any:
+        """Execute web search tool."""
+        if tool_name == "web_search":
+            query = tool_input.get("query", "")
+            max_results = tool_input.get("max_results", 10)
+
+            results = self.search_service.search(query, max_results)
+
+            if not results:
+                return "No search results found. Continue with available information."
+
+            formatted = []
+            for i, result in enumerate(results, 1):
+                formatted.append(
+                    f"{i}. **{result.get('title', 'Untitled')}**\n"
+                    f"   URL: {result.get('url', 'N/A')}\n"
+                    f"   {result.get('snippet', 'No description available')}"
+                )
+            return "\n\n".join(formatted)
+        else:
+            raise ValueError(f"Unknown tool: {tool_name}")
+
     def get_system_prompt(self) -> str:
-        """Define the agent's system prompt."""
-        return """You are a Product Analyzer agent specializing in competitive intelligence.
+        has_search = self.web_research_enabled and self.search_service.is_available()
+
+        if has_search:
+            return """You are a Product Intelligence agent specializing in B2B SaaS analysis.
+
+Your task is to build a comprehensive product profile using ALL available information.
+
+## Research Strategy
+1. ANALYZE the provided product description to understand the product's core purpose and identity.
+2. SEARCH for additional information to fill gaps and verify claims:
+   - Search "[product name] features" for official feature lists
+   - Search "[product name] pricing plans" for pricing tier information
+   - Search "[product name] integrations" for ecosystem/connectivity data
+   - Search "[product name] reviews G2" or "Capterra" for user perspectives on strengths/weaknesses
+   - Search "[product name] API documentation" for technical capabilities
+   - Search "[product name] vs" for competitive positioning context
+3. SYNTHESIZE all sources into a comprehensive, evidence-backed profile.
+
+## Source Attribution
+For each detailed feature, set source_reference to indicate provenance:
+- "provided" — directly from the user's input description
+- "web:[domain]" — discovered via web search (cite the source domain)
+- "knowledge" — from your training data (use lower confidence: 0.5-0.7)
+
+## Feature Extraction Guidelines
+- Extract 15-30 detailed features (aim for comprehensive coverage)
+- Use standard categories: Core Functionality, UX/UI, Integrations, Security/Compliance, AI/Automation, Reporting/Analytics, Administration, Mobile, Collaboration
+- Include pricing tiers if you find them (name, price range, key feature gates)
+- Include integrations list if discoverable
+- Set data_sources to list all sources consulted
+
+## Quality Standards
+- Be specific: "AI-powered receipt scanning with OCR" not just "AI features"
+- Move past marketing language to identify actual capabilities
+- Cross-reference web results with provided description for accuracy
+- If web search returns no useful results, rely on provided description + training knowledge
+- Never fabricate features — only include what you can verify from a source
+
+Always respond with valid JSON matching the specified schema.
+Do not include any markdown formatting or code blocks — just the raw JSON."""
+        else:
+            return """You are a Product Analyzer agent specializing in competitive intelligence.
 
 Your role is to analyze product descriptions and extract structured information that will be used to:
 1. Find competing products
@@ -79,120 +160,69 @@ Your role is to analyze product descriptions and extract structured information 
 3. Generate strategic insights
 
 You must be thorough but concise. Focus on aspects relevant to competitive analysis.
+Extract as many verifiable features as possible from the provided description.
+
+Set source_reference to "provided" for features from the description, or "knowledge" for features from your training data (use lower confidence for these).
 
 Always respond with valid JSON matching the specified schema.
-Do not include any markdown formatting or code blocks - just the raw JSON."""
+Do not include any markdown formatting or code blocks — just the raw JSON."""
 
     def build_user_prompt(self, input_data: Dict[str, Any]) -> str:
-        """Build the user prompt from input data."""
         product_name = input_data.get('product_name', '')
         product_description = input_data.get('product_description', '')
         source_type = input_data.get('source_type', 'text')
+        has_search = self.web_research_enabled and self.search_service.is_available()
 
-        prompt = f"""Analyze the following product information and extract structured data at TWO LEVELS OF DETAIL:
+        search_instructions = ""
+        if has_search:
+            search_instructions = f"""
+## Web Research Instructions
+Use the web_search tool to supplement the provided description. Suggested searches:
+1. "{product_name} features" — official feature list
+2. "{product_name} pricing" — pricing tiers and plans
+3. "{product_name} integrations" — ecosystem connections
+4. "{product_name} reviews" — user perspective on capabilities
+Make 3-5 targeted searches. Skip searches that seem unlikely to yield results for this product type.
+"""
+
+        prompt = f"""Analyze the following product and build a comprehensive profile.
 
 Product Name: {product_name if product_name else "(extract from description)"}
 Source Type: {source_type}
+
 Product Description:
 {product_description}
+{search_instructions}
+## Required Output (JSON)
 
-Extract and return the following information in JSON format:
+Return a JSON object with these fields:
 
-1. **product_name**: The product name (use provided name or extract from description)
-2. **product_category**: The industry/category (e.g., "CRM Software", "Project Management", "E-commerce Platform")
+1. **product_name**: The product name
+2. **product_category**: Industry/category (e.g., "Expense Management Software")
+3. **core_features**: 5-7 strategic high-level features that define this product
+4. **detailed_features**: 15-30 specific features, each with:
+   - name: 2-5 word feature name
+   - description: 1-2 sentence description of what it actually does
+   - category: One of: Core Functionality, UX/UI, Integrations, Security/Compliance, AI/Automation, Reporting/Analytics, Administration, Mobile, Collaboration
+   - confidence: 0.0-1.0 (higher for features directly from provided description or web sources)
+   - source_reference: "provided", "web:[domain]", or "knowledge"
+5. **target_users**: Who uses this product (roles, company sizes, industries)
+6. **value_propositions**: 2-4 unique competitive advantages
+7. **competitor_search_keywords**: 5-10 keywords for finding competing products
+8. **pricing_tiers**: If discoverable, list of {{"name": "...", "price": "...", "features": [...]}} — null if unknown
+9. **integrations**: List of known integrations — null if unknown
+10. **data_sources**: List of sources used (e.g., ["provided_description", "web:g2.com", "web:concur.com"])
 
-3. **core_features**: List 5-7 STRATEGIC, high-level features that DEFINE this product
-   - These should be the major capabilities that differentiate the product
-   - Think "what would you put on a homepage banner"
-   - Examples: "Contact management", "Sales pipeline", "Email integration"
+IMPORTANT:
+- Extract ALL verifiable features, not just a handful
+- Be specific about what each feature does, not just its name
+- Prioritize features from provided description and web sources over training knowledge
+- Return ONLY the JSON object, no additional text"""
 
-4. **detailed_features**: List ALL TACTICAL, specific features found in the product description
-   - These should be granular, verifiable capabilities
-   - Include EVERY feature you can identify from the description - there is no upper limit
-   - For each feature provide:
-     * name: Concise feature name (2-5 words)
-     * description: Clear description (1-2 sentences)
-     * category: Logical category (e.g., "Core Functionality", "Integration", "Analytics", "User Management")
-     * confidence: 0.0-1.0 based on how clearly documented in the source
-     * source_reference: Brief note about where found (e.g., "mentioned in features section", "from pricing tiers")
-
-5. **target_users**: Describe who uses this product (roles, company sizes, industries)
-
-6. **value_propositions**: List 2-4 unique value propositions or competitive advantages
-
-7. **competitor_search_keywords**: List 5-10 keywords/phrases to use when searching for competing products
-
-IMPORTANT DISTINCTION:
-- **core_features** = High-level strategic capabilities (5-7 items)
-- **detailed_features** = Comprehensive list of ALL identifiable features (no limit)
-- The detailed_features list should include the core_features plus ALL specific capabilities you can find
-
-Guidelines:
-- Be specific and concrete
-- Focus on differentiating characteristics
-- Use industry-standard terminology
-- Keywords should be search-friendly (2-4 words each)
-- Extract ALL features you can verify from the description - there is no upper limit
-- Do not skip features to stay within a target range
-- It's better to extract too many features than to miss real ones
-- Avoid marketing fluff, focus on substance
-
-Return ONLY the JSON object, no additional text.
-
-Example format:
-{{
-  "product_name": "Example CRM",
-  "product_category": "CRM Software",
-  "core_features": [
-    "Contact management",
-    "Sales pipeline tracking",
-    "Email integration",
-    "Reporting dashboard",
-    "Mobile app"
-  ],
-  "detailed_features": [
-    {{
-      "name": "Contact management",
-      "description": "Centralized database for storing and organizing customer contact information",
-      "category": "Core Functionality",
-      "confidence": 0.95,
-      "source_reference": "Main feature in description"
-    }},
-    {{
-      "name": "Custom fields",
-      "description": "Ability to add custom data fields to contact records",
-      "category": "Data Management",
-      "confidence": 0.85,
-      "source_reference": "Mentioned in features list"
-    }},
-    {{
-      "name": "Gmail integration",
-      "description": "Two-way sync with Gmail for email tracking",
-      "category": "Integration",
-      "confidence": 0.90,
-      "source_reference": "Integration section"
-    }}
-  ],
-  "target_users": "Small to medium-sized B2B companies with 10-100 employees",
-  "value_propositions": [
-    "Easy setup in under 5 minutes",
-    "Affordable pricing for startups"
-  ],
-  "competitor_search_keywords": [
-    "crm software",
-    "contact management",
-    "sales pipeline tool",
-    "customer relationship management",
-    "small business crm"
-  ]
-}}
-
-Note: The example above shows only 3 detailed_features for brevity. Real products typically have 20-100+ features. Extract ALL of them - do not limit yourself to a small number.
-"""
         return prompt
 
     def build_concise_user_prompt(self, input_data: Dict[str, Any]) -> Optional[str]:
-        """Build a concise prompt that limits output size for truncation recovery."""
+        """Build a concise prompt for truncation recovery (no web search)."""
         product_name = input_data.get('product_name', '')
         product_description = input_data.get('product_description', '')
         source_type = input_data.get('source_type', 'text')
@@ -200,10 +230,10 @@ Note: The example above shows only 3 detailed_features for brevity. Real product
         return f"""Analyze the following product and extract structured data.
 
 CRITICAL CONSTRAINT: A previous analysis was cut off because the response was too long.
-You MUST follow these HARD LIMITS exactly — exceeding them will cause a system failure:
+You MUST follow these HARD LIMITS exactly:
 
-1. detailed_features: EXACTLY 20 items. Not 21, not 30, not "up to 20". Exactly 20.
-2. Each description: MAXIMUM 10 words. Count them.
+1. detailed_features: EXACTLY 20 items. Not 21, not 30. Exactly 20.
+2. Each description: MAXIMUM 10 words.
 3. Each source_reference: MAXIMUM 4 words.
 4. No markdown, no explanatory text — raw JSON only.
 
@@ -217,18 +247,19 @@ Product Description:
 Return a JSON object with these fields:
 - product_name (string)
 - product_category (string)
-- core_features (list of 5-7 strings - high-level strategic features)
-- detailed_features (list of EXACTLY 20 objects, each with: name, description, category, confidence, source_reference)
+- core_features (list of 5-7 strings)
+- detailed_features (list of EXACTLY 20 objects: name, description, category, confidence, source_reference)
 - target_users (string, max 30 words)
 - value_propositions (list of 2-4 strings)
 - competitor_search_keywords (list of 5-10 strings)
+- pricing_tiers (null)
+- integrations (null)
+- data_sources (list of sources used)
 
 Return ONLY the JSON object."""
 
     def get_output_schema(self) -> Type[BaseModel]:
-        """Return the output schema."""
         return ProductAnalysisOutput
 
     def get_stage(self) -> str:
-        """Return the stage name."""
         return "product_analysis"

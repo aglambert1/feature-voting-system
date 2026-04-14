@@ -362,12 +362,13 @@ def product_get_analysis_history(product_id: int, limit: int = 10) -> dict:
 
 
 @mcp.tool()
-def product_run_analysis(product_id: int, source_url: str = "") -> dict:
-    """Queue an AI analysis of a product. Optionally provide a URL to fetch as source data. Returns a job ID.
+def product_run_analysis(product_id: int, source_url: str = "", web_research: bool = True) -> dict:
+    """Queue an AI analysis of a product. By default, supplements provided data with web research (searches for features, pricing, integrations, reviews). Set web_research=false to analyze only provided information.
 
     Args:
         product_id: The product to analyze.
         source_url: Optional URL to fetch content from for analysis (e.g. product homepage).
+        web_research: Search the web for additional product information (default true). Set false to limit analysis to provided data only.
     """
     from app.models.competitor_intelligence import CIProduct
     from app.models.queue import JobType
@@ -394,7 +395,7 @@ def product_run_analysis(product_id: int, source_url: str = "") -> dict:
                          "Either provide a source_url or update the product with a detailed description first.",
             }
 
-        input_data = {"product_id": product_id}
+        input_data = {"product_id": product_id, "web_research_enabled": web_research}
         source_type = "text"
         source_data = None
 
