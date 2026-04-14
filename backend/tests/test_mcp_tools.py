@@ -197,8 +197,22 @@ def _mock_session(db_session):
             p.stop()
 
 
+@contextmanager
 def _patch_user(user_id):
-    return patch("mcp_server.permissions.get_mcp_user_id", return_value=user_id)
+    """Patch get_mcp_user_id everywhere it's imported."""
+    patches = [
+        patch("mcp_server.permissions.get_mcp_user_id", return_value=user_id),
+        patch("mcp_server.tools.product.get_mcp_user_id", return_value=user_id),
+        patch("mcp_server.tools.ideas.get_mcp_user_id", return_value=user_id),
+        patch("mcp_server.user_context.get_mcp_user_id", return_value=user_id),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        yield
+    finally:
+        for p in patches:
+            p.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -405,5 +419,192 @@ class TestEvidenceAdd:
                 evidence_type="competitive_intel",
                 title="Test", content="Test content",
             )
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+# ===========================================================================
+# Phase 2: Product CRUD + PO Settings
+# ===========================================================================
+
+class TestProductCreate:
+    def test_creates_product(self, db_session, owner):
+        from mcp_server.tools.product import product_create
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_create("New Product", "A detailed description for testing", "Testing")
+            assert "error" not in result
+            assert result["product_id"] is not None
+            assert result["product_name"] == "New Product"
+
+    def test_rejects_duplicate_name(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_create
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_create("Product A", "A detailed description for testing")
+            assert "error" in result
+            assert "already exists" in result["error"]
+
+    def test_rejects_short_description(self, db_session, owner):
+        from mcp_server.tools.product import product_create
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_create("Test", "short")
+            assert "error" in result
+            assert "10 characters" in result["error"]
+
+
+class TestProductUpdate:
+    def test_owner_can_update(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_update
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_update(product_a.id, name="Renamed Product")
+            assert "error" not in result
+            assert result["product_name"] == "Renamed Product"
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.product import product_update
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = product_update(product_a.id, name="Nope")
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+class TestProductDelete:
+    def test_owner_can_delete(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_delete
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_delete(product_a.id)
+            assert "error" not in result
+            assert result["deleted"] is True
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.product import product_delete
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = product_delete(product_a.id)
+            assert "error" in result
+            assert "OWNER" in result["error"]
+
+
+class TestProductGetScoringWeights:
+    def test_viewer_can_read(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.product import product_get_scoring_weights
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = product_get_scoring_weights(product_a.id)
+            assert "error" not in result
+            assert "effective_weights" in result
+            assert "defaults" in result
+
+    def test_outsider_denied(self, db_session, product_a, outsider):
+        from mcp_server.tools.product import product_get_scoring_weights
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = product_get_scoring_weights(product_a.id)
+            assert "error" in result
+
+
+class TestProductGetAnalysisHistory:
+    def test_returns_empty_for_new_product(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_get_analysis_history
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_get_analysis_history(product_a.id)
+            assert "error" not in result
+            assert result["count"] == 0
+            assert result["history"] == []
+
+
+class TestProductGetJobs:
+    def test_returns_jobs(self, db_session, product_a, job, owner):
+        from mcp_server.tools.product import product_get_jobs
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_get_jobs(product_a.id)
+            assert "error" not in result
+            assert result["count"] >= 1
+            assert result["jobs"][0]["job_uuid"] == job.job_uuid
+
+
+class TestProductGetTriageSettings:
+    def test_returns_defaults(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_get_triage_settings
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_get_triage_settings(product_a.id)
+            assert "error" not in result
+            assert "auto_enabled" in result
+            assert "auto_threshold" in result
+
+
+class TestProductUpdateTriageSettings:
+    def test_owner_can_update(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_update_triage_settings
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_update_triage_settings(product_a.id, auto_enabled=True, auto_threshold=0.85)
+            assert "error" not in result
+            assert result["auto_enabled"] is True
+            assert result["auto_threshold"] == 0.85
+
+    def test_rejects_invalid_threshold(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_update_triage_settings
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_update_triage_settings(product_a.id, auto_threshold=1.5)
+            assert "error" in result
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.product import product_update_triage_settings
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = product_update_triage_settings(product_a.id, auto_enabled=True)
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+class TestProductGetAgentConfig:
+    def test_returns_not_configured(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_get_agent_config
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_get_agent_config(product_a.id)
+            assert "error" not in result
+            assert result["configured"] is False
+
+
+class TestProductUpdateAgentConfig:
+    def test_creates_and_updates(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_update_agent_config
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_update_agent_config(
+                product_a.id,
+                enabled=True,
+                product_analysis_mode="scheduled",
+                product_analysis_schedule="weekly",
+            )
+            assert "error" not in result
+            assert result["configured"] is True
+            assert result["product_analysis_mode"] == "scheduled"
+            assert result["product_analysis_schedule"] == "weekly"
+
+    def test_rejects_invalid_mode(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_update_agent_config
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_update_agent_config(product_a.id, product_analysis_mode="hourly")
+            assert "error" in result
+            assert "Invalid mode" in result["error"]
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.product import product_update_agent_config
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = product_update_agent_config(product_a.id, enabled=False)
             assert "error" in result
             assert "EDIT" in result["error"]

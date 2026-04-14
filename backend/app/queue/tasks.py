@@ -313,6 +313,7 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
         # Store discovered competitors
         competitors = result.get('competitors', [])
         competitor_ids = []
+        competitor_names = []  # Track all competitor names for output_data
         new_competitor_names = []  # Track newly discovered competitors for alerts
 
         # Build lookup indexes from existing competitors (in Python, DB-agnostic)
@@ -339,6 +340,7 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
                 existing.competitor_url = discovered_url or existing.competitor_url
                 existing.status = 'active'
                 competitor_ids.append(existing.id)
+                competitor_names.append(existing.competitor_name)
             else:
                 # Create new competitor
                 new_competitor = ProductCompetitor(
@@ -351,6 +353,7 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
                 db.add(new_competitor)
                 db.flush()
                 competitor_ids.append(new_competitor.id)
+                competitor_names.append(new_competitor.competitor_name)
                 new_competitor_names.append({
                     'id': new_competitor.id,
                     'name': new_competitor.competitor_name
@@ -384,7 +387,9 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
             'product_id': product_id,
             'competitors_discovered': len(competitors),
             'competitor_ids': competitor_ids,
+            'competitor_names': competitor_names,
             'research_summary': result.get('research_summary', ''),
+            'next_step': 'Run ci_run_competitor_audit for each competitor name, then ci_run_analysis for landscape synthesis.',
         }
 
         # Mark job as success

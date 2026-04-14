@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from app.models.competitor_intelligence import (
-    CIProduct, ProductAnalysisHistory, ProductPermissionLevel,
+    CIProduct, ProductAnalysisHistory, ProductPermission, ProductPermissionLevel,
     CompetitorAnalysisSession, SessionStage, ProductFeature
 )
 from app.models.user import User
@@ -94,6 +94,18 @@ class ProductService:
 
         try:
             self.db.add(product)
+            self.db.flush()
+
+            # Grant explicit OWNER permission to the creator
+            if created_by_user_id:
+                owner_permission = ProductPermission(
+                    product_id=product.id,
+                    user_id=created_by_user_id,
+                    permission_level=ProductPermissionLevel.OWNER,
+                    granted_by_user_id=created_by_user_id,
+                )
+                self.db.add(owner_permission)
+
             self.db.commit()
             self.db.refresh(product)
         except IntegrityError as e:

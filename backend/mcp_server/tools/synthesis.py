@@ -2,7 +2,7 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
-from mcp_server.permissions import require_product_access
+from mcp_server.permissions import require_product_access, require_no_active_job, resolve_user_id_for_job
 
 from app.models.competitor_intelligence import ProductPermissionLevel
 
@@ -114,6 +114,9 @@ def synthesis_run(product_id: int) -> dict:
     """Trigger a new opportunity synthesis combining competitive, customer, internal, and factbase evidence data. Returns job ID."""
     from app.models.queue import JobType
     from app.models.synthesis import SynthesisRun
+    from app.models.competitive_reports import LandscapeOpportunityReport
+    from app.models.idea import Idea
+    from app.models.internal_feedback import InternalFeedbackImport
     from app.services.queue_service import QueueService
     from app.queue.tasks import opportunity_synthesis_task
 
@@ -121,6 +124,28 @@ def synthesis_run(product_id: int) -> dict:
         denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
         if denied:
             return denied
+
+        # Need at least one data source
+        has_landscape = db.query(LandscapeOpportunityReport).filter(
+            LandscapeOpportunityReport.product_id == product_id
+        ).first() is not None
+        has_ideas = db.query(Idea).filter(
+            Idea.product_id == product_id, Idea.is_active == True
+        ).first() is not None
+        has_feedback = db.query(InternalFeedbackImport).filter(
+            InternalFeedbackImport.product_id == product_id,
+            InternalFeedbackImport.themes_extracted == True,
+        ).first() is not None
+
+        if not (has_landscape or has_ideas or has_feedback):
+            return {
+                "error": "No source data available for synthesis. "
+                         "Run competitive analysis, add customer ideas, or import internal feedback first.",
+            }
+
+        conflict = require_no_active_job(db, product_id, JobType.OPPORTUNITY_SYNTHESIS, "Opportunity synthesis")
+        if conflict:
+            return conflict
 
         # Create SynthesisRun record first (same pattern as API)
         synthesis_run = SynthesisRun(
@@ -135,6 +160,7 @@ def synthesis_run(product_id: int) -> dict:
             job_type=JobType.OPPORTUNITY_SYNTHESIS,
             input_data={"synthesis_run_id": synthesis_run.id},
             product_id=product_id,
+            user_id=resolve_user_id_for_job(db, product_id),
         )
 
         from mcp_server.db import dispatch_task

@@ -5,7 +5,7 @@ import logging
 
 from mcp_server import mcp
 from mcp_server.db import get_session
-from mcp_server.permissions import require_product_access
+from mcp_server.permissions import require_product_access, resolve_user_id_for_job
 from mcp_server.user_context import get_mcp_user_label
 
 from app.models.competitor_intelligence import ProductPermissionLevel
@@ -190,6 +190,7 @@ def internal_submit_feedback(
                 "support_tickets": tickets,
             },
             product_id=product_id,
+            user_id=resolve_user_id_for_job(db, product_id),
         )
 
         from mcp_server.db import dispatch_task

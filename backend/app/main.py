@@ -209,6 +209,7 @@ app.include_router(internal_feedback.router)  # Internal feedback import and the
 app.include_router(synthesis.router)  # Opportunity synthesis
 app.include_router(admin.router)  # Admin endpoints (cost tracking, etc.)
 app.include_router(invites.router)  # Product invite codes and redemption
+app.include_router(evidence.router)  # Evidence factbase CRUD
 app.include_router(api_keys.router)  # MCP API key management
 
 
