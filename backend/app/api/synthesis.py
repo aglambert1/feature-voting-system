@@ -617,11 +617,12 @@ async def create_idea_from_opportunity(
     idea = Idea(
         product_id=product_id,
         title=opportunity.opportunity_name,
-        description="\n".join(description_parts),
-        source_type=SourceType.COMPETITIVE_INTELLIGENCE,
+        what_description=opportunity.opportunity_summary or "",
+        why_description=opportunity.recommended_action or "",
+        use_case_description="\n".join(description_parts),
+        source_type=SourceType.COMPETITOR_AUTOMATED,
         submitter_id=current_user.id,
-        status=IdeaStatus.SUBMITTED,
-        vote_count=0
+        status=IdeaStatus.PENDING,
     )
     db.add(idea)
     db.commit()
