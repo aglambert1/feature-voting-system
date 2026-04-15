@@ -2796,6 +2796,17 @@ def opportunity_synthesis_task(self, job_id: int):
         two_way = 0
         single_source = 0
 
+        # Batch-generate JTBD embeddings (1 API call instead of N sequential)
+        jtbd_texts = [opp.jtbd_statement for opp in output.opportunities if opp.jtbd_statement]
+        jtbd_embeddings = {}
+        if jtbd_texts:
+            try:
+                from app.services.embedding_service import generate_embeddings_batch
+                embs = generate_embeddings_batch(jtbd_texts, input_type="document")
+                jtbd_embeddings = dict(zip(jtbd_texts, embs))
+            except Exception as jtbd_emb_err:
+                print(f"[opportunity_synthesis_task] Warning: Batch JTBD embedding failed: {jtbd_emb_err}")
+
         for opp in output.opportunities:
             db_opp = SynthesizedOpportunity(
                 synthesis_run_id=synthesis_run_id,
@@ -2814,13 +2825,9 @@ def opportunity_synthesis_task(self, job_id: int):
                 jtbd_statement=opp.jtbd_statement
             )
 
-            # Generate JTBD embedding for cross-opportunity clustering
-            if opp.jtbd_statement:
-                try:
-                    from app.services.embedding_service import generate_embedding
-                    db_opp.jtbd_embedding = generate_embedding(opp.jtbd_statement, input_type="document")
-                except Exception as jtbd_emb_err:
-                    print(f"[opportunity_synthesis_task] Warning: JTBD embedding failed: {jtbd_emb_err}")
+            # Use pre-computed JTBD embedding
+            if opp.jtbd_statement and opp.jtbd_statement in jtbd_embeddings:
+                db_opp.jtbd_embedding = jtbd_embeddings[opp.jtbd_statement]
 
             db.add(db_opp)
 
