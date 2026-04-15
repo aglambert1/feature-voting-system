@@ -127,6 +127,160 @@ def internal_get_signals(product_id: int, query: str) -> dict:
 
 
 @mcp.tool()
+def internal_list_imports(product_id: int) -> dict:
+    """List internal feedback imports for a product, showing processing status.
+
+    Args:
+        product_id: The product to list imports for.
+    """
+    from app.models.internal_feedback import InternalFeedbackImport
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
+        imports = db.query(InternalFeedbackImport).filter(
+            InternalFeedbackImport.product_id == product_id
+        ).order_by(InternalFeedbackImport.imported_at.desc()).all()
+
+        return {
+            "product_id": product_id,
+            "imports": [
+                {
+                    "import_id": imp.id,
+                    "filename": imp.filename,
+                    "source_type": imp.source_type,
+                    "status": imp.status,
+                    "deals_count": imp.deals_count,
+                    "tickets_count": imp.tickets_count,
+                    "themes_extracted": imp.themes_extracted,
+                    "imported_at": imp.imported_at.isoformat() if imp.imported_at else None,
+                    "processed_at": imp.processed_at.isoformat() if imp.processed_at else None,
+                }
+                for imp in imports
+            ],
+        }
+
+
+@mcp.tool()
+def internal_delete_theme(theme_id: int, theme_type: str) -> dict:
+    """Delete a win/loss or support theme.
+
+    Args:
+        theme_id: The ID of the theme to delete.
+        theme_type: One of "winloss" or "support".
+    """
+    from app.models.internal_feedback import WinLossTheme, SupportTheme
+
+    valid_types = {"winloss", "support"}
+    if theme_type not in valid_types:
+        return {"error": f"Invalid theme_type '{theme_type}'. Must be one of: {sorted(valid_types)}"}
+
+    with get_session() as db:
+        if theme_type == "winloss":
+            theme = db.query(WinLossTheme).get(theme_id)
+            if not theme:
+                return {"error": f"Win/loss theme {theme_id} not found"}
+            denied = require_product_access(db, theme.product_id, ProductPermissionLevel.EDIT)
+            if denied:
+                return denied
+            name = theme.theme_name
+            db.delete(theme)
+        else:
+            theme = db.query(SupportTheme).get(theme_id)
+            if not theme:
+                return {"error": f"Support theme {theme_id} not found"}
+            denied = require_product_access(db, theme.product_id, ProductPermissionLevel.EDIT)
+            if denied:
+                return denied
+            name = theme.theme_name
+            db.delete(theme)
+
+        db.flush()
+
+        return {
+            "theme_id": theme_id,
+            "theme_type": theme_type,
+            "theme_name": name,
+            "message": f"Theme '{name}' deleted.",
+        }
+
+
+@mcp.tool()
+def internal_get_activity_insights(product_id: int) -> dict:
+    """Get extracted activity insights from CRM data — deal win/loss patterns and support themes.
+
+    Args:
+        product_id: The product to get activity insights for.
+    """
+    from app.models.activity_insights import ActivityImport, DealActivityInsight, SupportActivityInsight
+    from sqlalchemy import desc
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
+        # Get most recent completed import
+        import_record = db.query(ActivityImport).filter(
+            ActivityImport.product_id == product_id,
+            ActivityImport.status == "completed",
+        ).order_by(desc(ActivityImport.imported_at)).first()
+
+        if not import_record:
+            return {
+                "product_id": product_id,
+                "has_insights": False,
+                "message": "No completed activity imports found. Use internal_submit_feedback or upload CRM data via the web UI.",
+            }
+
+        deal_insights = db.query(DealActivityInsight).filter(
+            DealActivityInsight.import_id == import_record.id
+        ).all()
+
+        support_insights = db.query(SupportActivityInsight).filter(
+            SupportActivityInsight.import_id == import_record.id
+        ).all()
+
+        return {
+            "product_id": product_id,
+            "has_insights": True,
+            "import_id": import_record.id,
+            "analysis_summary": import_record.analysis_summary,
+            "top_loss_themes": import_record.top_loss_themes or [],
+            "top_win_themes": import_record.top_win_themes or [],
+            "deal_insights": [
+                {
+                    "id": i.id,
+                    "deal_name": i.deal_name,
+                    "deal_outcome": i.deal_outcome,
+                    "deal_value": i.deal_value,
+                    "competitor_mentioned": i.competitor_mentioned,
+                    "theme_name": i.theme_name,
+                    "category": i.category,
+                    "sentiment": i.sentiment,
+                    "urgency_level": i.urgency_level,
+                    "activity_count": i.activity_count,
+                    "feature_keywords": i.feature_keywords or [],
+                }
+                for i in deal_insights
+            ],
+            "support_insights": [
+                {
+                    "id": i.id,
+                    "theme_name": i.theme_name,
+                    "category": i.category,
+                    "ticket_count": i.ticket_count,
+                    "urgency_level": i.urgency_level,
+                    "feature_keywords": i.feature_keywords or [],
+                }
+                for i in support_insights
+            ],
+        }
+
+
+@mcp.tool()
 def internal_submit_feedback(
     product_id: int,
     deals_json: str = "[]",

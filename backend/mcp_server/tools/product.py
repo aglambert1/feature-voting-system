@@ -13,7 +13,7 @@ from mcp_server.permissions import (
 )
 from mcp_server.user_context import get_mcp_user_id
 
-from app.models.competitor_intelligence import ProductPermissionLevel
+from app.models.competitor_intelligence import ProductPermission, ProductPermissionLevel
 
 
 @mcp.tool()
@@ -779,4 +779,112 @@ def product_update_agent_config(
             "deep_analysis_schedule": config.deep_analysis_schedule,
             "intensity_idea_threshold": config.intensity_idea_threshold,
             "message": "Agent config updated.",
+        }
+
+
+@mcp.tool()
+def product_create_invite(product_id: int, max_uses: int = 0) -> dict:
+    """Create an invite code for a product so others can join. Returns the invite code.
+
+    Args:
+        product_id: The product to create an invite for.
+        max_uses: Maximum number of times this code can be redeemed (0 = unlimited).
+    """
+    from app.models.product_invite import ProductInviteCode
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.OWNER)
+        if denied:
+            return denied
+
+        invite = ProductInviteCode(
+            product_id=product_id,
+            code=ProductInviteCode.generate_code(),
+            created_by_user_id=resolve_user_id_for_job(db, product_id),
+            max_uses=max_uses if max_uses > 0 else None,
+            permission_level=ProductPermissionLevel.VIEW,
+        )
+        db.add(invite)
+        db.flush()
+
+        return {
+            "invite_id": invite.id,
+            "product_id": product_id,
+            "code": invite.code,
+            "invite_url": f"/join/{invite.code}",
+            "max_uses": invite.max_uses,
+            "permission_level": invite.permission_level.value,
+            "message": f"Invite code created: {invite.code}",
+        }
+
+
+@mcp.tool()
+def product_list_invites(product_id: int) -> dict:
+    """List all invite codes for a product with usage stats.
+
+    Args:
+        product_id: The product to list invites for.
+    """
+    from app.models.product_invite import ProductInviteCode
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.OWNER)
+        if denied:
+            return denied
+
+        codes = db.query(ProductInviteCode).filter(
+            ProductInviteCode.product_id == product_id
+        ).order_by(ProductInviteCode.created_at.desc()).all()
+
+        return {
+            "product_id": product_id,
+            "invites": [
+                {
+                    "invite_id": c.id,
+                    "code": c.code,
+                    "invite_url": f"/join/{c.code}",
+                    "max_uses": c.max_uses,
+                    "current_uses": c.current_uses,
+                    "permission_level": c.permission_level.value,
+                    "is_active": c.is_active,
+                    "expires_at": c.expires_at.isoformat() if c.expires_at else None,
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                }
+                for c in codes
+            ],
+        }
+
+
+@mcp.tool()
+def product_list_members(product_id: int) -> dict:
+    """List all users with access to a product and their permission levels.
+
+    Args:
+        product_id: The product to list members for.
+    """
+    from app.models.user import User
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.OWNER)
+        if denied:
+            return denied
+
+        permissions = db.query(ProductPermission, User).join(
+            User, ProductPermission.user_id == User.id
+        ).filter(
+            ProductPermission.product_id == product_id
+        ).all()
+
+        return {
+            "product_id": product_id,
+            "members": [
+                {
+                    "user_id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "permission_level": perm.permission_level.value,
+                    "granted_at": perm.granted_at.isoformat() if perm.granted_at else None,
+                }
+                for perm, user in permissions
+            ],
         }

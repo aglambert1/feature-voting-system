@@ -177,6 +177,98 @@ def synthesis_run(product_id: int) -> dict:
 
 
 @mcp.tool()
+def synthesis_list_runs(product_id: int, limit: int = 10) -> dict:
+    """List synthesis runs for a product, showing run history and status.
+
+    Args:
+        product_id: The product to list synthesis runs for.
+        limit: Maximum number of runs to return (default 10).
+    """
+    from app.models.synthesis import SynthesisRun
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
+        runs = (
+            db.query(SynthesisRun)
+            .filter(SynthesisRun.product_id == product_id)
+            .order_by(SynthesisRun.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+        return {
+            "product_id": product_id,
+            "runs": [
+                {
+                    "run_id": r.id,
+                    "status": r.status,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                    "analysis_summary": r.analysis_summary,
+                }
+                for r in runs
+            ],
+        }
+
+
+@mcp.tool()
+def synthesis_get_run(product_id: int, run_id: int) -> dict:
+    """Get a specific synthesis run with its opportunities.
+
+    Args:
+        product_id: The product the run belongs to.
+        run_id: The synthesis run ID.
+    """
+    from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
+        run = db.query(SynthesisRun).filter(
+            SynthesisRun.id == run_id,
+            SynthesisRun.product_id == product_id,
+        ).first()
+
+        if not run:
+            return {"error": f"Synthesis run {run_id} not found for product {product_id}"}
+
+        opportunities = (
+            db.query(SynthesizedOpportunity)
+            .filter(SynthesizedOpportunity.synthesis_run_id == run.id)
+            .order_by(SynthesizedOpportunity.priority_score.desc())
+            .all()
+        )
+
+        return {
+            "run_id": run.id,
+            "product_id": product_id,
+            "status": run.status,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "analysis_summary": run.analysis_summary,
+            "opportunities": [
+                {
+                    "opportunity_id": o.id,
+                    "name": o.opportunity_name,
+                    "summary": o.opportunity_summary,
+                    "priority_score": o.priority_score,
+                    "source_count": o.source_count,
+                    "sources": o.sources,
+                    "recommended_action": o.recommended_action,
+                    "jtbd_statement": o.jtbd_statement,
+                    "feature_keywords": o.feature_keywords,
+                }
+                for o in opportunities
+            ],
+        }
+
+
+@mcp.tool()
 def synthesis_get_sources(product_id: int) -> dict:
     """Check what data sources are available for synthesis and when they were last updated."""
     from app.models.competitive_reports import LandscapeOpportunityReport
