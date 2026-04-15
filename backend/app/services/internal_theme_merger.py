@@ -25,6 +25,7 @@ from app.models.activity_insights import (
     SupportActivityInsight
 )
 from app.services.embedding_service import generate_embedding as _generate_embedding
+from app.services.embedding_service import generate_embeddings_batch as _generate_embeddings_batch
 
 
 @dataclass
@@ -200,23 +201,28 @@ class InternalThemeMergerService:
         merged = []
         used_activity_ids = set()
 
+        # Batch-generate all embeddings upfront (2 API calls instead of O(n*m))
+        theme_texts = [
+            f"{t.theme_name} {' '.join(t.feature_keywords or [])}" for t in structured
+        ]
+        insight_texts = [
+            f"{i.theme_name} {' '.join(i.feature_keywords or [])}" for i in activity
+        ]
+
+        theme_embs = _generate_embeddings_batch(theme_texts) if theme_texts else []
+        insight_embs = _generate_embeddings_batch(insight_texts) if insight_texts else []
+
         # Process structured themes
-        for theme in structured:
-            # Generate embedding for matching
-            theme_text = f"{theme.theme_name} {' '.join(theme.feature_keywords or [])}"
-            theme_emb = self.generate_embedding(theme_text)
+        for idx, theme in enumerate(structured):
+            theme_emb = theme_embs[idx]
 
             # Find matching activity insights
             matching_activity = []
-            for insight in activity:
+            for j, insight in enumerate(activity):
                 if insight.id in used_activity_ids:
                     continue
 
-                # Generate embedding for activity insight
-                insight_text = f"{insight.theme_name} {' '.join(insight.feature_keywords or [])}"
-                insight_emb = self.generate_embedding(insight_text)
-
-                similarity = self.compute_similarity(theme_emb, insight_emb)
+                similarity = self.compute_similarity(theme_emb, insight_embs[j])
                 if similarity >= self.MERGE_THRESHOLD:
                     matching_activity.append((insight, similarity))
                     used_activity_ids.add(insight.id)
@@ -307,22 +313,28 @@ class InternalThemeMergerService:
         merged = []
         used_activity_ids = set()
 
+        # Batch-generate all embeddings upfront (2 API calls instead of O(n*m))
+        theme_texts = [
+            f"{t.theme_name} {' '.join(t.feature_keywords or [])}" for t in structured
+        ]
+        insight_texts = [
+            f"{i.theme_name} {' '.join(i.feature_keywords or [])}" for i in activity
+        ]
+
+        theme_embs = _generate_embeddings_batch(theme_texts) if theme_texts else []
+        insight_embs = _generate_embeddings_batch(insight_texts) if insight_texts else []
+
         # Process structured themes
-        for theme in structured:
-            # Generate embedding for matching
-            theme_text = f"{theme.theme_name} {' '.join(theme.feature_keywords or [])}"
-            theme_emb = self.generate_embedding(theme_text)
+        for idx, theme in enumerate(structured):
+            theme_emb = theme_embs[idx]
 
             # Find matching activity insights
             matching_activity = []
-            for insight in activity:
+            for j, insight in enumerate(activity):
                 if insight.id in used_activity_ids:
                     continue
 
-                insight_text = f"{insight.theme_name} {' '.join(insight.feature_keywords or [])}"
-                insight_emb = self.generate_embedding(insight_text)
-
-                similarity = self.compute_similarity(theme_emb, insight_emb)
+                similarity = self.compute_similarity(theme_emb, insight_embs[j])
                 if similarity >= self.MERGE_THRESHOLD:
                     matching_activity.append((insight, similarity))
                     used_activity_ids.add(insight.id)

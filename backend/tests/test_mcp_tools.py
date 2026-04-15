@@ -21,6 +21,11 @@ from app.models.competitor_intelligence import (
 from app.models.evidence import Evidence, EvidenceType
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.queue import QueueJob, JobType, JobStatus
+from app.models.idea_comment import IdeaComment
+from app.models.idea_status_history import IdeaStatusHistory
+from app.models.competitive_reports import CompetitorFunctionalReport, LandscapeOpportunityReport
+from app.models.pm_review import PMReviewQueue, ReviewQueueType, ReviewQueueStatus, ReviewQueuePriority
+from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
 from app.models.user import User, UserRole
 
 
@@ -187,6 +192,7 @@ def _mock_session(db_session):
         patch("mcp_server.tools.composite.get_session", fake_get_session),
         patch("mcp_server.tools.evidence.get_session", fake_get_session),
         patch("mcp_server.tools.jobs.get_session", fake_get_session),
+        patch("mcp_server.tools.pm_review.get_session", fake_get_session),
     ]
     for p in patches:
         p.start()
@@ -204,6 +210,7 @@ def _patch_user(user_id):
         patch("mcp_server.permissions.get_mcp_user_id", return_value=user_id),
         patch("mcp_server.tools.product.get_mcp_user_id", return_value=user_id),
         patch("mcp_server.tools.ideas.get_mcp_user_id", return_value=user_id),
+        patch("mcp_server.tools.pm_review.get_mcp_user_id", return_value=user_id),
         patch("mcp_server.user_context.get_mcp_user_id", return_value=user_id),
     ]
     for p in patches:
@@ -608,3 +615,594 @@ class TestProductUpdateAgentConfig:
             result = product_update_agent_config(product_a.id, enabled=False)
             assert "error" in result
             assert "EDIT" in result["error"]
+
+
+# ===========================================================================
+# Phase 3: Ideas + Unified Creation + Unified Review
+# ===========================================================================
+
+
+class TestIdeasList:
+    def test_lists_ideas(self, db_session, product_a, idea, owner):
+        from mcp_server.tools.ideas import ideas_list
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_list(product_a.id)
+            assert "error" not in result
+            assert result["count"] == 1
+            assert result["ideas"][0]["title"] == "Test Idea"
+
+    def test_filters_by_status(self, db_session, product_a, idea, owner):
+        from mcp_server.tools.ideas import ideas_list
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_list(product_a.id, status_filter="pending")
+            assert result["count"] == 0  # idea is ACCEPTED, not PENDING
+
+    def test_invalid_status_filter(self, db_session, product_a, owner):
+        from mcp_server.tools.ideas import ideas_list
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_list(product_a.id, status_filter="bogus")
+            assert "error" in result
+
+    def test_viewer_denied(self, db_session, product_a, outsider):
+        from mcp_server.tools.ideas import ideas_list
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = ideas_list(product_a.id)
+            assert "error" in result
+
+
+class TestIdeasCreate:
+    def test_manual_source_validation(self, db_session, product_a, owner):
+        from mcp_server.tools.ideas import ideas_create
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            # Missing title/description
+            result = ideas_create(product_a.id, source="manual")
+            assert "error" in result
+            assert "title and description" in result["error"]
+
+    def test_invalid_source(self, db_session, product_a, owner):
+        from mcp_server.tools.ideas import ideas_create
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_create(product_a.id, source="bogus")
+            assert "error" in result
+            assert "Invalid source" in result["error"]
+
+    def test_manual_queues_job(self, db_session, product_a, owner):
+        from mcp_server.tools.ideas import ideas_create
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("mcp_server.db.dispatch_task") as mock_dispatch:
+            mock_dispatch.return_value = MagicMock(id="fake-celery-id")
+            result = ideas_create(
+                product_a.id, source="manual",
+                title="New Idea", description="A great idea for testing",
+            )
+            assert "error" not in result
+            assert result["status"] == "queued"
+            assert result["job_uuid"] is not None
+            mock_dispatch.assert_called_once()
+
+    def test_competitor_gaps_requires_name(self, db_session, product_a, owner):
+        from mcp_server.tools.ideas import ideas_create
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_create(product_a.id, source="competitor_gaps")
+            assert "error" in result
+            assert "competitor_name" in result["error"]
+
+    def test_competitor_gaps_no_report(self, db_session, product_a, competitor, owner):
+        from mcp_server.tools.ideas import ideas_create
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_create(product_a.id, source="competitor_gaps", competitor_name="Rival")
+            assert "error" in result
+            assert "No functional report" in result["error"]
+
+    def test_competitor_gaps_creates_ideas(self, db_session, product_a, competitor, owner):
+        from mcp_server.tools.ideas import ideas_create
+
+        # Create a functional report with gaps
+        report = CompetitorFunctionalReport(
+            product_competitor_id=competitor.id,
+            product_id=product_a.id,
+            report_version=1,
+            gaps_deep_dive=[
+                {"feature_name": "AI Triage", "user_problem": "Manual work", "evidence": "Seen in demo"},
+                {"feature_name": "Dashboards", "user_problem": "No visibility", "evidence": "Blog post"},
+            ],
+        )
+        db_session.add(report)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("mcp_server.db.dispatch_task"):
+            result = ideas_create(product_a.id, source="competitor_gaps", competitor_name="Rival")
+            assert "error" not in result
+            assert result["ideas_created"] == 2
+            assert result["ideas_skipped"] == 0
+
+    def test_landscape_no_report(self, db_session, product_a, owner):
+        from mcp_server.tools.ideas import ideas_create
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_create(product_a.id, source="landscape")
+            assert "error" in result
+            assert "No landscape report" in result["error"]
+
+    def test_landscape_creates_ideas(self, db_session, product_a, owner):
+        from mcp_server.tools.ideas import ideas_create
+
+        report = LandscapeOpportunityReport(
+            product_id=product_a.id,
+            report_version=1,
+            feature_opportunities=[
+                {"feature_name": "Auto-triage", "summary": "AI triage", "user_value": "Save time", "market_context": "Common"},
+            ],
+        )
+        db_session.add(report)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("mcp_server.db.dispatch_task"):
+            result = ideas_create(product_a.id, source="landscape")
+            assert "error" not in result
+            assert result["ideas_created"] == 1
+
+    def test_synthesis_requires_opportunity_id(self, db_session, product_a, owner):
+        from mcp_server.tools.ideas import ideas_create
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_create(product_a.id, source="synthesis")
+            assert "error" in result
+            assert "opportunity_id" in result["error"]
+
+    def test_synthesis_creates_idea(self, db_session, product_a, owner):
+        from mcp_server.tools.ideas import ideas_create
+
+        run = SynthesisRun(product_id=product_a.id, status="completed")
+        db_session.add(run)
+        db_session.flush()
+
+        opp = SynthesizedOpportunity(
+            synthesis_run_id=run.id,
+            product_id=product_a.id,
+            opportunity_name="Better Dashboards",
+            opportunity_summary="Dashboards for monitoring",
+            priority_score=0.8,
+            source_count=3,
+        )
+        db_session.add(opp)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_create(product_a.id, source="synthesis", opportunity_id=opp.id)
+            assert "error" not in result
+            assert result["title"] == "Better Dashboards"
+            assert result["idea_id"] is not None
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.ideas import ideas_create
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ideas_create(product_a.id, source="manual", title="T", description="D")
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+class TestIdeasGetComments:
+    def test_returns_comments(self, db_session, idea, owner):
+        from mcp_server.tools.ideas import ideas_get_comments
+
+        c = IdeaComment(
+            idea_id=idea.id, user_id=owner.id,
+            comment_text="Looks good!", is_system_generated=False,
+        )
+        db_session.add(c)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_get_comments(idea.id)
+            assert "error" not in result
+            assert result["count"] == 1
+            assert result["comments"][0]["comment_text"] == "Looks good!"
+
+    def test_not_found(self, db_session, owner):
+        from mcp_server.tools.ideas import ideas_get_comments
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_get_comments(99999)
+            assert "error" in result
+
+
+class TestIdeasAddComment:
+    def test_adds_comment(self, db_session, idea, owner):
+        from mcp_server.tools.ideas import ideas_add_comment
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_add_comment(idea.id, "Nice idea")
+            assert "error" not in result
+            assert result["comment_text"] == "Nice idea"
+
+    def test_rejects_empty(self, db_session, idea, owner):
+        from mcp_server.tools.ideas import ideas_add_comment
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_add_comment(idea.id, "")
+            assert "error" in result
+
+
+class TestIdeasRespond:
+    def test_approve(self, db_session, idea, owner):
+        from mcp_server.tools.ideas import ideas_respond
+
+        # Set idea to PENDING first
+        idea.status = IdeaStatus.PENDING
+        idea.is_active = False
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_respond(idea.id, status="approved", comment="Ship it")
+            assert "error" not in result
+            assert result["new_status"] == "accepted"
+            assert result["is_active"] is True
+
+    def test_duplicate_transfers_votes(self, db_session, product_a, idea, owner):
+        from mcp_server.tools.ideas import ideas_respond
+        from app.models.vote import Vote
+
+        # Create a target idea
+        target = Idea(
+            title="Original", what_description="d", why_description="w",
+            use_case_description="u", product_id=product_a.id,
+            submitter_id=owner.id, source_type=SourceType.CUSTOMER_SUBMISSION,
+            status=IdeaStatus.ACCEPTED, is_active=True,
+        )
+        db_session.add(target)
+        db_session.flush()
+
+        # Add a vote on the duplicate
+        vote = Vote(idea_id=idea.id, user_id=owner.id, vote_value=1)
+        db_session.add(vote)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_respond(
+                idea.id, status="duplicate",
+                comment="Same as Original",
+                duplicate_of_idea_id=target.id,
+            )
+            assert "error" not in result
+            assert result["votes_transferred"] == 1
+            assert result["new_status"] == "duplicate"
+
+    def test_requires_comment(self, db_session, idea, owner):
+        from mcp_server.tools.ideas import ideas_respond
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_respond(idea.id, status="approved", comment="")
+            assert "error" in result
+
+    def test_viewer_denied(self, db_session, idea, viewer, viewer_access):
+        from mcp_server.tools.ideas import ideas_respond
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ideas_respond(idea.id, status="approved", comment="ok")
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+class TestReviewAction:
+    def test_review_idea_approve(self, db_session, idea, owner):
+        from mcp_server.tools.pm_review import review_action
+
+        idea.status = IdeaStatus.NEEDS_REVIEW
+        idea.is_active = False
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = review_action(idea.id, item_type="idea", action="approve", notes="LGTM")
+            assert "error" not in result
+            assert result["new_status"] == "accepted"
+            assert result["is_active"] is True
+
+    def test_review_idea_reject(self, db_session, idea, owner):
+        from mcp_server.tools.pm_review import review_action
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = review_action(idea.id, item_type="idea", action="reject", notes="Not relevant")
+            assert "error" not in result
+            assert result["new_status"] == "not_appropriate"
+            assert result["is_active"] is False
+
+    def test_review_idea_defer(self, db_session, idea, owner):
+        from mcp_server.tools.pm_review import review_action
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = review_action(idea.id, item_type="idea", action="defer")
+            assert "error" not in result
+            assert result["new_status"] == "needs_review"
+
+    def test_review_queue_item(self, db_session, product_a, idea, owner):
+        from mcp_server.tools.pm_review import review_action
+
+        queue_item = PMReviewQueue(
+            queue_type=ReviewQueueType.IDEA,
+            status=ReviewQueueStatus.PENDING,
+            priority=ReviewQueuePriority.NORMAL,
+            item_type="idea",
+            item_id=idea.id,
+            title=idea.title,
+            product_id=product_a.id,
+        )
+        db_session.add(queue_item)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = review_action(queue_item.id, item_type="queue_item", action="approve", notes="OK")
+            assert "error" not in result
+            assert result["status"] == "approved"
+            assert result["queue_type"] == "idea"
+
+    def test_invalid_item_type(self, db_session, owner):
+        from mcp_server.tools.pm_review import review_action
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = review_action(1, item_type="bogus", action="approve")
+            assert "error" in result
+
+    def test_invalid_action(self, db_session, owner):
+        from mcp_server.tools.pm_review import review_action
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = review_action(1, item_type="idea", action="bogus")
+            assert "error" in result
+
+    def test_viewer_denied_idea(self, db_session, idea, viewer, viewer_access):
+        from mcp_server.tools.pm_review import review_action
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = review_action(idea.id, item_type="idea", action="approve")
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# ci_get_competitor_details — section-based competitor data
+# ---------------------------------------------------------------------------
+
+class TestCiGetCompetitorDetails:
+    def _make_report(self, db_session, competitor, product_a):
+        from datetime import datetime
+        report = CompetitorFunctionalReport(
+            product_competitor_id=competitor.id,
+            product_id=product_a.id,
+            report_version=2,
+            competitor_context={
+                "positioning": "Enterprise collaboration",
+                "core_differentiation": "All-in-one platform",
+                "target_customer": "Mid-market teams",
+                "key_features": ["Dashboards", "Automations"],
+            },
+            functional_comparison=[
+                {
+                    "feature_category": "Analytics",
+                    "competitor_feature_name": "Custom Dashboards",
+                    "functional_description": "Drag-and-drop dashboard builder",
+                    "mapping_status": "Gap",
+                },
+            ],
+            gaps_deep_dive=[
+                {"feature_name": "Custom Dashboards", "user_problem": "No visibility", "evidence": "Demo"},
+            ],
+            technical_constraints={
+                "integrations": ["Slack", "Jira"],
+                "api_capabilities": "REST + GraphQL",
+                "platform_requirements": "Cloud only",
+                "additional_notes": "SOC2 compliant",
+            },
+            changes_from_previous={"added_features": ["Automations"]},
+            generated_at=datetime(2026, 4, 10, 12, 0, 0),
+        )
+        db_session.add(report)
+        db_session.commit()
+        return report
+
+    def test_invalid_section(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_details
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_details(product_a.id, "Rival", "bogus")
+            assert "error" in result
+            assert "Invalid section" in result["error"]
+
+    def test_features_section(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_details
+        self._make_report(db_session, competitor, product_a)
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_details(product_a.id, "Rival", "features")
+            assert "error" not in result
+            assert len(result["functional_comparison"]) == 1
+            assert result["functional_comparison"][0]["mapping_status"] == "Gap"
+            assert len(result["gaps_deep_dive"]) == 1
+
+    def test_positioning_section(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_details
+        self._make_report(db_session, competitor, product_a)
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_details(product_a.id, "Rival", "positioning")
+            assert "error" not in result
+            assert result["competitor_context"]["positioning"] == "Enterprise collaboration"
+
+    def test_pricing_section(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_details
+        self._make_report(db_session, competitor, product_a)
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_details(product_a.id, "Rival", "pricing")
+            assert "error" not in result
+            assert "REST + GraphQL" in result["technical_constraints"]["api_capabilities"]
+
+    def test_changes_section(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_details
+        self._make_report(db_session, competitor, product_a)
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_details(product_a.id, "Rival", "changes")
+            assert "error" not in result
+            assert result["report_version"] == 2
+            assert result["changes_from_previous"]["added_features"] == ["Automations"]
+
+    def test_momentum_section(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_details
+        self._make_report(db_session, competitor, product_a)
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_details(product_a.id, "Rival", "momentum")
+            assert "error" not in result
+            assert result["has_report"] is True
+            assert result["report_version"] == 2
+
+    def test_no_report_features(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_details
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_details(product_a.id, "Rival", "features")
+            assert "error" in result
+            assert "No report available" in result["error"]
+
+    def test_momentum_no_report(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_details
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_details(product_a.id, "Rival", "momentum")
+            assert "error" not in result
+            assert result["has_report"] is False
+
+    def test_no_competitor_found(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.competitive import ci_get_competitor_details
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_details(product_a.id, "NonExistent", "features")
+            assert "error" in result
+            assert "No competitor" in result["error"]
+
+    def test_outsider_denied(self, db_session, product_a, outsider, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_details
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = ci_get_competitor_details(product_a.id, "Rival", "features")
+            assert "error" in result
+            assert "Permission denied" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# ci_deactivate_competitor — soft-delete competitor
+# ---------------------------------------------------------------------------
+
+class TestCiDeactivateCompetitor:
+    def test_owner_can_deactivate(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_deactivate_competitor
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_deactivate_competitor(product_a.id, "Rival")
+            assert "error" not in result
+            assert result["status"] == "inactive"
+            assert result["competitor_name"] == "Rival Co"
+
+        # Verify DB state
+        db_session.refresh(competitor)
+        assert competitor.status == "inactive"
+        assert competitor.deep_analysis_enabled is False
+
+    def test_already_inactive(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_deactivate_competitor
+
+        competitor.status = "inactive"
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_deactivate_competitor(product_a.id, "Rival")
+            assert "error" in result
+            assert "No active competitor" in result["error"]
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_deactivate_competitor
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_deactivate_competitor(product_a.id, "Rival")
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+    def test_outsider_denied(self, db_session, product_a, outsider, competitor):
+        from mcp_server.tools.competitive import ci_deactivate_competitor
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = ci_deactivate_competitor(product_a.id, "Rival")
+            assert "error" in result
+            assert "Permission denied" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# ci_get_landscape_opportunities — feature opportunities from landscape
+# ---------------------------------------------------------------------------
+
+class TestCiGetLandscapeOpportunities:
+    def test_returns_opportunities(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.competitive import ci_get_landscape_opportunities
+        from datetime import datetime
+
+        report = LandscapeOpportunityReport(
+            product_id=product_a.id,
+            report_version=1,
+            feature_opportunities=[
+                {
+                    "feature_name": "AI Triage",
+                    "summary": "Auto-categorize incoming ideas",
+                    "priority_score": 0.85,
+                    "competitors_with_feature": ["Rival Co"],
+                },
+            ],
+            high_impact_gaps=[
+                {
+                    "rank": 1,
+                    "feature_name": "AI Triage",
+                    "market_gravity": "High demand from enterprise customers",
+                    "competitors_with_feature": ["Rival Co"],
+                },
+            ],
+            source_competitor_names=["Rival Co"],
+            generated_at=datetime(2026, 4, 10, 12, 0, 0),
+        )
+        db_session.add(report)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_landscape_opportunities(product_a.id)
+            assert "error" not in result
+            assert len(result["feature_opportunities"]) == 1
+            assert result["feature_opportunities"][0]["feature_name"] == "AI Triage"
+            assert len(result["high_impact_gaps"]) == 1
+            assert result["source_competitors"] == ["Rival Co"]
+
+    def test_no_report(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.competitive import ci_get_landscape_opportunities
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_landscape_opportunities(product_a.id)
+            assert "error" in result
+            assert "No landscape analysis" in result["error"]
+
+    def test_outsider_denied(self, db_session, product_a, outsider):
+        from mcp_server.tools.competitive import ci_get_landscape_opportunities
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = ci_get_landscape_opportunities(product_a.id)
+            assert "error" in result
+            assert "Permission denied" in result["error"]

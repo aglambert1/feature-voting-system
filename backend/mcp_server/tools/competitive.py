@@ -381,6 +381,160 @@ def ci_set_deep_analysis(product_id: int, competitor_name: str, enabled: bool = 
 
 
 @mcp.tool()
+def ci_get_competitor_details(product_id: int, competitor_name: str, section: str) -> dict:
+    """Get detailed information about a specific competitor by section.
+
+    Args:
+        product_id: The product the competitor belongs to.
+        competitor_name: Name (or partial name) of the competitor.
+        section: One of "features", "pricing", "positioning", "changes", "momentum".
+            - features: functional comparison showing feature-by-feature mapping status
+            - pricing: technical constraints including integrations and API capabilities
+            - positioning: competitor context — positioning, differentiation, target customer
+            - changes: changes from previous report version
+            - momentum: deep analysis status and report versioning history
+    """
+    from app.models.competitor_intelligence import ProductCompetitor
+    from app.models.competitive_reports import CompetitorFunctionalReport
+
+    valid_sections = {"features", "pricing", "positioning", "changes", "momentum"}
+    if section not in valid_sections:
+        return {"error": f"Invalid section '{section}'. Must be one of: {', '.join(sorted(valid_sections))}"}
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
+        competitor = db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id == product_id,
+            ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
+        ).first()
+
+        if not competitor:
+            return {"error": f"No competitor matching '{competitor_name}' found"}
+
+        report = db.query(CompetitorFunctionalReport).filter(
+            CompetitorFunctionalReport.product_competitor_id == competitor.id
+        ).first()
+
+        base = {
+            "competitor_name": competitor.competitor_name,
+            "competitor_id": competitor.id,
+            "section": section,
+        }
+
+        if section == "features":
+            if not report:
+                return {**base, "error": "No report available. Run ci_run_competitor_audit first."}
+            return {
+                **base,
+                "functional_comparison": report.functional_comparison,
+                "gaps_deep_dive": report.gaps_deep_dive,
+            }
+        elif section == "pricing":
+            if not report:
+                return {**base, "error": "No report available. Run ci_run_competitor_audit first."}
+            return {
+                **base,
+                "technical_constraints": report.technical_constraints,
+            }
+        elif section == "positioning":
+            if not report:
+                return {**base, "error": "No report available. Run ci_run_competitor_audit first."}
+            return {
+                **base,
+                "competitor_context": report.competitor_context,
+            }
+        elif section == "changes":
+            if not report:
+                return {**base, "error": "No report available. Run ci_run_competitor_audit first."}
+            return {
+                **base,
+                "report_version": report.report_version,
+                "generated_at": report.generated_at.isoformat(),
+                "changes_from_previous": report.changes_from_previous,
+            }
+        else:  # momentum
+            return {
+                **base,
+                "deep_analysis_enabled": competitor.deep_analysis_enabled,
+                "deep_analysis_status": competitor.deep_analysis_status,
+                "deep_analysis_last_run": competitor.deep_analysis_last_run.isoformat() if competitor.deep_analysis_last_run else None,
+                "has_report": report is not None,
+                "report_version": report.report_version if report else None,
+                "generated_at": report.generated_at.isoformat() if report else None,
+            }
+
+
+@mcp.tool()
+def ci_deactivate_competitor(product_id: int, competitor_name: str) -> dict:
+    """Deactivate a competitor (soft-delete). Reports are preserved but the competitor is excluded from future analyses.
+
+    Args:
+        product_id: The product the competitor belongs to.
+        competitor_name: Name (or partial name) of the competitor to deactivate.
+    """
+    from app.models.competitor_intelligence import ProductCompetitor
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        competitor = db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id == product_id,
+            ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
+            ProductCompetitor.status == "active",
+        ).first()
+
+        if not competitor:
+            return {"error": f"No active competitor matching '{competitor_name}' found for product {product_id}"}
+
+        competitor.status = "inactive"
+        competitor.deep_analysis_enabled = False
+        db.flush()
+
+        return {
+            "competitor_id": competitor.id,
+            "competitor_name": competitor.competitor_name,
+            "status": "inactive",
+            "message": f"Competitor '{competitor.competitor_name}' deactivated. Reports are preserved.",
+        }
+
+
+@mcp.tool()
+def ci_get_landscape_opportunities(product_id: int) -> dict:
+    """Get feature opportunities identified in the cross-competitor landscape analysis. These are actionable gaps and opportunities that can be turned into ideas via ideas_create with source='landscape'.
+
+    Args:
+        product_id: The product to get landscape opportunities for.
+    """
+    from app.models.competitive_reports import LandscapeOpportunityReport
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
+        report = db.query(LandscapeOpportunityReport).filter(
+            LandscapeOpportunityReport.product_id == product_id
+        ).first()
+
+        if not report:
+            return {"error": "No landscape analysis available. Run ci_run_competitor_audit for at least one competitor, then ci_run_analysis."}
+
+        return {
+            "product_id": product_id,
+            "report_version": report.report_version,
+            "generated_at": report.generated_at.isoformat(),
+            "source_competitors": report.source_competitor_names,
+            "feature_opportunities": report.feature_opportunities,
+            "high_impact_gaps": report.high_impact_gaps,
+        }
+
+
+@mcp.tool()
 def ci_run_analysis(product_id: int) -> dict:
     """Trigger a landscape synthesis across all audited competitors. Returns a job ID — poll with job_get_status until complete. Requires at least one completed ci_run_competitor_audit."""
     from app.models.queue import JobType
