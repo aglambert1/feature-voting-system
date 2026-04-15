@@ -193,6 +193,7 @@ def _mock_session(db_session):
         patch("mcp_server.tools.evidence.get_session", fake_get_session),
         patch("mcp_server.tools.jobs.get_session", fake_get_session),
         patch("mcp_server.tools.pm_review.get_session", fake_get_session),
+        patch("mcp_server.tools.monitoring.get_session", fake_get_session),
     ]
     for p in patches:
         p.start()
@@ -763,6 +764,7 @@ class TestIdeasCreate:
 
     def test_synthesis_creates_idea(self, db_session, product_a, owner):
         from mcp_server.tools.ideas import ideas_create
+        from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
 
         run = SynthesisRun(product_id=product_a.id, status="completed")
         db_session.add(run)
@@ -1206,3 +1208,447 @@ class TestCiGetLandscapeOpportunities:
             result = ci_get_landscape_opportunities(product_a.id)
             assert "error" in result
             assert "Permission denied" in result["error"]
+
+
+# ===========================================================================
+# Phase 5 Tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# review_get_queue — PM review queue listing
+# ---------------------------------------------------------------------------
+
+class TestReviewGetQueue:
+    def test_owner_gets_queue(self, db_session, product_a, owner):
+        from mcp_server.tools.pm_review import review_get_queue
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = review_get_queue(product_a.id)
+            assert "error" not in result
+            assert result["total"] == 0
+            assert result["items"] == []
+
+    def test_invalid_queue_type(self, db_session, product_a, owner):
+        from mcp_server.tools.pm_review import review_get_queue
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = review_get_queue(product_a.id, queue_type="bogus")
+            assert "error" in result
+            assert "Invalid queue_type" in result["error"]
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.pm_review import review_get_queue
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = review_get_queue(product_a.id)
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# review_get_stats — PM review queue statistics
+# ---------------------------------------------------------------------------
+
+class TestReviewGetStats:
+    def test_owner_gets_stats(self, db_session, product_a, owner):
+        from mcp_server.tools.pm_review import review_get_stats
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = review_get_stats(product_a.id)
+            assert "error" not in result
+            assert result["product_id"] == product_a.id
+
+    def test_outsider_denied(self, db_session, product_a, outsider):
+        from mcp_server.tools.pm_review import review_get_stats
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = review_get_stats(product_a.id)
+            assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# monitoring_get_config / monitoring_update_config
+# ---------------------------------------------------------------------------
+
+class TestMonitoringGetConfig:
+    def test_no_config_returns_defaults(self, db_session, product_a, owner):
+        from mcp_server.tools.monitoring import monitoring_get_config
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = monitoring_get_config(product_a.id)
+            assert "error" not in result
+            assert result["configured"] is False
+            assert result["monitoring_enabled"] is False
+
+    def test_outsider_denied(self, db_session, product_a, outsider):
+        from mcp_server.tools.monitoring import monitoring_get_config
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = monitoring_get_config(product_a.id)
+            assert "error" in result
+
+
+class TestMonitoringUpdateConfig:
+    def test_enable_monitoring(self, db_session, product_a, owner):
+        from mcp_server.tools.monitoring import monitoring_update_config, monitoring_get_config
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = monitoring_update_config(product_a.id, monitoring_enabled=True, monitoring_frequency="daily")
+            assert "error" not in result
+            assert result["monitoring_enabled"] is True
+            assert result["monitoring_frequency"] == "daily"
+
+            # Verify persistence
+            get_result = monitoring_get_config(product_a.id)
+            assert get_result["configured"] is True
+            assert get_result["monitoring_enabled"] is True
+
+    def test_invalid_frequency(self, db_session, product_a, owner):
+        from mcp_server.tools.monitoring import monitoring_update_config
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = monitoring_update_config(product_a.id, monitoring_frequency="hourly")
+            assert "error" in result
+            assert "Invalid frequency" in result["error"]
+
+    def test_no_fields_provided(self, db_session, product_a, owner):
+        from mcp_server.tools.monitoring import monitoring_update_config
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = monitoring_update_config(product_a.id)
+            assert "error" in result
+            assert "No configuration fields" in result["error"]
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.monitoring import monitoring_update_config
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = monitoring_update_config(product_a.id, monitoring_enabled=True)
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# synthesis_list_runs / synthesis_get_run
+# ---------------------------------------------------------------------------
+
+class TestSynthesisListRuns:
+    def test_returns_runs(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import synthesis_list_runs
+        from app.models.synthesis import SynthesisRun
+
+        run = SynthesisRun(product_id=product_a.id, status="completed")
+        db_session.add(run)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_list_runs(product_a.id)
+            assert "error" not in result
+            assert len(result["runs"]) == 1
+            assert result["runs"][0]["status"] == "completed"
+
+    def test_outsider_denied(self, db_session, product_a, outsider):
+        from mcp_server.tools.synthesis import synthesis_list_runs
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = synthesis_list_runs(product_a.id)
+            assert "error" in result
+
+
+class TestSynthesisGetRun:
+    def test_returns_run_with_opportunities(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import synthesis_get_run
+        from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
+
+        run = SynthesisRun(product_id=product_a.id, status="completed")
+        db_session.add(run)
+        db_session.flush()
+
+        opp = SynthesizedOpportunity(
+            synthesis_run_id=run.id,
+            product_id=product_a.id,
+            opportunity_name="Test Opp",
+            opportunity_summary="Summary",
+            priority_score=0.9,
+            source_count=3,
+        )
+        db_session.add(opp)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_get_run(product_a.id, run.id)
+            assert "error" not in result
+            assert len(result["opportunities"]) == 1
+            assert result["opportunities"][0]["name"] == "Test Opp"
+
+    def test_wrong_product(self, db_session, product_a, product_b, owner):
+        from mcp_server.tools.synthesis import synthesis_get_run
+        from app.models.synthesis import SynthesisRun
+
+        run = SynthesisRun(product_id=product_a.id, status="completed")
+        db_session.add(run)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_get_run(product_b.id, run.id)
+            assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# evidence_delete
+# ---------------------------------------------------------------------------
+
+class TestEvidenceDelete:
+    def test_owner_can_delete(self, db_session, product_a, owner, evidence_record):
+        from mcp_server.tools.evidence import evidence_delete
+
+        eid = evidence_record.id
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = evidence_delete(eid)
+            assert "error" not in result
+            assert result["evidence_id"] == eid
+            assert "deleted" in result["message"].lower()
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access, evidence_record):
+        from mcp_server.tools.evidence import evidence_delete
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = evidence_delete(evidence_record.id)
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+    def test_not_found(self, db_session, owner):
+        from mcp_server.tools.evidence import evidence_delete
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = evidence_delete(99999)
+            assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# evidence_suggest_competitor
+# ---------------------------------------------------------------------------
+
+class TestEvidenceSuggestCompetitor:
+    def test_returns_suggestion(self, db_session, product_a, owner, evidence_record):
+        from mcp_server.tools.evidence import evidence_suggest_competitor
+
+        mock_result = {
+            "suggested_name": "Rival Co",
+            "matched_competitor_id": 1,
+            "matched_competitor_name": "Rival Co",
+            "is_new": False,
+        }
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.evidence_service.suggest_competitor", return_value=mock_result):
+            result = evidence_suggest_competitor(evidence_record.id)
+            assert "error" not in result
+            assert result["suggested_name"] == "Rival Co"
+
+    def test_outsider_denied(self, db_session, product_a, outsider, evidence_record):
+        from mcp_server.tools.evidence import evidence_suggest_competitor
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = evidence_suggest_competitor(evidence_record.id)
+            assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# internal_list_imports
+# ---------------------------------------------------------------------------
+
+class TestInternalListImports:
+    def test_returns_imports(self, db_session, product_a, owner):
+        from mcp_server.tools.internal import internal_list_imports
+        from app.models.internal_feedback import InternalFeedbackImport
+
+        imp = InternalFeedbackImport(
+            product_id=product_a.id,
+            filename="test.json",
+            source_type="mcp",
+            status="completed",
+            deals_count=5,
+            tickets_count=3,
+        )
+        db_session.add(imp)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = internal_list_imports(product_a.id)
+            assert "error" not in result
+            assert len(result["imports"]) == 1
+            assert result["imports"][0]["deals_count"] == 5
+
+    def test_outsider_denied(self, db_session, product_a, outsider):
+        from mcp_server.tools.internal import internal_list_imports
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = internal_list_imports(product_a.id)
+            assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# internal_delete_theme
+# ---------------------------------------------------------------------------
+
+class TestInternalDeleteTheme:
+    def _make_import(self, db_session, product_a):
+        from app.models.internal_feedback import InternalFeedbackImport
+        imp = InternalFeedbackImport(
+            product_id=product_a.id,
+            filename="test.json",
+            source_type="test",
+            status="completed",
+            deals_count=1,
+            tickets_count=1,
+        )
+        db_session.add(imp)
+        db_session.flush()
+        return imp
+
+    def test_delete_winloss_theme(self, db_session, product_a, owner):
+        from mcp_server.tools.internal import internal_delete_theme
+        from app.models.internal_feedback import WinLossTheme
+
+        imp = self._make_import(db_session, product_a)
+        theme = WinLossTheme(
+            import_id=imp.id,
+            product_id=product_a.id,
+            theme_name="Missing feature X",
+            outcome="lost",
+            deal_count=3,
+        )
+        db_session.add(theme)
+        db_session.commit()
+        db_session.refresh(theme)
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = internal_delete_theme(theme.id, "winloss")
+            assert "error" not in result
+            assert result["theme_name"] == "Missing feature X"
+
+    def test_delete_support_theme(self, db_session, product_a, owner):
+        from mcp_server.tools.internal import internal_delete_theme
+        from app.models.internal_feedback import SupportTheme
+
+        imp = self._make_import(db_session, product_a)
+        theme = SupportTheme(
+            import_id=imp.id,
+            product_id=product_a.id,
+            theme_name="Login issues",
+            category="bug",
+            ticket_count=10,
+        )
+        db_session.add(theme)
+        db_session.commit()
+        db_session.refresh(theme)
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = internal_delete_theme(theme.id, "support")
+            assert "error" not in result
+            assert result["theme_name"] == "Login issues"
+
+    def test_invalid_theme_type(self, db_session, owner):
+        from mcp_server.tools.internal import internal_delete_theme
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = internal_delete_theme(1, "bogus")
+            assert "error" in result
+            assert "Invalid theme_type" in result["error"]
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.internal import internal_delete_theme
+        from app.models.internal_feedback import WinLossTheme
+
+        imp = self._make_import(db_session, product_a)
+        theme = WinLossTheme(
+            import_id=imp.id,
+            product_id=product_a.id,
+            theme_name="Theme",
+            outcome="lost",
+            deal_count=1,
+        )
+        db_session.add(theme)
+        db_session.commit()
+        db_session.refresh(theme)
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = internal_delete_theme(theme.id, "winloss")
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# internal_get_activity_insights
+# ---------------------------------------------------------------------------
+
+class TestInternalGetActivityInsights:
+    def test_no_insights(self, db_session, product_a, owner):
+        from mcp_server.tools.internal import internal_get_activity_insights
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = internal_get_activity_insights(product_a.id)
+            assert "error" not in result
+            assert result["has_insights"] is False
+
+    def test_outsider_denied(self, db_session, product_a, outsider):
+        from mcp_server.tools.internal import internal_get_activity_insights
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = internal_get_activity_insights(product_a.id)
+            assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# product_create_invite / product_list_invites / product_list_members
+# ---------------------------------------------------------------------------
+
+class TestProductCreateInvite:
+    def test_owner_creates_invite(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_create_invite
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_create_invite(product_a.id)
+            assert "error" not in result
+            assert "code" in result
+            assert len(result["code"]) > 0
+            assert result["permission_level"] == "view"
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.product import product_create_invite
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = product_create_invite(product_a.id)
+            assert "error" in result
+            assert "OWNER" in result["error"]
+
+
+class TestProductListInvites:
+    def test_owner_lists_invites(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_create_invite, product_list_invites
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            product_create_invite(product_a.id)
+            result = product_list_invites(product_a.id)
+            assert "error" not in result
+            assert len(result["invites"]) == 1
+
+
+class TestProductListMembers:
+    def test_owner_lists_members(self, db_session, product_a, owner, viewer, viewer_access):
+        from mcp_server.tools.product import product_list_members
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_list_members(product_a.id)
+            assert "error" not in result
+            # viewer_access fixture adds an explicit ProductPermission for viewer
+            assert len(result["members"]) >= 1
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.product import product_list_members
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = product_list_members(product_a.id)
+            assert "error" in result
+            assert "OWNER" in result["error"]

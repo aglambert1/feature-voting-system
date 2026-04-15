@@ -162,6 +162,71 @@ def evidence_list(
 
 
 @mcp.tool()
+def evidence_delete(evidence_id: int) -> dict:
+    """Delete an evidence record from the factbase.
+
+    Args:
+        evidence_id: The ID of the evidence record to delete.
+    """
+    from app.models.evidence import Evidence
+
+    with get_session() as db:
+        evidence = db.query(Evidence).get(evidence_id)
+        if not evidence:
+            return {"error": f"Evidence {evidence_id} not found"}
+
+        denied = require_product_access(db, evidence.product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        title = evidence.title
+        db.delete(evidence)
+        db.flush()
+
+        return {
+            "evidence_id": evidence_id,
+            "title": title,
+            "message": f"Evidence '{title}' deleted.",
+        }
+
+
+@mcp.tool()
+def evidence_suggest_competitor(evidence_id: int) -> dict:
+    """Use AI to identify which competitor (if any) a piece of evidence relates to. Returns a suggestion that can be used to link the evidence.
+
+    Args:
+        evidence_id: The ID of the evidence record to analyze.
+    """
+    from app.models.evidence import Evidence
+    from app.services.evidence_service import suggest_competitor
+
+    with get_session() as db:
+        evidence = db.query(Evidence).get(evidence_id)
+        if not evidence:
+            return {"error": f"Evidence {evidence_id} not found"}
+
+        denied = require_product_access(db, evidence.product_id)
+        if denied:
+            return denied
+
+        result = suggest_competitor(
+            db=db,
+            product_id=evidence.product_id,
+            title=evidence.title,
+            content=evidence.content,
+        )
+
+        return {
+            "evidence_id": evidence_id,
+            "evidence_title": evidence.title,
+            "suggested_name": result.get("suggested_name"),
+            "matched_competitor_id": result.get("matched_competitor_id"),
+            "matched_competitor_name": result.get("matched_competitor_name"),
+            "is_new": result.get("is_new", False),
+        }
+
+
+@mcp.tool()
 def evidence_get(evidence_id: int) -> dict:
     """Get the full content of a specific evidence record.
 
