@@ -149,6 +149,9 @@ class WinLossTheme(Base):
     # Jobs-to-be-Done extraction
     jtbd_statement = Column(Text, nullable=True)  # "When [situation], I want to [motivation], so I can [outcome]"
 
+    # JTBD job linkage (set during import via embedding match to ProductJob)
+    job_id_key = Column(String(50), nullable=True, index=True)
+
     # Timestamps
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
@@ -212,6 +215,9 @@ class SupportTheme(Base):
 
     # Jobs-to-be-Done extraction
     jtbd_statement = Column(Text, nullable=True)  # "When [situation], I want to [motivation], so I can [outcome]"
+
+    # JTBD job linkage (set during import via embedding match to ProductJob)
+    job_id_key = Column(String(50), nullable=True, index=True)
 
     # Timestamps
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

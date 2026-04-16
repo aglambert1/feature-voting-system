@@ -2668,7 +2668,10 @@ def opportunity_synthesis_task(self, job_id: int):
                 'title': idea.title,
                 'description': idea.what_description,  # Use what_description as the description
                 'vote_count': int(vote_count) if vote_count else 0,
-                'status': idea.status.value if idea.status else 'submitted'
+                'status': idea.status.value if idea.status else 'submitted',
+                # Pass JTBD + job linkage to synthesis so agent can semantic-match against jobs
+                'jtbd_statement': getattr(idea, 'jtbd_statement', None),
+                'job_id_key': getattr(idea, 'job_id_key', None),
             })
 
         queue_service.update_progress(job_id, 40.0, "Gathering internal feedback...")

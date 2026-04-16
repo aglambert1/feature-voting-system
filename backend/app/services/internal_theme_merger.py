@@ -49,6 +49,9 @@ class MergedWinLossTheme:
     feature_keywords: List[str] = field(default_factory=list)
     competitor_correlation: Optional[str] = None
 
+    # Jobs-to-be-Done statement (from structured theme; activity insights don't have JTBD)
+    jtbd_statement: Optional[str] = None
+
 
 @dataclass
 class MergedSupportTheme:
@@ -70,6 +73,9 @@ class MergedSupportTheme:
     sample_quotes: List[str] = field(default_factory=list)
     feature_keywords: List[str] = field(default_factory=list)
     accounts_affected: List[str] = field(default_factory=list)
+
+    # Jobs-to-be-Done statement (from structured theme; activity insights don't have JTBD)
+    jtbd_statement: Optional[str] = None
 
 
 @dataclass
@@ -243,7 +249,9 @@ class InternalThemeMergerService:
                 },
                 sample_quotes=list(theme.sample_reasons or []),
                 feature_keywords=list(theme.feature_keywords or []),
-                competitor_correlation=theme.competitor_name
+                competitor_correlation=theme.competitor_name,
+                # Preserve JTBD from structured theme (activity insights don't have JTBD)
+                jtbd_statement=getattr(theme, 'jtbd_statement', None)
             )
 
             # Merge matching activity insights
@@ -298,7 +306,9 @@ class InternalThemeMergerService:
                 },
                 sample_quotes=list(insight.sample_quotes or [])[:5],
                 feature_keywords=list(insight.feature_keywords or []),
-                competitor_correlation=insight.competitor_mentioned
+                competitor_correlation=insight.competitor_mentioned,
+                # Activity insights don't have JTBD
+                jtbd_statement=None
             )
             merged.append(merged_theme)
 
@@ -353,7 +363,9 @@ class InternalThemeMergerService:
                     "sample_subjects": theme.sample_subjects or []
                 },
                 sample_quotes=list(theme.sample_subjects or []),
-                feature_keywords=list(theme.feature_keywords or [])
+                feature_keywords=list(theme.feature_keywords or []),
+                # Preserve JTBD from structured theme (activity insights don't have JTBD)
+                jtbd_statement=getattr(theme, 'jtbd_statement', None)
             )
 
             # Merge matching activity insights
@@ -411,7 +423,9 @@ class InternalThemeMergerService:
                 },
                 sample_quotes=list(insight.sample_quotes or [])[:5],
                 feature_keywords=list(insight.feature_keywords or []),
-                accounts_affected=list(insight.accounts_affected or [])
+                accounts_affected=list(insight.accounts_affected or []),
+                # Activity insights don't have JTBD
+                jtbd_statement=None
             )
             merged.append(merged_theme)
 
@@ -436,7 +450,8 @@ class InternalThemeMergerService:
                 "activity_evidence": theme.activity_evidence,
                 "sample_quotes": theme.sample_quotes,
                 "feature_keywords": theme.feature_keywords,
-                "competitor_correlation": theme.competitor_correlation
+                "competitor_correlation": theme.competitor_correlation,
+                "jtbd_statement": theme.jtbd_statement
             })
 
         support_themes = []
@@ -452,7 +467,8 @@ class InternalThemeMergerService:
                 "activity_evidence": theme.activity_evidence,
                 "sample_quotes": theme.sample_quotes,
                 "feature_keywords": theme.feature_keywords,
-                "accounts_affected": theme.accounts_affected
+                "accounts_affected": theme.accounts_affected,
+                "jtbd_statement": theme.jtbd_statement
             })
 
         return {

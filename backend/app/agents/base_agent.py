@@ -27,6 +27,7 @@ STAGE_TO_OPERATION_TYPE = {
     "opportunity_synthesis": OperationType.OPPORTUNITY_SYNTHESIS,
     "functional_audit": OperationType.FUNCTIONAL_AUDIT,
     "landscape_synthesis": OperationType.LANDSCAPE_SYNTHESIS,
+    "unified_synthesis": OperationType.OPPORTUNITY_SYNTHESIS,
     "activity_insight": OperationType.ACTIVITY_INSIGHT,
     "internal_discovery": OperationType.INTERNAL_DISCOVERY,
     "idea_generation": OperationType.IDEA_STRUCTURING,

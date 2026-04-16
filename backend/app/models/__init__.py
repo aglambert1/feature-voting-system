@@ -62,6 +62,8 @@ from app.models.synthesis import (
     SynthesizedOpportunity,
     SynthesisStatus,
     SourceType as SynthesisSourceType,
+    SynthesisConfig,
+    SynthesisReport,
 )
 from app.models.cost_tracking import (
     LLMUsageLog,
@@ -88,6 +90,7 @@ __all__ = [
     "InternalFeedbackImport", "WinLossTheme", "SupportTheme", "ImportStatus",
     "ActivityImport", "DealActivityInsight", "SupportActivityInsight",
     "SynthesisRun", "SynthesizedOpportunity", "SynthesisStatus", "SynthesisSourceType",
+    "SynthesisConfig", "SynthesisReport",
     "LLMUsageLog", "OperationType",
     "ProductInviteCode",
     "Evidence", "EvidenceType",
