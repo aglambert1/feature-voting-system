@@ -83,11 +83,19 @@ class SynthesisCompetitorEntry(BaseModel):
     audit_status: Optional[str] = None
     audit_last_run: Optional[str] = None
     synthesis_included: bool
+    # True if a CompetitorFunctionalReport exists. This is what unified
+    # synthesis checks — missing reports auto-trigger audits, deferring the
+    # run. More reliable than audit_status alone (older reports predate it).
+    has_report: bool = False
 
 
 class SynthesisCompetitorsResponse(BaseModel):
     product_id: int
     competitors: List[SynthesisCompetitorEntry]
+
+
+class SynthesisInclusionPatch(BaseModel):
+    included: bool
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +262,7 @@ async def run_unified_synthesis(
     )
 
     try:
-        celery_result = send_task("app.queue.tasks.unified_synthesis_task", job.id)
+        celery_result = send_task("unified_synthesis_task", job.id)
         queue_service.mark_queued(job.id, celery_result.id)
     except Exception as e:
         raise HTTPException(
@@ -419,11 +427,18 @@ async def get_synthesis_competitors(
     current_user: User = Depends(get_current_active_user),
 ):
     """List competitors with their audit/synthesis inclusion flags."""
+    from app.models.competitive_reports import CompetitorFunctionalReport
+
     _verify_access(db, product_id, current_user)
     competitors = db.query(ProductCompetitor).filter(
         ProductCompetitor.product_id == product_id,
         ProductCompetitor.status == "active",
     ).all()
+
+    reported_ids = {
+        r[0] for r in db.query(CompetitorFunctionalReport.product_competitor_id)
+        .filter(CompetitorFunctionalReport.product_id == product_id).all()
+    }
 
     return SynthesisCompetitorsResponse(
         product_id=product_id,
@@ -438,7 +453,49 @@ async def get_synthesis_competitors(
                     c.audit_last_run.isoformat() if c.audit_last_run else None
                 ),
                 synthesis_included=bool(c.synthesis_included),
+                has_report=c.id in reported_ids,
             )
             for c in competitors
         ],
     )
+
+
+@router.patch(
+    "/{product_id}/synthesis/competitors/{competitor_id}/synthesis-inclusion"
+)
+async def patch_competitor_synthesis_inclusion(
+    product_id: int,
+    competitor_id: int,
+    payload: SynthesisInclusionPatch,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Include or exclude a competitor from unified synthesis (EDIT required).
+
+    Mirrors the `ci_set_synthesis_inclusion` MCP tool. Decoupled from
+    `audit_enabled`; synthesis auto-triggers missing audits for any
+    competitor whose `synthesis_included` is True.
+    """
+    _verify_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
+
+    competitor = db.query(ProductCompetitor).filter(
+        ProductCompetitor.id == competitor_id,
+        ProductCompetitor.product_id == product_id,
+    ).first()
+    if not competitor:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Competitor {competitor_id} not found for product {product_id}",
+        )
+
+    competitor.synthesis_included = bool(payload.included)
+    db.commit()
+
+    verb = "Included" if payload.included else "Excluded"
+    preposition = "in" if payload.included else "from"
+    return {
+        "competitor_id": competitor.id,
+        "competitor_name": competitor.competitor_name,
+        "synthesis_included": bool(competitor.synthesis_included),
+        "message": f"{verb} {competitor.competitor_name} {preposition} synthesis.",
+    }

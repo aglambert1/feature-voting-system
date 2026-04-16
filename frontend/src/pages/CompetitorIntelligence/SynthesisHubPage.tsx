@@ -1,250 +1,127 @@
 /**
  * SynthesisHubPage
  *
- * Page for viewing and managing opportunity synthesis results.
- * Combines competitive intelligence, customer feedback, and internal feedback
- * to identify prioritized product opportunities.
+ * Unified synthesis hub: configure sources + competitor inclusion, trigger a
+ * run, and view the latest report (analysis summary + markdown body).
  *
- * Features:
- * - Source availability status
- * - Run synthesis button
- * - Prioritized opportunities list
- * - Three-way / two-way match indicators
- * - Evidence from each source
- * - Export to JSON/CSV
- * - Create idea from opportunity
+ * The legacy landscape/opportunity tab + flat opportunity list were removed in
+ * PR #33's JTBD redesign; this page now reflects the unified SynthesisReport
+ * shape.
  */
 
-import { useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { format } from "date-fns";
 import Navigation from "../../components/Navigation";
-import LandscapeTab from "./components/LandscapeTab";
+import SynthesisConfigPanel from "./components/SynthesisConfigPanel";
+import SynthesisCompetitorList from "./components/SynthesisCompetitorList";
 import {
-  getSynthesisStatus,
-  triggerSynthesis,
-  getLatestSynthesis,
-  getSynthesisResults,
-  exportSynthesisJson,
-  exportSynthesisCsv,
-  createIdeaFromOpportunity,
+  getJob,
+  getLatestUnifiedReport,
+  triggerUnifiedSynthesis,
 } from "../../services/api";
-import type {
-  SynthesisStatusResponse,
-  SynthesisRun,
-  SynthesizedOpportunity,
-} from "../../types";
 import api from "../../services/api";
+import type { LatestUnifiedReportResponse } from "../../types";
+import { JobStatus } from "../../types";
 
 interface ProductInfo {
   id: number;
   product_name: string;
 }
 
-type SynthesisTabId = "synthesis" | "landscape";
-
 export default function SynthesisHubPage() {
   const { productId } = useParams<{ productId: string }>();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = (searchParams.get("tab") as SynthesisTabId) || "synthesis";
+  const numProductId = productId ? parseInt(productId, 10) : NaN;
 
-  // Product info
   const [product, setProduct] = useState<ProductInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Synthesis state
-  const [status, setStatus] = useState<SynthesisStatusResponse | null>(null);
-  const [currentRun, setCurrentRun] = useState<SynthesisRun | null>(null);
-  const [opportunities, setOpportunities] = useState<SynthesizedOpportunity[]>([]);
-  const [synthesizing, setSynthesizing] = useState(false);
-  const [synthError, setSynthError] = useState<string | null>(null);
+  const [report, setReport] = useState<LatestUnifiedReportResponse | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
 
-  // Polling for processing status
-  const [pollingRunId, setPollingRunId] = useState<number | null>(null);
+  const [runningJobUuid, setRunningJobUuid] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
 
-  // Expanded opportunity card
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [configExpanded, setConfigExpanded] = useState(true);
 
-  // Creating idea modal
-  const [creatingIdeaFor, setCreatingIdeaFor] = useState<number | null>(null);
-  const [additionalDescription, setAdditionalDescription] = useState("");
-  const [createIdeaLoading, setCreateIdeaLoading] = useState(false);
+  const pollTimer = useRef<number | null>(null);
 
-  // Fetch product info
   const fetchProduct = useCallback(async () => {
-    if (!productId) return;
-
+    if (!Number.isFinite(numProductId)) return;
     try {
       setLoading(true);
-      const response = await api.get<ProductInfo>(
-        `/product-intelligence/products/${productId}`
+      const resp = await api.get<ProductInfo>(
+        `/product-intelligence/products/${numProductId}`
       );
-      setProduct(response.data);
+      setProduct(resp.data);
       setError(null);
     } catch (err: any) {
-      setError(err.message || "Failed to load product");
+      setError(err?.message ?? "Failed to load product.");
     } finally {
       setLoading(false);
     }
-  }, [productId]);
+  }, [numProductId]);
 
-  // Fetch synthesis status
-  const fetchStatus = useCallback(async () => {
-    if (!productId) return;
-
+  const fetchReport = useCallback(async () => {
+    if (!Number.isFinite(numProductId)) return;
     try {
-      const data = await getSynthesisStatus(parseInt(productId, 10));
-      setStatus(data);
+      const r = await getLatestUnifiedReport(numProductId);
+      setReport(r);
+      setReportError(null);
     } catch (err: any) {
-      console.error("Failed to load synthesis status:", err);
+      setReportError(err?.message ?? "Failed to load synthesis report.");
     }
-  }, [productId]);
+  }, [numProductId]);
 
-  // Fetch latest synthesis results
-  const fetchLatestResults = useCallback(async () => {
-    if (!productId) return;
-
-    try {
-      const data = await getLatestSynthesis(parseInt(productId, 10));
-      if (data.run.status !== "none") {
-        setCurrentRun(data.run);
-        setOpportunities(data.opportunities);
-
-        // If there's a processing run, start polling
-        if (data.run.status === "processing" || data.run.status === "pending") {
-          setSynthesizing(true);
-          setPollingRunId(data.run.id);
-        }
-      }
-    } catch (err: any) {
-      console.error("Failed to load synthesis results:", err);
-    }
-  }, [productId]);
-
-  // Poll for synthesis progress
-  useEffect(() => {
-    if (!pollingRunId || !productId) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const data = await getSynthesisResults(parseInt(productId, 10), pollingRunId);
-        setCurrentRun(data.run);
-
-        if (data.run.status === "completed") {
-          setOpportunities(data.opportunities);
-          setPollingRunId(null);
-          setSynthesizing(false);
-          fetchStatus(); // Refresh status
-        } else if (data.run.status === "failed") {
-          setSynthError(data.run.error_message || "Synthesis failed");
-          setPollingRunId(null);
-          setSynthesizing(false);
-        }
-      } catch (err) {
-        console.error("Polling error:", err);
-      }
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [pollingRunId, productId, fetchStatus]);
-
-  // Initial load
   useEffect(() => {
     fetchProduct();
-    fetchStatus();
-    fetchLatestResults();
-  }, [fetchProduct, fetchStatus, fetchLatestResults]);
+    fetchReport();
+  }, [fetchProduct, fetchReport]);
 
-  // Handle run synthesis
-  const handleRunSynthesis = async () => {
-    if (!productId) return;
+  // Poll the running job; on terminal state, refresh the report.
+  useEffect(() => {
+    if (!runningJobUuid) return;
 
-    try {
-      setSynthesizing(true);
-      setSynthError(null);
-      const run = await triggerSynthesis(parseInt(productId, 10));
-      setCurrentRun(run);
-      setPollingRunId(run.id);
-    } catch (err: any) {
-      setSynthError(err.message || "Failed to start synthesis");
-      setSynthesizing(false);
-    }
-  };
-
-  // Handle create idea
-  const handleCreateIdea = async () => {
-    if (!productId || !creatingIdeaFor) return;
-
-    try {
-      setCreateIdeaLoading(true);
-      const result = await createIdeaFromOpportunity(
-        parseInt(productId, 10),
-        creatingIdeaFor,
-        additionalDescription || undefined
-      );
-
-      // Update the opportunity in the list
-      setOpportunities((prev) =>
-        prev.map((o) =>
-          o.id === creatingIdeaFor ? { ...o, linked_idea_id: result.idea_id } : o
-        )
-      );
-
-      setCreatingIdeaFor(null);
-      setAdditionalDescription("");
-    } catch (err: any) {
-      alert(err.message || "Failed to create idea");
-    } finally {
-      setCreateIdeaLoading(false);
-    }
-  };
-
-  // Get match type badge
-  const getMatchBadge = (sourceCount: number) => {
-    if (sourceCount >= 3) {
-      return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-          Three Sources
-        </span>
-      );
-    } else if (sourceCount === 2) {
-      return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-          Two Sources
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-        Single Source
-      </span>
-    );
-  };
-
-  // Get action badge
-  const getActionBadge = (action: string | null) => {
-    const colors: Record<string, string> = {
-      high_priority: "bg-red-100 text-red-800",
-      investigate: "bg-blue-100 text-blue-800",
-      monitor: "bg-gray-100 text-gray-600",
-      quick_win: "bg-green-100 text-green-800",
+    const poll = async () => {
+      try {
+        const job = await getJob(runningJobUuid);
+        if (
+          job.status === JobStatus.SUCCESS ||
+          job.status === JobStatus.FAILURE ||
+          job.status === JobStatus.CANCELLED
+        ) {
+          setRunningJobUuid(null);
+          if (job.status === JobStatus.FAILURE) {
+            setRunError(job.error_message ?? "Synthesis failed.");
+          } else if (job.status === JobStatus.SUCCESS) {
+            await fetchReport();
+          }
+        }
+      } catch (err) {
+        console.error("Synthesis poll failed:", err);
+      }
     };
-    const labels: Record<string, string> = {
-      high_priority: "High Priority",
-      investigate: "Investigate",
-      monitor: "Monitor",
-      quick_win: "Quick Win",
+
+    pollTimer.current = window.setInterval(poll, 3000);
+    return () => {
+      if (pollTimer.current) {
+        clearInterval(pollTimer.current);
+        pollTimer.current = null;
+      }
     };
-    return (
-      <span
-        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-          colors[action || "monitor"] || colors.monitor
-        }`}
-      >
-        {labels[action || "monitor"] || action}
-      </span>
-    );
+  }, [runningJobUuid, fetchReport]);
+
+  const handleRun = async () => {
+    if (!Number.isFinite(numProductId)) return;
+    setRunError(null);
+    try {
+      const resp = await triggerUnifiedSynthesis(numProductId);
+      setRunningJobUuid(resp.job_uuid);
+    } catch (err: any) {
+      setRunError(err?.message ?? "Failed to start synthesis.");
+    }
   };
 
   if (loading) {
@@ -252,10 +129,7 @@ export default function SynthesisHubPage() {
       <div className="min-h-screen bg-gray-50">
         <Navigation />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="animate-pulse">
-            <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
-            <div className="h-4 bg-gray-200 rounded w-1/2"></div>
-          </div>
+          <div className="animate-pulse h-8 bg-gray-200 rounded w-1/4" />
         </div>
       </div>
     );
@@ -280,6 +154,9 @@ export default function SynthesisHubPage() {
     );
   }
 
+  const isRunning = runningJobUuid !== null;
+  const hasReport = report?.exists === true;
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Navigation />
@@ -300,475 +177,143 @@ export default function SynthesisHubPage() {
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Opportunity Synthesis</h1>
               <p className="text-gray-600 mt-1">
-                Combining competitive, customer, internal, and evidence signals
+                Configure sources, pick competitors, and run a unified synthesis report.
               </p>
             </div>
-            <div className="flex space-x-3">
-              {currentRun && currentRun.status === "completed" && (
-                <>
-                  <button
-                    onClick={() => exportSynthesisJson(parseInt(productId!, 10), currentRun.id, product?.product_name)}
-                    className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-                  >
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                    JSON
-                  </button>
-                  <button
-                    onClick={() => exportSynthesisCsv(parseInt(productId!, 10), currentRun.id, product?.product_name)}
-                    className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-                  >
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                    CSV
-                  </button>
-                </>
-              )}
-              <button
-                onClick={handleRunSynthesis}
-                disabled={synthesizing}
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {synthesizing ? (
-                  <>
-                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    Running Synthesis...
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    Run Synthesis
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="border-b border-gray-200 mb-6">
-          <nav className="-mb-px flex space-x-8" aria-label="Tabs">
-            {([
-              { id: "synthesis" as SynthesisTabId, label: "Synthesis Results" },
-              { id: "landscape" as SynthesisTabId, label: "Landscape Analysis" },
-            ]).map((tab) => {
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setSearchParams({ tab: tab.id })}
-                  className={`
-                    py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap
-                    ${isActive
-                      ? "border-indigo-500 text-indigo-600"
-                      : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    }
-                  `}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-
-        {/* Landscape Analysis Tab */}
-        {activeTab === "landscape" && (
-          <div className="bg-white rounded-lg shadow">
-            <LandscapeTab productId={parseInt(productId!, 10)} />
-          </div>
-        )}
-
-        {/* Synthesis Results Tab */}
-        {activeTab === "synthesis" && <>
-        {/* Error message */}
-        {synthError && (
-          <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-red-800">{synthError}</p>
-          </div>
-        )}
-
-        {/* Source Status */}
-        {status && (
-          <div className="bg-white rounded-lg shadow mb-6 p-6">
-            <h2 className="text-lg font-medium text-gray-900 mb-4">Available Sources</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Competitive */}
-              <div className={`p-4 rounded-lg border-2 ${status.sources_available.competitive ? "border-green-200 bg-green-50" : "border-gray-200 bg-gray-50"}`}>
-                <div className="flex items-center mb-2">
-                  {status.sources_available.competitive ? (
-                    <svg className="w-5 h-5 text-green-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5 text-gray-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                    </svg>
-                  )}
-                  <span className="font-medium text-gray-900">Competitive</span>
-                </div>
-                <p className="text-sm text-gray-600">
-                  {status.sources_available.competitive_detail || "No landscape analysis available"}
-                </p>
-              </div>
-
-              {/* Customer */}
-              <div className={`p-4 rounded-lg border-2 ${status.sources_available.customer ? "border-green-200 bg-green-50" : "border-gray-200 bg-gray-50"}`}>
-                <div className="flex items-center mb-2">
-                  {status.sources_available.customer ? (
-                    <svg className="w-5 h-5 text-green-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5 text-gray-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                    </svg>
-                  )}
-                  <span className="font-medium text-gray-900">Customer</span>
-                </div>
-                <p className="text-sm text-gray-600">
-                  {status.sources_available.customer_detail || "No customer ideas submitted"}
-                </p>
-              </div>
-
-              {/* Internal */}
-              <div className={`p-4 rounded-lg border-2 ${status.sources_available.internal ? "border-green-200 bg-green-50" : "border-gray-200 bg-gray-50"}`}>
-                <div className="flex items-center mb-2">
-                  {status.sources_available.internal ? (
-                    <svg className="w-5 h-5 text-green-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5 text-gray-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                    </svg>
-                  )}
-                  <span className="font-medium text-gray-900">Internal</span>
-                </div>
-                <p className="text-sm text-gray-600">
-                  {status.sources_available.internal_detail || "No internal feedback imported"}
-                </p>
-              </div>
-
-              {/* Evidence */}
-              <div className={`p-4 rounded-lg border-2 ${status.sources_available.evidence ? "border-green-200 bg-green-50" : "border-gray-200 bg-gray-50"}`}>
-                <div className="flex items-center mb-2">
-                  {status.sources_available.evidence ? (
-                    <svg className="w-5 h-5 text-green-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5 text-gray-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                    </svg>
-                  )}
-                  <span className="font-medium text-gray-900">Evidence</span>
-                </div>
-                <p className="text-sm text-gray-600">
-                  {status.sources_available.evidence_detail || "No evidence in factbase"}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Processing Status */}
-        {currentRun && currentRun.status === "processing" && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-            <div className="flex items-center">
-              <svg className="animate-spin h-5 w-5 text-blue-600 mr-3" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              <div>
-                <p className="text-blue-800 font-medium">Synthesis in progress...</p>
-                <p className="text-blue-600 text-sm">Analyzing sources and identifying opportunities</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Summary Stats */}
-        {currentRun && currentRun.status === "completed" && currentRun.summary_stats && (
-          <div className="bg-white rounded-lg shadow mb-6 p-6">
-            <h2 className="text-lg font-medium text-gray-900 mb-4">Synthesis Summary</h2>
-            {currentRun.analysis_summary && (
-              <p className="text-gray-600 mb-4">{currentRun.analysis_summary}</p>
-            )}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <p className="text-3xl font-bold text-red-600">{currentRun.summary_stats.three_way_matches}</p>
-                <p className="text-sm text-gray-500">Three Sources</p>
-              </div>
-              <div className="text-center">
-                <p className="text-3xl font-bold text-yellow-600">{currentRun.summary_stats.two_way_matches}</p>
-                <p className="text-sm text-gray-500">Two Sources</p>
-              </div>
-              <div className="text-center">
-                <p className="text-3xl font-bold text-gray-600">{currentRun.summary_stats.single_source}</p>
-                <p className="text-sm text-gray-500">Single Source</p>
-              </div>
-              <div className="text-center">
-                <p className="text-3xl font-bold text-indigo-600">{currentRun.summary_stats.total_opportunities}</p>
-                <p className="text-sm text-gray-500">Total</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Opportunities List */}
-        {opportunities.length > 0 ? (
-          <div className="space-y-4">
-            <h2 className="text-lg font-medium text-gray-900">Prioritized Opportunities</h2>
-            {opportunities.map((opp) => (
-              <div
-                key={opp.id}
-                className="bg-white rounded-lg shadow overflow-hidden"
-              >
-                {/* Header */}
-                <div
-                  className="p-4 cursor-pointer hover:bg-gray-50"
-                  onClick={() => setExpandedId(expandedId === opp.id ? null : opp.id)}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-1">
-                        {getMatchBadge(opp.source_count)}
-                        {getActionBadge(opp.recommended_action)}
-                        {opp.linked_idea_id && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
-                            Idea Created
-                          </span>
-                        )}
-                      </div>
-                      <h3 className="text-lg font-medium text-gray-900">{opp.opportunity_name}</h3>
-                      {opp.opportunity_summary && (
-                        <p className="text-gray-600 text-sm mt-1">{opp.opportunity_summary}</p>
-                      )}
-                    </div>
-                    <div className="flex items-center space-x-4 ml-4">
-                      <div className="text-right">
-                        <p className="text-2xl font-bold text-indigo-600">{Math.round(opp.priority_score)}</p>
-                        <p className="text-xs text-gray-500">Priority</p>
-                      </div>
-                      <svg
-                        className={`w-5 h-5 text-gray-400 transition-transform ${expandedId === opp.id ? "rotate-180" : ""}`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Expanded Content */}
-                {expandedId === opp.id && (
-                  <div className="border-t border-gray-200 p-4 bg-gray-50">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-                      {/* Competitive Evidence */}
-                      <div className={`p-3 rounded-lg ${opp.competitive_evidence ? "bg-blue-50 border border-blue-200" : "bg-gray-100 border border-gray-200"}`}>
-                        <h4 className="font-medium text-gray-900 mb-2">Competitive</h4>
-                        {opp.competitive_evidence ? (
-                          <div className="text-sm">
-                            <p className="text-gray-700">
-                              <strong>{opp.competitive_evidence.competitor_count}</strong> competitors have this
-                            </p>
-                            {opp.competitive_evidence.prevalence && (
-                              <p className="text-gray-600">Prevalence: {opp.competitive_evidence.prevalence}</p>
-                            )}
-                            {opp.competitive_evidence.competitors && opp.competitive_evidence.competitors.length > 0 && (
-                              <p className="text-gray-600 mt-1">
-                                {opp.competitive_evidence.competitors.slice(0, 3).join(", ")}
-                                {opp.competitive_evidence.competitors.length > 3 && ` +${opp.competitive_evidence.competitors.length - 3} more`}
-                              </p>
-                            )}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-gray-500">No competitive signal</p>
-                        )}
-                      </div>
-
-                      {/* Customer Evidence */}
-                      <div className={`p-3 rounded-lg ${opp.customer_evidence ? "bg-green-50 border border-green-200" : "bg-gray-100 border border-gray-200"}`}>
-                        <h4 className="font-medium text-gray-900 mb-2">Customer</h4>
-                        {opp.customer_evidence ? (
-                          <div className="text-sm">
-                            <p className="text-gray-700">
-                              <strong>{opp.customer_evidence.vote_count}</strong> votes
-                            </p>
-                            <p className="text-gray-600 truncate" title={opp.customer_evidence.idea_title}>
-                              "{opp.customer_evidence.idea_title}"
-                            </p>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-gray-500">No customer signal</p>
-                        )}
-                      </div>
-
-                      {/* Internal Evidence */}
-                      <div className={`p-3 rounded-lg ${opp.internal_evidence ? "bg-orange-50 border border-orange-200" : "bg-gray-100 border border-gray-200"}`}>
-                        <h4 className="font-medium text-gray-900 mb-2">Internal</h4>
-                        {opp.internal_evidence ? (
-                          <div className="text-sm space-y-1">
-                            {opp.internal_evidence.winloss && (
-                              <p className="text-gray-700">
-                                <strong>{opp.internal_evidence.winloss.deal_count}</strong> deals (${opp.internal_evidence.winloss.total_value.toLocaleString()})
-                              </p>
-                            )}
-                            {opp.internal_evidence.support && (
-                              <p className="text-gray-700">
-                                <strong>{opp.internal_evidence.support.ticket_count}</strong> support tickets
-                              </p>
-                            )}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-gray-500">No internal signal</p>
-                        )}
-                      </div>
-
-                      {/* Evidence / Factbase */}
-                      <div className={`p-3 rounded-lg ${opp.evidence_signals?.items?.length ? "bg-indigo-50 border border-indigo-200" : "bg-gray-100 border border-gray-200"}`}>
-                        <h4 className="font-medium text-gray-900 mb-2">Evidence</h4>
-                        {opp.evidence_signals?.items?.length ? (
-                          <div className="text-sm space-y-1">
-                            <p className="text-gray-700">
-                              <strong>{opp.evidence_signals.items.length}</strong> evidence record{opp.evidence_signals.items.length !== 1 ? "s" : ""}
-                            </p>
-                            {opp.evidence_signals.items.slice(0, 2).map((item, i) => (
-                              <p key={i} className="text-gray-600 truncate" title={item.relevance}>
-                                {item.title}
-                                {item.source_url && (
-                                  <a href={item.source_url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 ml-1">[link]</a>
-                                )}
-                              </p>
-                            ))}
-                            {opp.evidence_signals.items.length > 2 && (
-                              <p className="text-gray-500">+{opp.evidence_signals.items.length - 2} more</p>
-                            )}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-gray-500">No evidence signal</p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Keywords */}
-                    {opp.feature_keywords && opp.feature_keywords.length > 0 && (
-                      <div className="mb-4">
-                        <h4 className="text-sm font-medium text-gray-700 mb-1">Keywords</h4>
-                        <div className="flex flex-wrap gap-1">
-                          {opp.feature_keywords.map((keyword, i) => (
-                            <span key={i} className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-200 text-gray-700">
-                              {keyword}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Actions */}
-                    <div className="flex justify-end space-x-3">
-                      {opp.customer_evidence && (
-                        <button
-                          onClick={() => navigate(`/ideas/${opp.customer_evidence!.idea_id}`)}
-                          className="text-sm text-indigo-600 hover:text-indigo-800"
-                        >
-                          View Related Idea
-                        </button>
-                      )}
-                      {!opp.linked_idea_id && (
-                        <button
-                          onClick={() => setCreatingIdeaFor(opp.id)}
-                          className="inline-flex items-center px-3 py-1.5 border border-indigo-600 rounded text-sm font-medium text-indigo-600 hover:bg-indigo-50"
-                        >
-                          Create Idea
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        ) : currentRun && currentRun.status === "completed" ? (
-          <div className="bg-white rounded-lg shadow p-8 text-center">
-            <svg className="w-16 h-16 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Opportunities Found</h3>
-            <p className="text-gray-600">
-              The synthesis completed but no opportunities were identified.
-              Try adding more source data.
-            </p>
-          </div>
-        ) : !synthesizing && (
-          <div className="bg-white rounded-lg shadow p-8 text-center">
-            <svg className="w-16 h-16 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Ready to Synthesize</h3>
-            <p className="text-gray-600 mb-4">
-              Click "Run Synthesis" to combine your competitive, customer, internal, and evidence data
-              into prioritized opportunities.
-            </p>
             <button
-              onClick={handleRunSynthesis}
-              disabled={synthesizing}
-              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+              onClick={handleRun}
+              disabled={isRunning}
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Run Synthesis
+              {isRunning ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Running…
+                </>
+              ) : hasReport ? "Re-run Synthesis" : "Run Synthesis"}
             </button>
           </div>
-        )}
+        </div>
 
-        {/* Create Idea Modal */}
-        {creatingIdeaFor !== null && (
-          <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">Create Idea from Opportunity</h3>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Additional Description (optional)
-                </label>
-                <textarea
-                  value={additionalDescription}
-                  onChange={(e) => setAdditionalDescription(e.target.value)}
-                  rows={3}
-                  className="w-full border border-gray-300 rounded-md p-2 text-sm"
-                  placeholder="Add any additional context for this idea..."
-                />
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button
-                  onClick={() => {
-                    setCreatingIdeaFor(null);
-                    setAdditionalDescription("");
-                  }}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleCreateIdea}
-                  disabled={createIdeaLoading}
-                  className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {createIdeaLoading ? "Creating..." : "Create Idea"}
-                </button>
-              </div>
-            </div>
+        {runError && (
+          <div className="mb-4 p-3 rounded border border-red-200 bg-red-50 text-sm text-red-800">
+            {runError}
           </div>
         )}
-        </>}
+
+        {/* Configuration section (collapsible, open by default) */}
+        <div className="mb-6">
+          <button
+            type="button"
+            onClick={() => setConfigExpanded((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-white rounded-lg shadow text-left hover:bg-gray-50"
+            aria-expanded={configExpanded}
+          >
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">Configuration</h2>
+              <p className="text-xs text-gray-500">
+                Source types, idea threshold, and competitor inclusion.
+              </p>
+            </div>
+            <svg
+              className={`w-5 h-5 text-gray-400 transition-transform ${configExpanded ? "rotate-180" : ""}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {configExpanded && Number.isFinite(numProductId) && (
+            <div className="mt-3">
+              <SynthesisConfigPanel productId={numProductId} />
+              <SynthesisCompetitorList productId={numProductId} />
+            </div>
+          )}
+        </div>
+
+        {/* Results */}
+        <div className="bg-white rounded-lg shadow">
+          <div className="px-6 py-4 border-b border-gray-100 flex items-baseline justify-between">
+            <h2 className="text-base font-semibold text-gray-900">Latest synthesis report</h2>
+            {hasReport && report.generated_at && (
+              <span className="text-xs text-gray-500">
+                v{report.report_version} · {format(new Date(report.generated_at), "MMM d, yyyy h:mm a")}
+              </span>
+            )}
+          </div>
+
+          <div className="px-6 py-5">
+            {isRunning && (
+              <div className="flex items-center gap-3 text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded px-3 py-2 mb-4">
+                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span>Synthesizing… the report will refresh when the job completes.</span>
+              </div>
+            )}
+
+            {reportError && (
+              <div className="p-3 rounded border border-red-200 bg-red-50 text-sm text-red-800">
+                {reportError}
+              </div>
+            )}
+
+            {!reportError && !hasReport && !isRunning && (
+              <div className="text-sm text-gray-500">
+                {report && !report.exists
+                  ? report.message
+                  : "No synthesis report yet. Configure sources above, then click Run Synthesis."}
+              </div>
+            )}
+
+            {hasReport && (
+              <>
+                {report.analysis_summary && (
+                  <div className="mb-5">
+                    <h3 className="text-sm font-medium text-gray-700 mb-1">Analysis summary</h3>
+                    <p className="text-sm text-gray-800 whitespace-pre-wrap">
+                      {report.analysis_summary}
+                    </p>
+                  </div>
+                )}
+
+                {report.included_source_types && report.included_source_types.length > 0 && (
+                  <div className="mb-5">
+                    <h3 className="text-sm font-medium text-gray-700 mb-1">Included sources</h3>
+                    <div className="flex flex-wrap gap-1">
+                      {report.included_source_types.map((s) => (
+                        <span
+                          key={s}
+                          className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-indigo-100 text-indigo-800"
+                        >
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {report.report_content_md ? (
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700 mb-1">Report</h3>
+                    <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-gray-800 bg-gray-50 border border-gray-200 rounded p-3 max-h-[600px] overflow-auto">
+                      {report.report_content_md}
+                    </pre>
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">
+                    Report content is not available (the job may have returned no narrative).
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
