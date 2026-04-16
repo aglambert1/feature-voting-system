@@ -87,23 +87,27 @@ class TechnicalConstraints(BaseModel):
 class OutcomeCoverage(BaseModel):
     """Coverage of a desired outcome by our product vs competitor."""
     desired_outcome: str = Field(description="The desired outcome from the job map")
-    our_coverage: Literal["full", "partial", "none"] = Field(
-        description="How well our product covers this outcome"
+    our_coverage: str = Field(
+        default="none",
+        description="How well our product covers this outcome: full, partial, or none"
     )
-    competitor_coverage: Literal["full", "partial", "none"] = Field(
-        description="How well the competitor covers this outcome"
+    competitor_coverage: str = Field(
+        default="none",
+        description="How well the competitor covers this outcome: full, partial, or none"
     )
 
 
 class JobFeatureAssessment(BaseModel):
     """A feature contributing to a job's satisfaction score."""
     feature_name: str = Field(description="Name of the feature")
-    description: str = Field(description="What the feature does functionally")
-    whose: Literal["ours", "theirs", "both"] = Field(
-        description="Which product has this feature"
+    description: str = Field(default="", description="What the feature does functionally")
+    whose: str = Field(
+        default="theirs",
+        description="Which product has this feature: ours, theirs, or both"
     )
-    position: Literal["advantage", "gap", "parity", "differentiator"] = Field(
-        description="Our position: advantage=we have/they don't, gap=they have/we don't, parity=both have, differentiator=unique workflow"
+    position: str = Field(
+        default="gap",
+        description="Our position: advantage (we have/they don't), gap (they have/we don't), parity (both have), or differentiator (unique workflow)"
     )
     evidence_ids: List[int] = Field(
         default=[],
@@ -120,11 +124,12 @@ class JobAssessment(BaseModel):
     """
     job_id: str = Field(description="Job ID from the product's job map (e.g., 'j1')")
     job_statement: str = Field(description="The full job statement")
-    importance: Literal["critical", "high", "medium", "low"] = Field(
-        description="How important this job is to the target customer"
+    importance: str = Field(
+        default="medium",
+        description="How important this job is: critical, high, medium, or low"
     )
-    our_score: int = Field(ge=1, le=10, description="How well our product serves this job (1-10)")
-    competitor_score: int = Field(ge=1, le=10, description="How well the competitor serves this job (1-10)")
+    our_score: int = Field(ge=0, le=10, description="How well our product serves this job (1-10, 0 if unknown)")
+    competitor_score: int = Field(ge=0, le=10, description="How well the competitor serves this job (1-10, 0 if unknown)")
     score_rationale: str = Field(
         description="Explanation of what drives the score difference"
     )
