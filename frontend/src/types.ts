@@ -1237,170 +1237,44 @@ export interface ActivityImportStatusResponse {
 }
 
 // ============================================================================
-// SYNTHESIS TYPES
+// UNIFIED SYNTHESIS RESULTS
 // ============================================================================
+// Report shape from GET /products/{id}/synthesis/latest (unified flow).
 
-/**
- * Sources available for synthesis.
- */
-export interface SynthesisSourcesAvailable {
-  competitive: boolean;
-  competitive_detail: string | null;
-  customer: boolean;
-  customer_detail: string | null;
-  internal: boolean;
-  internal_detail: string | null;
-  evidence: boolean;
-  evidence_detail: string | null;
-}
-
-/**
- * Snapshot of sources used in a synthesis run.
- */
-export interface SourceSnapshot {
-  landscape_report_id: number | null;
-  competitive_opportunities_count: number;
-  ideas_count: number;
-  ideas_total_votes: number;
-  internal_import_id: number | null;
-  winloss_themes_count: number;
-  support_themes_count: number;
-}
-
-/**
- * Summary statistics from synthesis.
- */
-export interface SummaryStats {
-  three_way_matches: number;
-  two_way_matches: number;
-  single_source: number;
-  total_opportunities: number;
-}
-
-/**
- * Synthesis run record.
- */
-export interface SynthesisRun {
-  id: number;
-  product_id: number;
+export interface UnifiedSynthesisRunResponse {
+  job_id: number;
+  job_uuid: string;
   status: string;
-  error_message: string | null;
-  source_snapshot: SourceSnapshot | null;
-  sources_used: string[];
-  summary_stats: SummaryStats | null;
+  message: string;
+}
+
+interface UnifiedReportExists {
+  product_id: number;
+  exists: true;
+  synthesis_report_id: number;
+  report_version: number;
+  generated_at: string | null;
+  included_source_types: string[];
+  source_stats: Record<string, number> | null;
+  included_competitor_ids: number[] | null;
+  source_competitor_report_ids: number[] | null;
+  job_scorecard: unknown[] | null;
+  feature_cluster_matrix: unknown[] | null;
+  opportunities: unknown[] | null;
+  high_impact_items: unknown[] | null;
+  innovation_whitespace: string | null;
   analysis_summary: string | null;
-  job_uuid: string | null;
-  created_at: string;
-  completed_at: string | null;
-  opportunity_count: number;
+  report_content_md: string | null;
+  changes_from_previous: unknown | null;
 }
 
-/**
- * Evidence from competitive analysis.
- */
-export interface CompetitiveEvidence {
-  feature_name: string;
-  prevalence: string | null;
-  competitors: string[];
-  competitor_count: number;
-  our_status: string | null;
-  priority_score: number | null;
-}
-
-/**
- * Evidence from customer feedback.
- */
-export interface CustomerEvidence {
-  idea_id: number;
-  idea_title: string;
-  vote_count: number;
-  status: string | null;
-  submitted_at: string | null;
-}
-
-/**
- * Evidence from win/loss analysis.
- */
-export interface WinLossEvidence {
-  theme_id: number;
-  theme_name: string;
-  outcome: string;
-  deal_count: number;
-  total_value: number;
-  competitor_correlation: string | null;
-}
-
-/**
- * Evidence from support themes.
- */
-export interface SupportEvidence {
-  theme_id: number;
-  theme_name: string;
-  ticket_count: number;
-  category: string;
-  urgency_indicator: string | null;
-}
-
-/**
- * Combined internal evidence.
- */
-export interface InternalEvidence {
-  winloss: WinLossEvidence | null;
-  support: SupportEvidence | null;
-}
-
-/**
- * Synthesized opportunity.
- */
-export interface EvidenceSignalItem {
-  evidence_id: number;
-  title: string;
-  evidence_type: string;
-  source_url: string | null;
-  source_description: string | null;
-  relevance: string;
-}
-
-export interface EvidenceSignals {
-  items: EvidenceSignalItem[];
-}
-
-export interface SynthesizedOpportunity {
-  id: number;
-  synthesis_run_id: number;
+interface UnifiedReportAbsent {
   product_id: number;
-  opportunity_name: string;
-  opportunity_summary: string | null;
-  priority_score: number;
-  source_count: number;
-  sources: string[];
-  competitive_evidence: CompetitiveEvidence | null;
-  customer_evidence: CustomerEvidence | null;
-  internal_evidence: InternalEvidence | null;
-  evidence_signals: EvidenceSignals | null;
-  recommended_action: string | null;
-  feature_keywords: string[];
-  linked_idea_id: number | null;
-  created_at: string;
+  exists: false;
+  message: string;
 }
 
-/**
- * Synthesis status response.
- */
-export interface SynthesisStatusResponse {
-  product_id: number;
-  sources_available: SynthesisSourcesAvailable;
-  has_previous_run: boolean;
-  previous_run: SynthesisRun | null;
-}
-
-/**
- * Full synthesis results response.
- */
-export interface SynthesisResultsResponse {
-  run: SynthesisRun;
-  opportunities: SynthesizedOpportunity[];
-}
+export type LatestUnifiedReportResponse = UnifiedReportExists | UnifiedReportAbsent;
 
 // --- Idea Lifecycle & Funnel ---
 
@@ -1536,4 +1410,46 @@ export interface JobUpdateRequest {
   statement?: string;
   desired_outcomes?: string[];
   importance?: JobImportance;
+}
+
+// ============================================================================
+// UNIFIED SYNTHESIS CONFIG TYPES
+// ============================================================================
+
+export type SynthesisSourceType = 'competitive' | 'customer' | 'internal' | 'evidence';
+
+export interface SynthesisConfigData {
+  product_id: number;
+  included_source_types: SynthesisSourceType[];
+  auto_generate_ideas: boolean;
+  idea_priority_threshold: number;
+  scoring_weight_overrides?: Record<string, unknown> | null;
+  updated_at?: string | null;
+}
+
+export interface SynthesisConfigResponse {
+  exists: boolean;
+  config: SynthesisConfigData;
+}
+
+export interface SynthesisConfigPutRequest {
+  source_types?: SynthesisSourceType[];
+  auto_generate_ideas?: boolean;
+  idea_priority_threshold?: number;
+}
+
+export interface SynthesisCompetitorConfigEntry {
+  competitor_id: number;
+  competitor_name: string;
+  competitor_url?: string | null;
+  audit_enabled: boolean;
+  audit_status?: string | null;
+  audit_last_run?: string | null;
+  synthesis_included: boolean;
+  has_report: boolean;
+}
+
+export interface SynthesisCompetitorsConfigResponse {
+  product_id: number;
+  competitors: SynthesisCompetitorConfigEntry[];
 }

@@ -19,6 +19,8 @@ configured Celery app instance regardless of thread context.
 
 from app.queue import celery_app
 
+_TASK_PREFIX = "app.queue.tasks."
+
 
 def send_celery_task(task_name: str, *args, **kwargs):
     """
@@ -36,8 +38,17 @@ def send_celery_task(task_name: str, *args, **kwargs):
     Returns:
         AsyncResult object representing the queued task
     """
+    # Guard against double-prefixing. Prior incident: an endpoint passed the
+    # full-prefixed name, we concatenated another prefix, and Celery couldn't
+    # resolve "app.queue.tasks.app.queue.tasks.X" — messages were silently
+    # discarded.
+    if task_name.startswith(_TASK_PREFIX):
+        raise ValueError(
+            f"task_name must not include the {_TASK_PREFIX!r} prefix; "
+            f"got {task_name!r}"
+        )
     return celery_app.send_task(
-        f'app.queue.tasks.{task_name}',
+        f'{_TASK_PREFIX}{task_name}',
         args=args,
         kwargs=kwargs if kwargs else None
     )

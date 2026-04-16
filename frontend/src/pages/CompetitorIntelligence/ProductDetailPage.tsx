@@ -20,8 +20,7 @@ import api, {
   triggerCompetitiveAnalysisV2,
   getInternalFeedbackImports,
   getInternalFeedbackThemes,
-  getSynthesisStatus,
-  getLatestSynthesis,
+  getLatestUnifiedReport,
   getUnreadAlertCount,
   getFunctionalReports,
   getProductJobs,
@@ -102,23 +101,17 @@ export default function ProductDetailPage() {
     lastImportDate: string | null;
   }>({ importCount: 0, winlossThemeCount: 0, supportThemeCount: 0, lastImportDate: null });
 
-  // Synthesis state
+  // Synthesis state (from unified /products/{id}/synthesis/latest)
   const [synthesisStats, setSynthesisStats] = useState<{
     hasRun: boolean;
-    status: string;
+    reportVersion: number | null;
     opportunityCount: number;
-    threeWayMatches: number;
-    twoWayMatches: number;
     lastRunDate: string | null;
-    sourcesAvailable: number;
   }>({
     hasRun: false,
-    status: 'none',
+    reportVersion: null,
     opportunityCount: 0,
-    threeWayMatches: 0,
-    twoWayMatches: 0,
     lastRunDate: null,
-    sourcesAvailable: 0
   });
 
   // Evidence stats
@@ -158,37 +151,22 @@ export default function ProductDetailPage() {
     const numProductId = parseInt(productId);
 
     try {
-      const [synthesisStatusRes, synthesisResultsRes] = await Promise.all([
-        getSynthesisStatus(numProductId).catch(() => null),
-        getLatestSynthesis(numProductId).catch(() => null)
-      ]);
-
-      const sourcesAvailable = [
-        synthesisStatusRes?.sources_available?.competitive,
-        synthesisStatusRes?.sources_available?.customer,
-        synthesisStatusRes?.sources_available?.internal,
-        synthesisStatusRes?.sources_available?.evidence,
-      ].filter(Boolean).length;
-
-      if (synthesisResultsRes && synthesisResultsRes.run && synthesisResultsRes.run.status !== 'none') {
+      const latest = await getLatestUnifiedReport(numProductId);
+      if (latest.exists) {
         setSynthesisStats({
           hasRun: true,
-          status: synthesisResultsRes.run.status,
-          opportunityCount: synthesisResultsRes.opportunities?.length || 0,
-          threeWayMatches: synthesisResultsRes.run.summary_stats?.three_way_matches || 0,
-          twoWayMatches: synthesisResultsRes.run.summary_stats?.two_way_matches || 0,
-          lastRunDate: synthesisResultsRes.run.completed_at || synthesisResultsRes.run.created_at,
-          sourcesAvailable
+          reportVersion: latest.report_version,
+          opportunityCount: Array.isArray(latest.opportunities)
+            ? latest.opportunities.length
+            : 0,
+          lastRunDate: latest.generated_at,
         });
       } else {
         setSynthesisStats({
           hasRun: false,
-          status: 'none',
+          reportVersion: null,
           opportunityCount: 0,
-          threeWayMatches: 0,
-          twoWayMatches: 0,
           lastRunDate: null,
-          sourcesAvailable
         });
       }
     } catch (err) {
@@ -232,8 +210,7 @@ export default function ProductDetailPage() {
         historyRes,
         internalImportsRes,
         internalThemesRes,
-        synthesisStatusRes,
-        synthesisResultsRes,
+        unifiedReportRes,
         alertCountRes,
         functionalReportsRes,
         analysisJobsRes
@@ -247,8 +224,7 @@ export default function ProductDetailPage() {
           : Promise.resolve([]),
         getInternalFeedbackImports(numProductId).catch(() => []),
         getInternalFeedbackThemes(numProductId).catch(() => ({ import_id: 0, winloss_themes: [], support_themes: [], analysis_summary: null })),
-        getSynthesisStatus(numProductId).catch(() => null),
-        getLatestSynthesis(numProductId).catch(() => null),
+        getLatestUnifiedReport(numProductId).catch(() => null),
         getUnreadAlertCount(numProductId).catch(() => ({ unread_count: 0 })),
         getFunctionalReports(numProductId).catch(() => []),
         getProductJobs(numProductId, 5, [JobType.PRODUCT_ANALYSIS]).catch(() => [])
@@ -278,33 +254,22 @@ export default function ProductDetailPage() {
         lastImportDate: internalImportsRes.length > 0 && internalImportsRes[0] ? internalImportsRes[0].imported_at : null
       });
 
-      // Set synthesis stats
-      const sourcesAvailable = [
-        synthesisStatusRes?.sources_available?.competitive,
-        synthesisStatusRes?.sources_available?.customer,
-        synthesisStatusRes?.sources_available?.internal,
-        synthesisStatusRes?.sources_available?.evidence,
-      ].filter(Boolean).length;
-
-      if (synthesisResultsRes && synthesisResultsRes.run && synthesisResultsRes.run.status !== 'none') {
+      // Set synthesis stats from unified latest report
+      if (unifiedReportRes && unifiedReportRes.exists) {
         setSynthesisStats({
           hasRun: true,
-          status: synthesisResultsRes.run.status,
-          opportunityCount: synthesisResultsRes.opportunities?.length || 0,
-          threeWayMatches: synthesisResultsRes.run.summary_stats?.three_way_matches || 0,
-          twoWayMatches: synthesisResultsRes.run.summary_stats?.two_way_matches || 0,
-          lastRunDate: synthesisResultsRes.run.completed_at || synthesisResultsRes.run.created_at,
-          sourcesAvailable
+          reportVersion: unifiedReportRes.report_version,
+          opportunityCount: Array.isArray(unifiedReportRes.opportunities)
+            ? unifiedReportRes.opportunities.length
+            : 0,
+          lastRunDate: unifiedReportRes.generated_at,
         });
       } else {
         setSynthesisStats({
           hasRun: false,
-          status: 'none',
+          reportVersion: null,
           opportunityCount: 0,
-          threeWayMatches: 0,
-          twoWayMatches: 0,
           lastRunDate: null,
-          sourcesAvailable
         });
       }
 
@@ -823,17 +788,13 @@ export default function ProductDetailPage() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-gray-900">Opportunity Synthesis Agent</h3>
               <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                synthesisStats.hasRun && synthesisStats.status === 'completed'
+                synthesisStats.hasRun
                   ? 'bg-green-100 text-green-800'
-                  : synthesisStats.sourcesAvailable > 0
-                    ? 'bg-blue-100 text-blue-800'
-                    : 'bg-gray-100 text-gray-600'
+                  : 'bg-gray-100 text-gray-600'
               }`}>
-                {synthesisStats.hasRun && synthesisStats.status === 'completed'
-                  ? `${synthesisStats.opportunityCount} Opportunities`
-                  : synthesisStats.sourcesAvailable > 0
-                    ? `${synthesisStats.sourcesAvailable}/4 Sources`
-                    : 'No Sources'}
+                {synthesisStats.hasRun
+                  ? `v${synthesisStats.reportVersion} · ${synthesisStats.opportunityCount} Opportunities`
+                  : 'Never run'}
               </span>
             </div>
 
@@ -842,30 +803,14 @@ export default function ProductDetailPage() {
               productId={parseInt(productId!, 10)}
               jobTypes={[JobType.OPPORTUNITY_SYNTHESIS]}
               onJobComplete={() => {
-                // Refresh synthesis stats when job completes
                 fetchSynthesisStats();
               }}
               className="mb-3"
             />
 
             <div className="space-y-3">
-              <div className="text-sm text-gray-600">
-                {synthesisStats.hasRun && synthesisStats.status === 'completed' ? (
-                  <Link
-                    to={`/product-intelligence/products/${productId}/synthesis`}
-                    className="text-blue-600 hover:text-blue-800 font-medium"
-                  >
-                    {synthesisStats.threeWayMatches} three-way, {synthesisStats.twoWayMatches} two-way matches →
-                  </Link>
-                ) : (
-                  <span className="text-gray-500">
-                    Combines competitive, customer, and internal signals
-                  </span>
-                )}
-              </div>
-
               <div className="text-sm text-gray-500">
-                {synthesisStats.sourcesAvailable}/4 sources available for synthesis
+                Combines competitive, customer, internal, and evidence signals into one JTBD-centric report.
               </div>
 
               {synthesisStats.lastRunDate && (
@@ -877,13 +822,9 @@ export default function ProductDetailPage() {
               <div className="flex gap-2">
                 <Link
                   to={`/product-intelligence/products/${productId}/synthesis`}
-                  className={`flex-1 px-3 py-2 text-sm text-center rounded-lg font-medium transition-colors ${
-                    synthesisStats.sourcesAvailable > 0
-                      ? 'bg-purple-600 text-white hover:bg-purple-700'
-                      : 'bg-gray-200 text-gray-500 cursor-not-allowed pointer-events-none'
-                  }`}
+                  className="flex-1 px-3 py-2 text-sm text-center rounded-lg font-medium bg-purple-600 text-white hover:bg-purple-700 transition-colors"
                 >
-                  {synthesisStats.hasRun ? 'View Synthesis' : 'Run Synthesis'}
+                  {synthesisStats.hasRun ? 'View Synthesis' : 'Configure & Run Synthesis'}
                 </Link>
               </div>
             </div>

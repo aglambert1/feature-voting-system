@@ -1460,153 +1460,28 @@ export const reprocessActivityImport = async (
 };
 
 // ============================================================================
-// SYNTHESIS API
+// UNIFIED SYNTHESIS API (replaces the pre-PR-#33 /synthesis/* routes)
 // ============================================================================
 
 import type {
-  SynthesisStatusResponse,
-  SynthesisRun,
-  SynthesisResultsResponse,
+  UnifiedSynthesisRunResponse,
+  LatestUnifiedReportResponse,
 } from '../types';
 
-/**
- * Get synthesis status and available sources
- */
-export const getSynthesisStatus = async (
+export const triggerUnifiedSynthesis = async (
   productId: number
-): Promise<SynthesisStatusResponse> => {
-  const response = await api.get<SynthesisStatusResponse>(
-    `/synthesis/${productId}/status`
+): Promise<UnifiedSynthesisRunResponse> => {
+  const response = await api.post<UnifiedSynthesisRunResponse>(
+    `/products/${productId}/synthesis/run`
   );
   return response.data;
 };
 
-/**
- * Trigger a new synthesis run
- */
-export const triggerSynthesis = async (
+export const getLatestUnifiedReport = async (
   productId: number
-): Promise<SynthesisRun> => {
-  const response = await api.post<SynthesisRun>(
-    `/synthesis/${productId}/run`
-  );
-  return response.data;
-};
-
-/**
- * Get all synthesis runs for a product
- */
-export const getSynthesisRuns = async (
-  productId: number
-): Promise<{ runs: SynthesisRun[]; total: number }> => {
-  const response = await api.get<{ runs: SynthesisRun[]; total: number }>(
-    `/synthesis/${productId}/runs`
-  );
-  return response.data;
-};
-
-/**
- * Get full synthesis results including opportunities
- */
-export const getSynthesisResults = async (
-  productId: number,
-  runId: number
-): Promise<SynthesisResultsResponse> => {
-  const response = await api.get<SynthesisResultsResponse>(
-    `/synthesis/${productId}/runs/${runId}`
-  );
-  return response.data;
-};
-
-/**
- * Get the latest completed synthesis results
- */
-export const getLatestSynthesis = async (
-  productId: number
-): Promise<SynthesisResultsResponse> => {
-  const response = await api.get<SynthesisResultsResponse>(
-    `/synthesis/${productId}/latest`
-  );
-  return response.data;
-};
-
-/**
- * Helper to trigger file download from blob
- */
-const downloadBlob = (blob: Blob, filename: string) => {
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.URL.revokeObjectURL(url);
-};
-
-/**
- * Export synthesis results as JSON
- * Makes authenticated request and triggers download
- */
-export const exportSynthesisJson = async (
-  productId: number,
-  runId: number,
-  productName?: string
-): Promise<void> => {
-  try {
-    const response = await api.get(
-      `/synthesis/${productId}/runs/${runId}/export/json`,
-      { responseType: 'blob' }
-    );
-
-    const filename = productName
-      ? `synthesis_${productName.replace(/\s+/g, '_')}_${runId}.json`
-      : `synthesis_${productId}_${runId}.json`;
-
-    downloadBlob(response.data, filename);
-  } catch (error) {
-    console.error('Export JSON failed:', error);
-    throw error;
-  }
-};
-
-/**
- * Export synthesis results as CSV
- * Makes authenticated request and triggers download
- */
-export const exportSynthesisCsv = async (
-  productId: number,
-  runId: number,
-  productName?: string
-): Promise<void> => {
-  try {
-    const response = await api.get(
-      `/synthesis/${productId}/runs/${runId}/export/csv`,
-      { responseType: 'blob' }
-    );
-
-    const filename = productName
-      ? `synthesis_${productName.replace(/\s+/g, '_')}_${runId}.csv`
-      : `synthesis_${productId}_${runId}.csv`;
-
-    downloadBlob(response.data, filename);
-  } catch (error) {
-    console.error('Export CSV failed:', error);
-    throw error;
-  }
-};
-
-/**
- * Create an idea from a synthesized opportunity
- */
-export const createIdeaFromOpportunity = async (
-  productId: number,
-  opportunityId: number,
-  additionalDescription?: string
-): Promise<{ idea_id: number; title: string; status: string }> => {
-  const response = await api.post(
-    `/synthesis/${productId}/opportunities/${opportunityId}/create-idea`,
-    { additional_description: additionalDescription }
+): Promise<LatestUnifiedReportResponse> => {
+  const response = await api.get<LatestUnifiedReportResponse>(
+    `/products/${productId}/synthesis/latest`
   );
   return response.data;
 };
@@ -1836,6 +1711,63 @@ export const deleteJob = async (
     message: string;
   }>(
     `/product-intelligence/products/${productId}/jobs/${jobIdKey}`
+  );
+  return response.data;
+};
+
+// ============================================================================
+// UNIFIED SYNTHESIS CONFIG API METHODS
+// ============================================================================
+// These sit on the /products router (unified_synthesis.py) — distinct from
+// the legacy /synthesis/... routes above.
+
+import type {
+  SynthesisConfigResponse,
+  SynthesisConfigPutRequest,
+  SynthesisConfigData,
+  SynthesisCompetitorsConfigResponse,
+  SynthesisCompetitorConfigEntry,
+} from '../types';
+
+export const getSynthesisConfig = async (
+  productId: number
+): Promise<SynthesisConfigResponse> => {
+  const response = await api.get<SynthesisConfigResponse>(
+    `/products/${productId}/synthesis-config`
+  );
+  return response.data;
+};
+
+export const putSynthesisConfig = async (
+  productId: number,
+  body: SynthesisConfigPutRequest
+): Promise<{ created: boolean; config: SynthesisConfigData }> => {
+  const response = await api.put<{ created: boolean; config: SynthesisConfigData }>(
+    `/products/${productId}/synthesis-config`,
+    body
+  );
+  return response.data;
+};
+
+export const getSynthesisCompetitorsCfg = async (
+  productId: number
+): Promise<SynthesisCompetitorsConfigResponse> => {
+  const response = await api.get<SynthesisCompetitorsConfigResponse>(
+    `/products/${productId}/synthesis/competitors`
+  );
+  return response.data;
+};
+
+export const patchCompetitorSynthesisInclusion = async (
+  productId: number,
+  competitorId: number,
+  included: boolean
+): Promise<Pick<SynthesisCompetitorConfigEntry, 'competitor_id' | 'competitor_name' | 'synthesis_included'> & { message: string }> => {
+  const response = await api.patch<
+    Pick<SynthesisCompetitorConfigEntry, 'competitor_id' | 'competitor_name' | 'synthesis_included'> & { message: string }
+  >(
+    `/products/${productId}/synthesis/competitors/${competitorId}/synthesis-inclusion`,
+    { included }
   );
   return response.data;
 };
