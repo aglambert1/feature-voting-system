@@ -1483,3 +1483,57 @@ export interface CompetitorSuggestion {
   matched_competitor_name: string | null;
   is_new: boolean;
 }
+
+// ============================================================================
+// JTBD JOB MAP TYPES
+// ============================================================================
+// Note: the existing `JobType` enum above is the Celery queue task type
+// (product_analysis, functional_audit, etc.) — semantically unrelated to
+// JTBD categories. The JTBD category type is named `JobCategory` to avoid
+// the name collision. The Python enum is still called `JobType` on the
+// backend (separate namespace); wire field names stay `job_type`.
+
+export type JobCategory = 'functional' | 'emotional' | 'social';
+
+export type JobImportance = 'critical' | 'high' | 'medium' | 'low';
+
+export interface TargetCustomerProfile {
+  persona_name: string;
+  company_characteristics?: string;
+  key_traits: string[];
+  hiring_criteria?: string;
+}
+
+export interface JtbdJob {
+  id: number;
+  job_id_key: string;
+  job_type: JobCategory;
+  statement: string;
+  desired_outcomes: string[];
+  importance: JobImportance;
+  has_embedding: boolean;
+}
+
+export interface JobMapResponse {
+  product_id: number;
+  product_name: string;
+  target_customer_profile: TargetCustomerProfile | null;
+  job_map: Record<string, any> | null;
+  job_map_version: number;
+  job_map_last_updated: string | null;
+  jobs: JtbdJob[];
+}
+
+export interface JobCreateRequest {
+  job_id: string;
+  job_type: JobCategory;
+  statement: string;
+  desired_outcomes: string[];
+  importance: JobImportance;
+}
+
+export interface JobUpdateRequest {
+  statement?: string;
+  desired_outcomes?: string[];
+  importance?: JobImportance;
+}

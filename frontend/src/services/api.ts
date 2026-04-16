@@ -1767,5 +1767,78 @@ export const suggestCompetitorForEvidence = async (
   return response.data;
 };
 
+// ============================================================================
+// JTBD JOB MAP API METHODS
+// ============================================================================
+
+import type {
+  JobMapResponse,
+  TargetCustomerProfile,
+  JobCreateRequest,
+  JobUpdateRequest,
+  JtbdJob,
+} from '../types';
+
+export const getJobMap = async (
+  productId: number
+): Promise<JobMapResponse> => {
+  const response = await api.get<JobMapResponse>(
+    `/product-intelligence/products/${productId}/job-map`
+  );
+  return response.data;
+};
+
+export const updateTargetCustomer = async (
+  productId: number,
+  profile: TargetCustomerProfile
+): Promise<{ target_customer_profile: TargetCustomerProfile; message: string }> => {
+  const response = await api.put<{
+    target_customer_profile: TargetCustomerProfile;
+    message: string;
+  }>(
+    `/product-intelligence/products/${productId}/target-customer`,
+    profile
+  );
+  return response.data;
+};
+
+export const addJob = async (
+  productId: number,
+  body: JobCreateRequest
+): Promise<JtbdJob & { job_map_version: number }> => {
+  const response = await api.post<JtbdJob & { job_map_version: number }>(
+    `/product-intelligence/products/${productId}/jobs`,
+    body
+  );
+  return response.data;
+};
+
+export const updateJob = async (
+  productId: number,
+  jobIdKey: string,
+  body: JobUpdateRequest
+): Promise<JtbdJob & { job_map_version: number }> => {
+  const response = await api.put<JtbdJob & { job_map_version: number }>(
+    `/product-intelligence/products/${productId}/jobs/${jobIdKey}`,
+    body
+  );
+  return response.data;
+};
+
+export const deleteJob = async (
+  productId: number,
+  jobIdKey: string
+): Promise<{ product_id: number; removed_job_id: string; job_map_version: number; message: string }> => {
+  const response = await api.delete<{
+    product_id: number;
+    removed_job_id: string;
+    job_map_version: number;
+    message: string;
+  }>(
+    `/product-intelligence/products/${productId}/jobs/${jobIdKey}`
+  );
+  return response.data;
+};
+
 // Export the axios instance for custom requests
 export default api;
