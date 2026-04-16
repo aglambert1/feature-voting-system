@@ -45,6 +45,10 @@ class FunctionalComparison(BaseModel):
     mapping_status: Literal["Parity", "Advantage", "Gap", "Differentiator"] = Field(
         description="Parity=both have, Advantage=we have/they don't, Gap=they have/we don't, Differentiator=unique workflow"
     )
+    job_id: Optional[str] = Field(
+        default=None,
+        description="Job ID this feature serves (e.g., 'j1'), linking to the product's job map"
+    )
 
 
 class GapDeepDive(BaseModel):
@@ -80,15 +84,77 @@ class TechnicalConstraints(BaseModel):
     )
 
 
+class OutcomeCoverage(BaseModel):
+    """Coverage of a desired outcome by our product vs competitor."""
+    desired_outcome: str = Field(description="The desired outcome from the job map")
+    our_coverage: Literal["full", "partial", "none"] = Field(
+        description="How well our product covers this outcome"
+    )
+    competitor_coverage: Literal["full", "partial", "none"] = Field(
+        description="How well the competitor covers this outcome"
+    )
+
+
+class JobFeatureAssessment(BaseModel):
+    """A feature contributing to a job's satisfaction score."""
+    feature_name: str = Field(description="Name of the feature")
+    description: str = Field(description="What the feature does functionally")
+    whose: Literal["ours", "theirs", "both"] = Field(
+        description="Which product has this feature"
+    )
+    position: Literal["advantage", "gap", "parity", "differentiator"] = Field(
+        description="Our position: advantage=we have/they don't, gap=they have/we don't, parity=both have, differentiator=unique workflow"
+    )
+    evidence_ids: List[int] = Field(
+        default=[],
+        description="IDs of evidence records that informed this assessment"
+    )
+
+
+class JobAssessment(BaseModel):
+    """Unified per-job comparison between our product and a competitor.
+
+    This is the core analytical unit — one per job per competitor.
+    Advantages and gaps are both represented as features with different
+    'position' values, not in separate structures.
+    """
+    job_id: str = Field(description="Job ID from the product's job map (e.g., 'j1')")
+    job_statement: str = Field(description="The full job statement")
+    importance: Literal["critical", "high", "medium", "low"] = Field(
+        description="How important this job is to the target customer"
+    )
+    our_score: int = Field(ge=1, le=10, description="How well our product serves this job (1-10)")
+    competitor_score: int = Field(ge=1, le=10, description="How well the competitor serves this job (1-10)")
+    score_rationale: str = Field(
+        description="Explanation of what drives the score difference"
+    )
+    features: List[JobFeatureAssessment] = Field(
+        default=[],
+        description="Features that contribute to the scores (both advantages and gaps)"
+    )
+    outcome_coverage: List[OutcomeCoverage] = Field(
+        default=[],
+        description="How each desired outcome is covered by both products"
+    )
+
+
+class EvidenceCitation(BaseModel):
+    """Tracks which evidence informed a specific finding."""
+    evidence_id: int = Field(description="ID of the evidence record")
+    finding_type: str = Field(
+        description="Type of finding: 'job_score', 'feature_assessment', 'outcome_coverage'"
+    )
+    finding_description: str = Field(
+        description="Brief description of what this evidence informed"
+    )
+
+
 class FunctionalAuditOutput(BaseModel):
     """
     Complete output schema for CompetitorFunctionalAuditAgent.
 
-    Sections:
-    0. Competitor context
-    1. Functional comparison table
-    2. Deep-dive on gaps
-    3. Technical constraints
+    When a job map is available, includes job_assessments (the primary output).
+    When no job map exists, falls back to feature-centric analysis only.
     """
     competitor_context: CompetitorContext = Field(
         description="Section 0: Competitor context summary"
@@ -98,10 +164,19 @@ class FunctionalAuditOutput(BaseModel):
     )
     gaps_deep_dive: List[GapDeepDive] = Field(
         default=[],
-        description="Section 2: Deep-dive on features marked as Gap"
+        description="Section 2: Deep-dive on features marked as Gap (legacy, kept for backward compat)"
     )
     technical_constraints: TechnicalConstraints = Field(
         description="Section 3: Technical constraints and requirements"
+    )
+    # New JTBD fields
+    job_assessments: List[JobAssessment] = Field(
+        default=[],
+        description="Per-job unified comparison (populated when job map is available)"
+    )
+    evidence_citations: List[EvidenceCitation] = Field(
+        default=[],
+        description="Evidence records cited in the analysis"
     )
 
 
@@ -233,6 +308,8 @@ class FunctionalReportResponse(BaseModel):
     functional_comparison: Optional[List[FunctionalComparison]] = None
     gaps_deep_dive: Optional[List[GapDeepDive]] = None
     technical_constraints: Optional[TechnicalConstraints] = None
+    job_assessments: Optional[List[JobAssessment]] = None
+    evidence_citations: Optional[List[EvidenceCitation]] = None
     generated_at: Optional[str] = None
     queue_job_id: Optional[int] = None
 

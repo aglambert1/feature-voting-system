@@ -73,6 +73,15 @@ class CompetitorFunctionalReport(Base):
     # {integrations: [], api_capabilities: str, platform_requirements: str}
     technical_constraints = Column(JSON, nullable=True)
 
+    # Unified per-job comparison (replaces gaps_deep_dive)
+    # [{job_id, job_statement, importance, our_score, competitor_score, score_rationale,
+    #   features: [{feature_name, description, whose, position, evidence_ids}],
+    #   outcome_coverage: [{desired_outcome, our_coverage, competitor_coverage}]}]
+    job_assessments = Column(JSON, nullable=True)
+
+    # Evidence citation tracking: [{evidence_id, finding_type, finding_description}]
+    evidence_citations = Column(JSON, nullable=True)
+
     # Raw search results used (cleaned HTML, for reference)
     raw_search_results = Column(JSON, nullable=True)
 
@@ -104,6 +113,8 @@ class CompetitorFunctionalReport(Base):
             "functional_comparison": self.functional_comparison,
             "gaps_deep_dive": self.gaps_deep_dive,
             "technical_constraints": self.technical_constraints,
+            "job_assessments": self.job_assessments,
+            "evidence_citations": self.evidence_citations,
             "changes_from_previous": self.changes_from_previous,
             "generated_at": self.generated_at.isoformat() if self.generated_at else None,
             "queue_job_id": self.queue_job_id,

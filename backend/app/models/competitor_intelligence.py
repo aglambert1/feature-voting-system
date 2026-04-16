@@ -258,6 +258,12 @@ class ProductCompetitor(Base):
     deep_analysis_last_run = Column(DateTime, nullable=True)  # Last time deep analysis ran
     deep_analysis_status = Column(String(50), nullable=True)  # "pending", "running", "completed", "failed"
 
+    # Decoupled audit/synthesis workflow (replaces deep_analysis fields)
+    audit_enabled = Column(Boolean, nullable=False, default=False)
+    audit_status = Column(String(50), nullable=True)  # pending, running, completed, failed
+    audit_last_run = Column(DateTime, nullable=True)
+    synthesis_included = Column(Boolean, nullable=False, default=False)
+
     status = Column(String(50), nullable=False, default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
