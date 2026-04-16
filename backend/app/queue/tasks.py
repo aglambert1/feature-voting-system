@@ -40,6 +40,62 @@ def get_db():
         raise
 
 
+def _cosine_similarity(a: list, b: list) -> float:
+    """Compute cosine similarity between two embedding vectors.
+
+    Voyage AI embeddings are L2-normalized, so the dot product equals
+    the cosine similarity. We still normalize defensively to handle
+    embeddings from other sources or partially-corrupted vectors.
+    """
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    try:
+        import numpy as np
+        va = np.array(a, dtype=float)
+        vb = np.array(b, dtype=float)
+        na = np.linalg.norm(va)
+        nb = np.linalg.norm(vb)
+        if na == 0.0 or nb == 0.0:
+            return 0.0
+        return float(np.dot(va, vb) / (na * nb))
+    except Exception:
+        return 0.0
+
+
+def _link_idea_to_job(db, idea, similarity_threshold: float = 0.5) -> Optional[str]:
+    """Link an idea to its best-matching ProductJob via JTBD embedding similarity.
+
+    Mutates idea.job_id_key in place and returns the matched key (or None).
+    Caller is responsible for committing.
+    """
+    if not idea.jtbd_embedding:
+        return None
+
+    from app.models.competitor_intelligence import ProductJob
+
+    jobs = db.query(ProductJob).filter(
+        ProductJob.product_id == idea.product_id,
+        ProductJob.status == "active",
+    ).all()
+    if not jobs:
+        return None
+
+    best_job = None
+    best_sim = 0.0
+    for job in jobs:
+        if not job.statement_embedding:
+            continue
+        sim = _cosine_similarity(idea.jtbd_embedding, job.statement_embedding)
+        if sim > best_sim and sim > similarity_threshold:
+            best_sim = sim
+            best_job = job
+
+    if best_job:
+        idea.job_id_key = best_job.job_id_key
+        return best_job.job_id_key
+    return None
+
+
 @shared_task(bind=True, name='app.queue.tasks.analyze_product_task', soft_time_limit=300)
 def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
     """
@@ -845,6 +901,14 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             except Exception as jtbd_emb_err:
                 print(f"[triage_idea_task] Warning: JTBD embedding failed: {jtbd_emb_err}")
 
+            # Link idea to best-matching ProductJob via embedding similarity
+            try:
+                matched_key = _link_idea_to_job(db, idea)
+                if matched_key:
+                    print(f"[triage_idea_task] Linked idea {idea.id} to job {matched_key}")
+            except Exception as link_err:
+                print(f"[triage_idea_task] Warning: Job linkage failed: {link_err}")
+
         # Record status history for agent triage
         # Only record as automated action if auto-respond is ON and status changed
         # When auto-respond is OFF, we don't record the agent's recommendation in history
@@ -1149,6 +1213,14 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
                 idea.jtbd_embedding = generate_embedding(jtbd, input_type="document")
             except Exception as jtbd_emb_err:
                 print(f"[submit_and_triage_idea_task] Warning: JTBD embedding failed: {jtbd_emb_err}")
+
+            # Link idea to best-matching ProductJob via embedding similarity
+            try:
+                matched_key = _link_idea_to_job(db, idea)
+                if matched_key:
+                    print(f"[submit_and_triage_idea_task] Linked idea {idea.id} to job {matched_key}")
+            except Exception as link_err:
+                print(f"[submit_and_triage_idea_task] Warning: Job linkage failed: {link_err}")
 
         db.commit()
 
@@ -2250,8 +2322,47 @@ def internal_discovery_task(self, job_id: int):
         else:
             output = InternalDiscoveryOutput(**result)
 
+        # Pre-load active ProductJobs and pre-embed JTBD statements so we can
+        # link each new theme to its best-matching job in one batch.
+        from app.models.competitor_intelligence import ProductJob
+        product_jobs = db.query(ProductJob).filter(
+            ProductJob.product_id == import_record.product_id,
+            ProductJob.status == "active",
+        ).all()
+        active_jobs_with_emb = [j for j in product_jobs if j.statement_embedding]
+
+        winloss_jtbds = [t.jtbd_statement for t in output.winloss_themes if t.jtbd_statement]
+        support_jtbds = [t.jtbd_statement for t in output.support_themes if t.jtbd_statement]
+        winloss_embs: Dict[str, list] = {}
+        support_embs: Dict[str, list] = {}
+        if active_jobs_with_emb and (winloss_jtbds or support_jtbds):
+            try:
+                from app.services.embedding_service import generate_embeddings_batch
+                if winloss_jtbds:
+                    embs = generate_embeddings_batch(winloss_jtbds, input_type="document")
+                    winloss_embs = dict(zip(winloss_jtbds, embs))
+                if support_jtbds:
+                    embs = generate_embeddings_batch(support_jtbds, input_type="document")
+                    support_embs = dict(zip(support_jtbds, embs))
+            except Exception as emb_err:
+                print(f"[internal_discovery_task] Warning: JTBD embedding for themes failed: {emb_err}")
+
+        def _match_job_for_jtbd(emb: Optional[list], threshold: float = 0.5) -> Optional[str]:
+            if not emb:
+                return None
+            best_key = None
+            best_sim = 0.0
+            for j in active_jobs_with_emb:
+                sim = _cosine_similarity(emb, j.statement_embedding)
+                if sim > best_sim and sim > threshold:
+                    best_sim = sim
+                    best_key = j.job_id_key
+            return best_key
+
         # Store win/loss themes
         for theme in output.winloss_themes:
+            jtbd_emb = winloss_embs.get(theme.jtbd_statement) if theme.jtbd_statement else None
+            matched_job_key = _match_job_for_jtbd(jtbd_emb)
             db_theme = WinLossTheme(
                 import_id=import_id,
                 product_id=import_record.product_id,
@@ -2262,12 +2373,15 @@ def internal_discovery_task(self, job_id: int):
                 total_value=theme.total_value,
                 sample_reasons=theme.sample_reasons,
                 feature_keywords=theme.feature_keywords,
-                jtbd_statement=theme.jtbd_statement
+                jtbd_statement=theme.jtbd_statement,
+                job_id_key=matched_job_key,
             )
             db.add(db_theme)
 
         # Store support themes
         for theme in output.support_themes:
+            jtbd_emb = support_embs.get(theme.jtbd_statement) if theme.jtbd_statement else None
+            matched_job_key = _match_job_for_jtbd(jtbd_emb)
             db_theme = SupportTheme(
                 import_id=import_id,
                 product_id=import_record.product_id,
@@ -2277,7 +2391,8 @@ def internal_discovery_task(self, job_id: int):
                 sample_subjects=theme.sample_subjects,
                 feature_keywords=theme.feature_keywords,
                 urgency_indicator=theme.urgency_indicator,
-                jtbd_statement=theme.jtbd_statement
+                jtbd_statement=theme.jtbd_statement,
+                job_id_key=matched_job_key,
             )
             db.add(db_theme)
 
@@ -3099,6 +3214,611 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
             except Exception:
                 pass
         raise
+
+    finally:
+        if db:
+            db.close()
+
+
+# ---------------------------------------------------------------------------
+# Unified Synthesis (Phase 3)
+# ---------------------------------------------------------------------------
+
+def _build_unified_synthesis_markdown(
+    product_name: str,
+    output: dict,
+    source_stats: dict,
+) -> str:
+    """Build a markdown report for a unified synthesis output.
+
+    Sections: summary -> source stats -> job scorecard -> feature clusters ->
+    opportunities -> high-impact items -> innovation whitespace.
+    """
+    parts: list = []
+    parts.append(f"# Unified Synthesis Report — {product_name}\n")
+
+    if output.get("analysis_summary"):
+        parts.append("## Summary\n")
+        parts.append(output["analysis_summary"].strip() + "\n")
+
+    parts.append("## Source Stats\n")
+    for key, val in (source_stats or {}).items():
+        parts.append(f"- **{key}**: {val}")
+    parts.append("")
+
+    job_scorecard = output.get("job_scorecard") or []
+    if job_scorecard:
+        parts.append("## Job Scorecard\n")
+        for entry in job_scorecard:
+            parts.append(f"### {entry.get('job_id')} — {entry.get('job_statement', '')}")
+            parts.append(
+                f"- Importance: {entry.get('importance', 'medium')}; "
+                f"our_score: {entry.get('our_score', 0)}/10; "
+                f"rank: {entry.get('our_rank')}/{entry.get('total_ranked')}"
+            )
+            comp_scores = entry.get("competitor_scores") or {}
+            if comp_scores:
+                comp_str = ", ".join(f"{n}={s}" for n, s in comp_scores.items())
+                parts.append(f"- Competitors: {comp_str}")
+            if entry.get("best_in_class"):
+                parts.append(f"- Best-in-class: {entry['best_in_class']}")
+            parts.append(
+                f"- Investment: **{entry.get('investment_recommendation', 'maintain')}** — "
+                f"{entry.get('rationale', '')}"
+            )
+            parts.append("")
+
+    cluster_matrix = output.get("feature_cluster_matrix") or []
+    if cluster_matrix:
+        parts.append("## Feature Clusters\n")
+        for cluster in cluster_matrix:
+            parts.append(f"### {cluster.get('job_id')} — {cluster.get('job_statement', '')}")
+            for feat in cluster.get("features", []) or []:
+                comps = ", ".join(feat.get("competitors_with_feature") or []) or "-"
+                parts.append(
+                    f"- **{feat.get('feature_name')}** "
+                    f"({feat.get('prevalence', '?')}; us: {feat.get('our_status', '?')}; "
+                    f"competitors: {comps})"
+                )
+            parts.append("")
+
+    opportunities = output.get("opportunities") or []
+    if opportunities:
+        parts.append("## Opportunities\n")
+        for opp in opportunities:
+            parts.append(
+                f"### [{opp.get('priority_score', 0):.1f}] {opp.get('opportunity_name', 'Opportunity')}"
+            )
+            sources = ", ".join(opp.get("sources") or [])
+            parts.append(
+                f"- Sources ({opp.get('source_count', 1)}): {sources}; "
+                f"action: {opp.get('recommended_action', 'review')}"
+            )
+            if opp.get("job_id_key"):
+                parts.append(
+                    f"- Job: {opp['job_id_key']} (Δ satisfaction: "
+                    f"{opp.get('job_satisfaction_delta', 0)}); "
+                    f"investment: {opp.get('investment_tier', 'maintain')}"
+                )
+            if opp.get("opportunity_summary"):
+                parts.append(f"- {opp['opportunity_summary']}")
+            if opp.get("jtbd_statement"):
+                parts.append(f"- JTBD: {opp['jtbd_statement']}")
+            parts.append("")
+
+    high_impact = output.get("high_impact_items") or []
+    if high_impact:
+        parts.append("## High-Impact Items\n")
+        for item in sorted(high_impact, key=lambda x: x.get("rank", 99)):
+            tag = item.get("type", "item").upper()
+            parts.append(
+                f"### [{tag}] #{item.get('rank', '?')} {item.get('title', '')}"
+            )
+            if item.get("description"):
+                parts.append(f"- {item['description']}")
+            if item.get("market_gravity"):
+                parts.append(f"- Market gravity: {item['market_gravity']}")
+            if item.get("competitors"):
+                parts.append(f"- Competitors: {', '.join(item['competitors'])}")
+            parts.append("")
+
+    if output.get("innovation_whitespace"):
+        parts.append("## Innovation Whitespace\n")
+        parts.append(output["innovation_whitespace"].strip() + "\n")
+
+    return "\n".join(parts)
+
+
+@shared_task(
+    bind=True,
+    name='app.queue.tasks.unified_synthesis_task',
+    max_retries=2,
+    default_retry_delay=60,
+    soft_time_limit=1200,
+)
+def unified_synthesis_task(self, job_id: int):
+    """Phase 3 unified synthesis: replaces landscape + opportunity synthesis.
+
+    Pulls signals from configured source types, runs UnifiedSynthesisAgent,
+    persists a SynthesisReport + SynthesizedOpportunity rows, and optionally
+    auto-generates Ideas above the configured priority threshold.
+    """
+    from app.agents.unified_synthesis_agent import UnifiedSynthesisAgent
+    from app.models.synthesis import (
+        SynthesisConfig,
+        SynthesisReport,
+        SynthesisRun,
+        SynthesizedOpportunity,
+    )
+    from app.models.competitive_reports import CompetitorFunctionalReport
+    from app.models.evidence import Evidence, COMPETITIVE_EVIDENCE_TYPES
+    from app.models.idea import Idea, IdeaStatus, SourceType
+    from app.models.vote import Vote
+    from app.services.internal_theme_merger import InternalThemeMergerService
+    from app.services.llm_service import LLMService
+    from app.services.scoring_defaults import DEFAULT_SCORING_WEIGHTS
+    from sqlalchemy import desc, func as sql_func
+
+    db = None
+    try:
+        db = SessionLocal()
+        queue_service = QueueService(db)
+
+        job = queue_service.get_job(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        queue_service.mark_running(job_id)
+        queue_service.update_progress(job_id, 5.0, "Loading synthesis configuration...")
+
+        product_id = job.product_id
+        if not product_id:
+            raise ValueError("product_id is required for unified synthesis")
+
+        product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+        if not product:
+            raise ValueError(f"Product {product_id} not found")
+
+        # Step 1: Load (or create default) SynthesisConfig
+        config = db.query(SynthesisConfig).filter(
+            SynthesisConfig.product_id == product_id
+        ).first()
+        if not config:
+            config = SynthesisConfig(
+                product_id=product_id,
+                included_source_types=["competitive"],
+                auto_generate_ideas=True,
+                idea_priority_threshold=0.7,
+            )
+            db.add(config)
+            db.flush()
+
+        included_sources = list(config.included_source_types or ["competitive"])
+        included_set = {s.lower() for s in included_sources}
+
+        # Step 2: Load included competitors (synthesis_included == True)
+        included_competitors = db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id == product_id,
+            ProductCompetitor.status == "active",
+            ProductCompetitor.synthesis_included == True,  # noqa: E712
+        ).all()
+
+        # Step 3: Auto-trigger missing audits for synthesis_included competitors.
+        # We dispatch but do NOT block — the user re-runs once audits complete.
+        # Synchronous polling inside a Celery task can deadlock workers.
+        triggered_audit_jobs = []
+        if "competitive" in included_set:
+            for comp in included_competitors:
+                if comp.audit_status != "completed":
+                    audit_job = queue_service.create_job(
+                        job_type=JobType.FUNCTIONAL_AUDIT,
+                        input_data={"competitor_id": comp.id},
+                        product_id=product_id,
+                        user_id=job.user_id,
+                        parent_job_id=job_id,
+                    )
+                    db.commit()
+                    try:
+                        result = functional_audit_task.delay(audit_job.id)
+                        queue_service.mark_queued(audit_job.id, result.id)
+                        triggered_audit_jobs.append(audit_job.id)
+                    except Exception as dispatch_err:
+                        print(
+                            f"[unified_synthesis_task] Failed to dispatch audit for "
+                            f"competitor {comp.id}: {dispatch_err}"
+                        )
+
+            if triggered_audit_jobs:
+                # Refuse to proceed; user re-runs once audits finish.
+                msg = (
+                    f"Auto-triggered {len(triggered_audit_jobs)} missing competitor "
+                    f"audit(s). Re-run unified synthesis once those jobs complete."
+                )
+                queue_service.mark_success(
+                    job_id,
+                    {
+                        "status": "deferred",
+                        "triggered_audit_job_ids": triggered_audit_jobs,
+                        "message": msg,
+                    },
+                )
+                return {
+                    "status": "deferred",
+                    "triggered_audit_job_ids": triggered_audit_jobs,
+                }
+
+        queue_service.update_progress(job_id, 15.0, "Loading product context...")
+
+        # Step 4: Build product_context including job_map
+        product_context: Dict[str, Any] = {
+            "product_name": product.product_name,
+            "product_description": product.product_description,
+            "product_category": product.product_category,
+        }
+        if product.target_customer_profile:
+            product_context["target_customer_profile"] = product.target_customer_profile
+        if product.job_map:
+            product_context["job_map"] = product.job_map
+
+        features = db.query(ProductFeature).filter(
+            ProductFeature.product_id == product_id,
+            ProductFeature.status == "active",
+        ).limit(15).all()
+        if features:
+            product_context["core_features"] = [f.feature_name for f in features]
+
+        queue_service.update_progress(job_id, 25.0, "Gathering competitive data...")
+
+        # Step 5a: COMPETITIVE — load functional reports for included competitors
+        competitor_reports: List[Dict[str, Any]] = []
+        source_competitor_report_ids: List[int] = []
+        included_competitor_ids = [c.id for c in included_competitors]
+
+        if "competitive" in included_set and included_competitor_ids:
+            functional_reports = db.query(CompetitorFunctionalReport).filter(
+                CompetitorFunctionalReport.product_id == product_id,
+                CompetitorFunctionalReport.product_competitor_id.in_(included_competitor_ids),
+            ).all()
+
+            # Index competitor-linked evidence (filter to competitive types)
+            comp_evidence_q = db.query(Evidence).filter(
+                Evidence.product_id == product_id,
+                Evidence.competitor_id.in_(included_competitor_ids),
+            ).order_by(Evidence.created_at.desc()).all()
+            evidence_by_competitor: Dict[int, List[Evidence]] = {}
+            for ev in comp_evidence_q:
+                if ev.evidence_type in COMPETITIVE_EVIDENCE_TYPES:
+                    evidence_by_competitor.setdefault(ev.competitor_id, []).append(ev)
+
+            for report in functional_reports:
+                comp = next(
+                    (c for c in included_competitors if c.id == report.product_competitor_id),
+                    None,
+                )
+                comp_name = (
+                    comp.competitor_name if comp
+                    else f"Competitor {report.product_competitor_id}"
+                )
+                ev_list = evidence_by_competitor.get(report.product_competitor_id, [])[:10]
+                competitor_reports.append({
+                    "competitor_name": comp_name,
+                    "audit": {
+                        "competitor_context": report.competitor_context,
+                        "functional_comparison": report.functional_comparison,
+                        "gaps_deep_dive": report.gaps_deep_dive,
+                        "technical_constraints": report.technical_constraints,
+                        "job_assessments": report.job_assessments,
+                    },
+                    "evidence": [{
+                        "id": ev.id,
+                        "title": ev.title,
+                        "evidence_type": ev.evidence_type.value if ev.evidence_type else None,
+                        "source_url": ev.source_url,
+                        "source_description": ev.source_description,
+                    } for ev in ev_list],
+                })
+                source_competitor_report_ids.append(report.id)
+
+        queue_service.update_progress(job_id, 40.0, "Gathering customer ideas...")
+
+        # Step 5b: CUSTOMER — top 50 ACCEPTED ideas by vote count
+        customer_ideas: List[Dict[str, Any]] = []
+        if "customer" in included_set:
+            vote_counts = db.query(
+                Vote.idea_id,
+                sql_func.sum(Vote.vote_value).label("vote_count"),
+            ).group_by(Vote.idea_id).subquery()
+
+            ideas_with_votes = db.query(
+                Idea,
+                sql_func.coalesce(vote_counts.c.vote_count, 0).label("vote_count"),
+            ).outerjoin(vote_counts, Idea.id == vote_counts.c.idea_id).filter(
+                Idea.product_id == product_id,
+                Idea.status == IdeaStatus.ACCEPTED,
+            ).order_by(desc("vote_count")).limit(50).all()
+
+            for idea, votes in ideas_with_votes:
+                customer_ideas.append({
+                    "id": idea.id,
+                    "title": idea.title,
+                    "description": idea.what_description or "",
+                    "vote_count": int(votes) if votes else 0,
+                    "status": idea.status.value if idea.status else "unknown",
+                    "jtbd_statement": getattr(idea, "jtbd_statement", None),
+                    "job_id_key": getattr(idea, "job_id_key", None),
+                })
+
+        queue_service.update_progress(job_id, 55.0, "Gathering internal feedback...")
+
+        # Step 5c: INTERNAL — merged win/loss + support themes
+        winloss_themes: List[Dict[str, Any]] = []
+        support_themes: List[Dict[str, Any]] = []
+        if "internal" in included_set:
+            merger = InternalThemeMergerService(db)
+            merged = merger.merge_internal_evidence(product_id)
+            internal_data = merger.to_synthesis_format(merged)
+            winloss_themes = internal_data.get("winloss_themes", []) or []
+            support_themes = internal_data.get("support_themes", []) or []
+
+        queue_service.update_progress(job_id, 65.0, "Gathering evidence/research...")
+
+        # Step 5d: EVIDENCE — non-competitive Evidence records
+        evidence_items: List[Dict[str, Any]] = []
+        if "evidence" in included_set:
+            all_evidence = db.query(Evidence).filter(
+                Evidence.product_id == product_id,
+            ).order_by(Evidence.created_at.desc()).limit(100).all()
+            for ev in all_evidence:
+                if ev.evidence_type in COMPETITIVE_EVIDENCE_TYPES:
+                    continue  # already routed via competitive enrichment
+                evidence_items.append({
+                    "id": ev.id,
+                    "evidence_id": ev.id,
+                    "title": ev.title,
+                    "evidence_type": ev.evidence_type.value if ev.evidence_type else None,
+                    "content": ev.content,
+                    "source_url": ev.source_url,
+                    "source_description": ev.source_description,
+                    "jtbd_statement": ev.jtbd_statement,
+                    "job_id_key": None,
+                })
+
+        queue_service.update_progress(job_id, 70.0, "Running unified synthesis agent...")
+
+        # Step 6: Compute effective scoring weights (defaults ∪ overrides)
+        effective_weights: Dict[str, Any] = {
+            k: (v.copy() if isinstance(v, dict) else v)
+            for k, v in DEFAULT_SCORING_WEIGHTS.items()
+        }
+        overrides = config.scoring_weight_overrides or {}
+        for key, val in overrides.items():
+            if isinstance(val, dict) and isinstance(effective_weights.get(key), dict):
+                effective_weights[key] = {**effective_weights[key], **val}
+            else:
+                effective_weights[key] = val
+
+        # Sanity check: at least one source produced data
+        has_data = bool(
+            competitor_reports or customer_ideas or winloss_themes
+            or support_themes or evidence_items
+        )
+        if not has_data:
+            raise ValueError(
+                "No data available for unified synthesis. Configure source types "
+                "and ensure at least one source has data."
+            )
+
+        # Step 7: Run agent
+        llm_service = LLMService()
+        agent = UnifiedSynthesisAgent(
+            db=db,
+            llm_service=llm_service,
+            product_id=product_id,
+            user_id=job.user_id,
+            job_id=job.job_uuid,
+            scoring_weights=effective_weights,
+        )
+
+        agent_input = {
+            "product_context": product_context,
+            "included_source_types": included_sources,
+            "competitor_reports": competitor_reports,
+            "customer_ideas": customer_ideas,
+            "winloss_themes": winloss_themes,
+            "support_themes": support_themes,
+            "evidence_items": evidence_items,
+        }
+        result = agent.execute(agent_input, max_tokens=12000)
+
+        queue_service.update_progress(job_id, 85.0, "Persisting synthesis report...")
+
+        # Step 8: Persist SynthesisReport
+        previous_report = db.query(SynthesisReport).filter(
+            SynthesisReport.product_id == product_id,
+        ).order_by(desc(SynthesisReport.report_version)).first()
+        next_version = (previous_report.report_version + 1) if previous_report else 1
+
+        source_stats = {
+            "competitor_count": len(included_competitors),
+            "competitor_report_count": len(competitor_reports),
+            "idea_count": len(customer_ideas),
+            "winloss_count": len(winloss_themes),
+            "support_count": len(support_themes),
+            "evidence_count": len(evidence_items),
+        }
+
+        markdown_md = _build_unified_synthesis_markdown(
+            product.product_name, result, source_stats,
+        )
+
+        synthesis_report = SynthesisReport(
+            product_id=product_id,
+            report_version=next_version,
+            included_source_types=included_sources,
+            job_scorecard=result.get("job_scorecard"),
+            feature_cluster_matrix=result.get("feature_cluster_matrix"),
+            opportunities=result.get("opportunities"),
+            high_impact_items=result.get("high_impact_items"),
+            innovation_whitespace=result.get("innovation_whitespace"),
+            analysis_summary=result.get("analysis_summary"),
+            source_stats=source_stats,
+            included_competitor_ids=included_competitor_ids,
+            source_competitor_report_ids=source_competitor_report_ids,
+            report_content_md=markdown_md,
+            queue_job_id=job_id,
+        )
+        db.add(synthesis_report)
+        db.flush()
+
+        # Step 9: Persist SynthesizedOpportunity rows.
+        # NOTE: synthesized_opportunities.synthesis_run_id is NOT NULL, so we
+        # also create a lightweight SynthesisRun for backward-compat consumers.
+        backing_run = SynthesisRun(
+            product_id=product_id,
+            status="completed",
+            sources_used=included_sources,
+            source_snapshot=source_stats,
+            analysis_summary=result.get("analysis_summary"),
+            job_uuid=job.job_uuid,
+            completed_at=datetime.utcnow(),
+        )
+        db.add(backing_run)
+        db.flush()
+
+        opportunities_out = result.get("opportunities") or []
+        # Pre-compute JTBD embeddings (single batch call)
+        jtbd_texts = [
+            o.get("jtbd_statement") for o in opportunities_out if o.get("jtbd_statement")
+        ]
+        jtbd_emb_map: Dict[str, list] = {}
+        if jtbd_texts:
+            try:
+                from app.services.embedding_service import generate_embeddings_batch
+                embs = generate_embeddings_batch(jtbd_texts, input_type="document")
+                jtbd_emb_map = dict(zip(jtbd_texts, embs))
+            except Exception as emb_err:
+                print(
+                    f"[unified_synthesis_task] Warning: opportunity JTBD embedding failed: "
+                    f"{emb_err}"
+                )
+
+        for opp in opportunities_out:
+            db_opp = SynthesizedOpportunity(
+                synthesis_run_id=backing_run.id,
+                synthesis_report_id=synthesis_report.id,
+                product_id=product_id,
+                opportunity_name=opp.get("opportunity_name", "Opportunity"),
+                opportunity_summary=opp.get("opportunity_summary"),
+                priority_score=float(opp.get("priority_score", 0.0)),
+                source_count=int(opp.get("source_count", 1)),
+                sources=opp.get("sources") or [],
+                competitive_evidence=opp.get("competitive_evidence"),
+                customer_evidence=opp.get("customer_evidence"),
+                internal_evidence=opp.get("internal_evidence"),
+                evidence_signals=opp.get("evidence_signals"),
+                recommended_action=opp.get("recommended_action"),
+                feature_keywords=opp.get("feature_keywords") or [],
+                jtbd_statement=opp.get("jtbd_statement"),
+                jtbd_embedding=jtbd_emb_map.get(opp.get("jtbd_statement") or ""),
+                job_id_key=opp.get("job_id_key"),
+                investment_tier=opp.get("investment_tier"),
+                job_satisfaction_delta=opp.get("job_satisfaction_delta"),
+            )
+            db.add(db_opp)
+
+        db.commit()
+        db.refresh(synthesis_report)
+
+        queue_service.update_progress(job_id, 95.0, "Auto-generating ideas (if enabled)...")
+
+        # Step 10: Auto-generate ideas above threshold
+        ideas_generated = 0
+        triage_jobs_created = 0
+        if config.auto_generate_ideas and opportunities_out:
+            # Threshold is 0.0-1.0 in config; opportunity priority_score is 0-100
+            score_threshold = float(config.idea_priority_threshold or 0.7) * 100.0
+            for opp in opportunities_out:
+                if float(opp.get("priority_score", 0.0)) < score_threshold:
+                    continue
+                feature_name = opp.get("opportunity_name", "Opportunity")
+                # Dedup by name + source
+                existing_idea = db.query(Idea).filter(
+                    Idea.product_id == product_id,
+                    Idea.title == feature_name[:255],
+                    Idea.source_type == SourceType.COMPETITOR_AUTOMATED,
+                ).first()
+                if existing_idea:
+                    continue
+
+                source_metadata = {
+                    "synthesis_report_id": synthesis_report.id,
+                    "synthesis_report_version": synthesis_report.report_version,
+                    "feature_name": feature_name,
+                    "priority_score": opp.get("priority_score"),
+                    "sources": opp.get("sources") or [],
+                    "job_id_key": opp.get("job_id_key"),
+                    "investment_tier": opp.get("investment_tier"),
+                }
+
+                use_case_lines = ["Synthesized from multiple sources:"]
+                for src in (opp.get("sources") or []):
+                    use_case_lines.append(f"- {src}")
+
+                new_idea = Idea(
+                    title=feature_name[:255],
+                    what_description=opp.get("opportunity_summary") or feature_name,
+                    why_description=(opp.get("recommended_action") or "")[:1000],
+                    use_case_description="\n".join(use_case_lines),
+                    product_id=product_id,
+                    source_type=SourceType.COMPETITOR_AUTOMATED,
+                    source_metadata=source_metadata,
+                    status=IdeaStatus.PENDING,
+                    is_active=False,
+                    auto_categorized=False,
+                )
+                db.add(new_idea)
+                db.flush()
+                ideas_generated += 1
+
+                triage_job = queue_service.create_job(
+                    job_type=JobType.IDEA_TRIAGE,
+                    input_data={"idea_id": new_idea.id},
+                    product_id=product_id,
+                    parent_job_id=job_id,
+                    user_id=job.user_id,
+                )
+                db.commit()
+                try:
+                    triage_idea_task.delay(triage_job.id)
+                    triage_jobs_created += 1
+                except Exception as dispatch_err:
+                    print(
+                        f"[unified_synthesis_task] Triage dispatch failed: {dispatch_err}"
+                    )
+
+        output_data = {
+            "synthesis_report_id": synthesis_report.id,
+            "report_version": synthesis_report.report_version,
+            "included_sources": included_sources,
+            "source_stats": source_stats,
+            "opportunities_count": len(opportunities_out),
+            "ideas_generated": ideas_generated,
+            "triage_jobs_created": triage_jobs_created,
+        }
+        queue_service.mark_success(job_id, output_data)
+        return output_data
+
+    except Exception as e:
+        error_msg = str(e)
+        error_tb = traceback.format_exc()
+        print(f"[unified_synthesis_task] Error for job {job_id}: {error_msg}")
+        if db:
+            try:
+                queue_service = QueueService(db)
+                queue_service.mark_failure(job_id, error_msg, error_tb)
+            except Exception:
+                pass
+        raise self.retry(exc=e)
 
     finally:
         if db:

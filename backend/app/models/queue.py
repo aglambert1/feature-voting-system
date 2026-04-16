@@ -69,6 +69,9 @@ class JobType(str, enum.Enum):
     INTERNAL_DISCOVERY = "internal_discovery"  # Process uploaded internal feedback
     OPPORTUNITY_SYNTHESIS = "opportunity_synthesis"  # Three-source synthesis
 
+    # Unified synthesis (Phase 3 — replaces landscape + opportunity synthesis)
+    UNIFIED_SYNTHESIS = "unified_synthesis"  # JTBD-centric multi-source synthesis
+
     # Activity Analysis job types (CRM activity stream analysis)
     ACTIVITY_INSIGHT = "activity_insight"  # Analyze CRM activity streams for product insights
 

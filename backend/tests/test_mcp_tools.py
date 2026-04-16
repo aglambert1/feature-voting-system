@@ -1995,3 +1995,146 @@ class TestCiGetCompetitorListAuditStatus:
             assert c["audit_enabled"] is True
             assert c["audit_status"] == "completed"
             assert c["synthesis_included"] is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 unified synthesis tools
+# ---------------------------------------------------------------------------
+
+class TestSynthesisConfigure:
+    def test_creates_and_updates_config(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import synthesis_configure
+        from app.models.synthesis import SynthesisConfig
+
+        # Create fresh
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_configure(
+                product_a.id,
+                source_types=["competitive", "customer"],
+                auto_generate_ideas=False,
+                idea_priority_threshold=0.85,
+            )
+            assert "error" not in result
+            assert result["created"] is True
+            assert result["config"]["included_source_types"] == ["competitive", "customer"]
+            assert result["config"]["auto_generate_ideas"] is False
+            assert result["config"]["idea_priority_threshold"] == 0.85
+
+        # Update existing
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_configure(
+                product_a.id,
+                source_types=["competitive", "customer", "internal"],
+            )
+            assert "error" not in result
+            assert result["created"] is False
+            assert result["config"]["included_source_types"] == [
+                "competitive", "customer", "internal"
+            ]
+            # Unchanged fields persist
+            assert result["config"]["auto_generate_ideas"] is False
+            assert result["config"]["idea_priority_threshold"] == 0.85
+
+        # Verify only one config row exists
+        count = db_session.query(SynthesisConfig).filter(
+            SynthesisConfig.product_id == product_a.id
+        ).count()
+        assert count == 1
+
+    def test_rejects_unknown_source_types(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import synthesis_configure
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_configure(product_a.id, source_types=["bogus"])
+            assert "error" in result
+            assert "bogus" in result["error"] or "Unknown" in result["error"]
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.synthesis import synthesis_configure
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = synthesis_configure(product_a.id, source_types=["competitive"])
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+class TestSynthesisGetConfig:
+    def test_returns_defaults_when_not_set(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import synthesis_get_config
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_get_config(product_a.id)
+            assert "error" not in result
+            assert result["exists"] is False
+            assert result["config"]["included_source_types"] == ["competitive"]
+            assert result["config"]["auto_generate_ideas"] is True
+            assert result["config"]["idea_priority_threshold"] == 0.7
+
+    def test_returns_stored_config(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import (
+            synthesis_configure,
+            synthesis_get_config,
+        )
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            synthesis_configure(
+                product_a.id,
+                source_types=["competitive", "evidence"],
+                idea_priority_threshold=0.5,
+            )
+            result = synthesis_get_config(product_a.id)
+            assert result["exists"] is True
+            assert result["config"]["included_source_types"] == [
+                "competitive", "evidence"
+            ]
+            assert result["config"]["idea_priority_threshold"] == 0.5
+
+
+class TestSynthesisGetCompetitors:
+    def test_shows_inclusion_flags(
+        self, db_session, product_a, owner, competitor
+    ):
+        from mcp_server.tools.synthesis import synthesis_get_competitors
+
+        competitor.audit_enabled = True
+        competitor.audit_status = "completed"
+        competitor.synthesis_included = True
+        db_session.commit()
+
+        # Second competitor — not included
+        other = ProductCompetitor(
+            product_id=product_a.id,
+            competitor_name="Other Co",
+            competitor_url="https://other.co",
+            status="active",
+            audit_enabled=False,
+            synthesis_included=False,
+        )
+        db_session.add(other)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_get_competitors(product_a.id)
+            assert "error" not in result
+            assert len(result["competitors"]) == 2
+            by_name = {c["competitor_name"]: c for c in result["competitors"]}
+            assert by_name["Rival Co"]["synthesis_included"] is True
+            assert by_name["Rival Co"]["audit_status"] == "completed"
+            assert by_name["Other Co"]["synthesis_included"] is False
+
+    def test_outsider_denied(self, db_session, product_a, outsider, competitor):
+        from mcp_server.tools.synthesis import synthesis_get_competitors
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = synthesis_get_competitors(product_a.id)
+            assert "error" in result
+
+
+class TestSynthesisGetUnifiedReportEmpty:
+    def test_returns_error_when_no_report(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import synthesis_get_unified_report
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_get_unified_report(product_a.id)
+            assert "error" in result
+            assert "synthesis_run_unified" in result["error"]
