@@ -197,3 +197,82 @@ class TestFunctionalReports:
         assert resp.json() == []
 
 
+class TestTriggerFunctionalAuditScopedInputs:
+    """REST-side scoped-input params on POST .../functional-audit — must match the MCP surface."""
+
+    @pytest.fixture
+    def test_competitor(self, db_session, test_product):
+        comp = ProductCompetitor(
+            product_id=test_product.id,
+            competitor_name="Rival Co",
+            competitor_url="https://rival.co",
+            status="active",
+        )
+        db_session.add(comp)
+        db_session.commit()
+        db_session.refresh(comp)
+        return comp
+
+    @patch("app.api.competitive_agents.send_task")
+    def test_defaults_put_web_research_true_and_empty_urls_in_input_data(
+        self, mock_task, client, po_user, db_session, test_product, test_competitor
+    ):
+        from app.models.queue import QueueJob, JobType
+        mock_task.return_value = MagicMock(id="task-fa-1")
+
+        resp = client.post(
+            f"/product-intelligence/agents/{test_product.id}/competitors/{test_competitor.id}/functional-audit",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200
+        job_uuid = resp.json()["job_uuid"]
+        job = db_session.query(QueueJob).filter(
+            QueueJob.job_uuid == job_uuid,
+            QueueJob.job_type == JobType.FUNCTIONAL_AUDIT,
+        ).one()
+        assert job.input_data["web_research_enabled"] is True
+        assert job.input_data["source_urls"] == []
+        assert job.input_data["competitor_id"] == test_competitor.id
+
+    @patch("app.api.competitive_agents.send_task")
+    def test_scoped_params_flow_into_input_data(
+        self, mock_task, client, po_user, db_session, test_product, test_competitor
+    ):
+        from app.models.queue import QueueJob, JobType
+        mock_task.return_value = MagicMock(id="task-fa-2")
+
+        resp = client.post(
+            f"/product-intelligence/agents/{test_product.id}/competitors/{test_competitor.id}/functional-audit",
+            headers=auth_headers(po_user),
+            json={
+                "web_research": False,
+                "source_urls": ["https://rival.co/features", "https://rival.co/pricing"],
+            },
+        )
+        assert resp.status_code == 200
+        job_uuid = resp.json()["job_uuid"]
+        job = db_session.query(QueueJob).filter(QueueJob.job_uuid == job_uuid).one()
+        assert job.input_data["web_research_enabled"] is False
+        assert job.input_data["source_urls"] == [
+            "https://rival.co/features", "https://rival.co/pricing"
+        ]
+
+    def test_too_many_source_urls_returns_400_with_structured_payload(
+        self, client, po_user, test_product, test_competitor
+    ):
+        resp = client.post(
+            f"/product-intelligence/agents/{test_product.id}/competitors/{test_competitor.id}/functional-audit",
+            headers=auth_headers(po_user),
+            json={
+                "web_research": False,
+                "source_urls": [f"https://rival.co/p{i}" for i in range(6)],
+            },
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["error_code"] == "SCOPED_INPUT_LIMIT_EXCEEDED"
+        assert detail["field"] == "source_urls"
+        assert detail["limit"] == 5
+        assert detail["got"] == 6
+
+

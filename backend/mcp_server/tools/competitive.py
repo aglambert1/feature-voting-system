@@ -269,11 +269,30 @@ def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
 
 
 @mcp.tool()
-def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
-    """Trigger a functional audit for a single competitor. Returns a job ID — poll with job_get_status until complete. After all competitor audits finish, run synthesis_run_unified for unified synthesis."""
+def ci_run_competitor_audit(
+    product_id: int,
+    competitor_name: str,
+    web_research: bool = True,
+    source_urls: list[str] | None = None,
+) -> dict:
+    """Trigger a functional audit for a single competitor. Returns a job ID — poll with job_get_status until complete. After all competitor audits finish, run synthesis_run_unified for unified synthesis.
+
+    Args:
+        product_id: The product the competitor belongs to.
+        competitor_name: Name (or partial name) of the competitor.
+        web_research: If true (default), the agent supplements its training knowledge with live Brave web search. Set false to skip Brave and rely on training knowledge + any Evidence records + provided source_urls. Major latency win when false.
+        source_urls: Optional list of specific pages to fetch and feed to the agent (max 5 URLs). Useful for grounding analysis in pricing pages, feature lists, or docs you want the agent to cite. For persistent text input, use evidence_create first — Evidence records are reusable across audits and tracked for citations.
+    """
     from app.models.competitor_intelligence import ProductCompetitor
     from app.models.queue import JobType
     from app.services.queue_service import QueueService
+    from app.services.scoped_input_validator import validate_scoped_inputs, ScopedInputError
+
+    # Validate scoped inputs before touching the DB
+    try:
+        source_urls = validate_scoped_inputs(source_urls)
+    except ScopedInputError as err:
+        return err.payload
 
     with get_session() as db:
         denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
@@ -305,7 +324,11 @@ def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
         queue_service = QueueService(db)
         job = queue_service.create_job(
             job_type=JobType.FUNCTIONAL_AUDIT,
-            input_data={"competitor_id": competitor.id},
+            input_data={
+                "competitor_id": competitor.id,
+                "web_research_enabled": web_research,
+                "source_urls": source_urls,
+            },
             product_id=product_id,
             user_id=resolve_user_id_for_job(db, product_id),
         )

@@ -40,6 +40,58 @@ def get_db():
         raise
 
 
+def _fetch_source_urls(
+    source_urls: List[str],
+    *,
+    queue_service: Optional[QueueService] = None,
+    job_id: Optional[int] = None,
+    progress_start: float = 20.0,
+    progress_span: float = 5.0,
+) -> List[Dict[str, Any]]:
+    """Fetch each URL and return a list of {url, title, text} dicts.
+
+    Failures are logged and skipped (one bad URL does not fail the whole job).
+    Extracted text is truncated to MAX_URL_EXTRACT_CHARS per URL.
+
+    Optionally emits progress updates via `queue_service.update_progress(job_id, ...)`
+    from `progress_start` to `progress_start + progress_span`.
+    """
+    from app.services.document_parsing_service import DocumentParsingService
+    from app.services.scoped_input_validator import MAX_URL_EXTRACT_CHARS
+
+    if not source_urls:
+        return []
+
+    parser = DocumentParsingService()
+    fetched: List[Dict[str, Any]] = []
+    total = len(source_urls)
+
+    for i, url in enumerate(source_urls, 1):
+        if queue_service is not None and job_id is not None:
+            pct = progress_start + (i / total) * progress_span
+            queue_service.update_progress(job_id, pct, f"fetching source {i}/{total}...")
+        try:
+            result = parser.fetch_url_content(url)
+            extracted = (result.get('extracted_text') or '')
+            if len(extracted) > MAX_URL_EXTRACT_CHARS:
+                print(
+                    f"[_fetch_source_urls] Truncating {url} extract from "
+                    f"{len(extracted)} to {MAX_URL_EXTRACT_CHARS} chars"
+                )
+                extracted = extracted[:MAX_URL_EXTRACT_CHARS]
+            fetched.append({
+                'url': url,
+                'title': result.get('title') or '',
+                'text': extracted,
+            })
+        except Exception as e:
+            # One failing URL should not kill the whole job.
+            print(f"[_fetch_source_urls] Failed to fetch {url}: {e}")
+            continue
+
+    return fetched
+
+
 def _cosine_similarity(a: list, b: list) -> float:
     """Compute cosine similarity between two embedding vectors.
 
@@ -143,6 +195,16 @@ def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
         # Update progress
         queue_service.update_progress(job_id, 20.0, "Initializing product analyzer...")
 
+        # Fetch any caller-supplied source URLs
+        source_urls = input_data.get('source_urls') or []
+        fetched_sources = _fetch_source_urls(
+            source_urls,
+            queue_service=queue_service,
+            job_id=job_id,
+            progress_start=22.0,
+            progress_span=6.0,
+        )
+
         # Create LLM service and agent
         web_research_enabled = input_data.get('web_research_enabled', True)
         llm_service = LLMService()
@@ -160,6 +222,7 @@ def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
             'product_name': input_data.get('product_name') or product.product_name,
             'product_description': input_data.get('product_description') or product.product_description,
             'source_type': input_data.get('source_type') or product.product_source_type or 'text',
+            'fetched_sources': fetched_sources,
         }
 
         # Update progress
@@ -1491,6 +1554,8 @@ def functional_audit_task(self, job_id: int):
         input_data = job.input_data or {}
         competitor_id = input_data.get('competitor_id')
         product_id = job.product_id
+        web_research_enabled = input_data.get('web_research_enabled', True)
+        source_urls = input_data.get('source_urls') or []
 
         if not competitor_id:
             raise ValueError("competitor_id is required in input_data")
@@ -1532,6 +1597,15 @@ def functional_audit_task(self, job_id: int):
             # For now, use any cached search data
             pass
 
+        # Fetch any caller-supplied source URLs
+        fetched_sources = _fetch_source_urls(
+            source_urls,
+            queue_service=queue_service,
+            job_id=job_id,
+            progress_start=20.0,
+            progress_span=5.0,
+        )
+
         # Query user-provided evidence for this competitor
         from app.models.evidence import Evidence
         competitor_evidence = db.query(Evidence).filter(
@@ -1558,7 +1632,8 @@ def functional_audit_task(self, job_id: int):
             llm_service=llm_service,
             product_id=product_id,
             user_id=job.user_id,
-            job_id=job.job_uuid
+            job_id=job.job_uuid,
+            web_research_enabled=web_research_enabled,
         )
 
         # Run the audit
@@ -1568,6 +1643,7 @@ def functional_audit_task(self, job_id: int):
             'product_context': product_context,
             'web_search_results': web_search_results,
             'user_provided_evidence': user_provided_evidence,
+            'fetched_sources': fetched_sources,
         }
         if job_map:
             agent_input["job_map"] = job_map
