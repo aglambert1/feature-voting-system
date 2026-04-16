@@ -2913,7 +2913,11 @@ def unified_synthesis_task(self, job_id: int):
             "support_themes": support_themes,
             "evidence_items": evidence_items,
         }
-        result = agent.execute(agent_input, max_tokens=12000)
+        # JTBD synthesis output can be verbose: job_scorecard (per job) +
+        # feature_cluster_matrix (nested by job) + opportunities with
+        # multi-source evidence blobs. With 10+ jobs × 2-3 competitors,
+        # 20000 tokens gives enough headroom.
+        result = agent.execute(agent_input, max_tokens=20000)
 
         queue_service.update_progress(job_id, 85.0, "Persisting synthesis report...")
 

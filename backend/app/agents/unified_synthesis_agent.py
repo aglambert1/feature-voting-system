@@ -842,21 +842,27 @@ Respond with ONLY a valid JSON object matching the schema in the system prompt."
     def build_concise_user_prompt(
         self, input_data: Dict[str, Any]
     ) -> Optional[str]:
-        """Truncation-recovery prompt: ask for a reduced-scope synthesis."""
-        product_context = input_data.get("product_context") or {}
-        included = input_data.get("included_source_types", [])
-        product_name = product_context.get("product_name", "Our product")
+        """Truncation-recovery prompt: rebuild full context with tighter output instructions.
 
-        return f"""# Concise Unified Synthesis (Reduced Scope)
+        The full prompt is reused so the LLM still has all source data — only
+        the output-shape instructions are tightened to keep the response
+        under the token budget.
+        """
+        full_prompt = self.build_user_prompt(input_data)
 
-**Product:** {product_name}
-**Sources in scope:** {', '.join(included) if included else 'none'}
+        concise_directive = """
 
-The previous response was too long. Please produce a CONCISE version:
-- job_scorecard: Limit to the top 5 jobs by importance.
-- feature_cluster_matrix: Limit to the top 3 features per job.
-- opportunities: Top 8 maximum, 1-sentence summaries.
-- high_impact_items: Top 3 gaps + top 2 advantages.
-- Keep all descriptions to one sentence.
+---
 
-Use the same JSON schema from the system prompt. Respond with ONLY valid JSON."""
+## RECOVERY DIRECTIVE (response was previously truncated)
+
+The previous response hit the token limit. Produce the same JSON structure but keep it concise:
+- job_scorecard: include ALL jobs but keep `rationale` to ≤ 2 sentences
+- feature_cluster_matrix: limit to top 3 features per job
+- opportunities: top 8 only, opportunity_summary ≤ 1 sentence
+- high_impact_items: top 3 gaps + top 2 advantages, description ≤ 1 sentence
+- analysis_summary: 2 sentences maximum
+
+Do NOT omit the job_scorecard or feature_cluster_matrix — tighten each entry instead. Respond with ONLY valid JSON matching the system prompt schema."""
+
+        return full_prompt + concise_directive
