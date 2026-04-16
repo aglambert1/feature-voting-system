@@ -542,3 +542,43 @@ def test_unique_product_analysis_version(db_session, test_user):
 
     with pytest.raises(IntegrityError):
         db_session.commit()
+
+
+def test_product_competitor_research_cache_columns_default_null(db_session, test_user):
+    """Phase B: cached_search_results and cached_search_at default to NULL.
+
+    Exercising the column definitions end-to-end catches migration drift and
+    ORM mismatches before they cause obscure failures during audits.
+    """
+    product = CIProduct(
+        created_by_user_id=test_user.id,
+        product_name="Cache Host",
+        product_description="desc",
+    )
+    db_session.add(product)
+    db_session.commit()
+
+    competitor = ProductCompetitor(
+        product_id=product.id,
+        competitor_name="Acme",
+        competitor_url="https://acme.com",
+        status="active",
+    )
+    db_session.add(competitor)
+    db_session.commit()
+    db_session.refresh(competitor)
+
+    assert competitor.cached_search_results is None
+    assert competitor.cached_search_at is None
+
+    # Also confirm the columns accept a JSON payload + timestamp and persist them.
+    competitor.cached_search_results = [
+        {"url": "https://acme.com/f", "title": "Features", "snippet": "x"},
+    ]
+    competitor.cached_search_at = datetime.utcnow()
+    db_session.commit()
+    db_session.refresh(competitor)
+
+    assert len(competitor.cached_search_results) == 1
+    assert competitor.cached_search_results[0]["url"] == "https://acme.com/f"
+    assert competitor.cached_search_at is not None
