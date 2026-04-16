@@ -220,9 +220,12 @@ def synthesis_get_competitors(product_id: int) -> dict:
     """List all competitors with their audit/synthesis inclusion flags.
 
     This is the PO-facing view used to review and edit which competitors
-    feed the unified synthesis run.
+    feed the unified synthesis run. `has_report` is the authoritative signal
+    that an audit has been performed — `audit_status` may be stale for
+    reports generated before the status field was populated.
     """
     from app.models.competitor_intelligence import ProductCompetitor
+    from app.models.competitive_reports import CompetitorFunctionalReport
 
     with get_session() as db:
         denied = require_product_access(db, product_id)
@@ -234,23 +237,27 @@ def synthesis_get_competitors(product_id: int) -> dict:
             ProductCompetitor.status == "active",
         ).all()
 
-        return {
-            "product_id": product_id,
-            "competitors": [
-                {
-                    "competitor_id": c.id,
-                    "competitor_name": c.competitor_name,
-                    "competitor_url": c.competitor_url,
-                    "audit_enabled": bool(c.audit_enabled),
-                    "audit_status": c.audit_status,
-                    "audit_last_run": (
-                        c.audit_last_run.isoformat() if c.audit_last_run else None
-                    ),
-                    "synthesis_included": bool(c.synthesis_included),
-                }
-                for c in competitors
-            ],
-        }
+        result = []
+        for c in competitors:
+            report = db.query(CompetitorFunctionalReport).filter(
+                CompetitorFunctionalReport.product_competitor_id == c.id
+            ).order_by(CompetitorFunctionalReport.report_version.desc()).first()
+            result.append({
+                "competitor_id": c.id,
+                "competitor_name": c.competitor_name,
+                "competitor_url": c.competitor_url,
+                "audit_enabled": bool(c.audit_enabled),
+                "audit_status": c.audit_status,
+                "audit_last_run": (
+                    c.audit_last_run.isoformat() if c.audit_last_run else None
+                ),
+                "has_report": report is not None,
+                "report_version": report.report_version if report else None,
+                "report_generated_at": report.generated_at.isoformat() if report else None,
+                "synthesis_included": bool(c.synthesis_included),
+            })
+
+        return {"product_id": product_id, "competitors": result}
 
 
 @mcp.tool()

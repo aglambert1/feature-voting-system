@@ -1633,6 +1633,14 @@ def functional_audit_task(self, job_id: int):
         db.commit()
         db.refresh(report)
 
+        # Mark the competitor as successfully audited (drives synthesis eligibility
+        # and the "has been audited" summary in MCP tools)
+        competitor.audit_status = "completed"
+        competitor.audit_last_run = datetime.utcnow()
+        competitor.deep_analysis_status = "completed"  # legacy field, keep in sync
+        competitor.deep_analysis_last_run = datetime.utcnow()  # legacy field
+        db.commit()
+
         # Compute structured diff from previous version
         if previous_data:
             try:
@@ -2672,12 +2680,21 @@ def unified_synthesis_task(self, job_id: int):
         ).all()
 
         # Step 3: Auto-trigger missing audits for synthesis_included competitors.
-        # We dispatch but do NOT block — the user re-runs once audits complete.
-        # Synchronous polling inside a Celery task can deadlock workers.
+        # A competitor is considered audited if it has an existing
+        # CompetitorFunctionalReport, regardless of audit_status (older reports
+        # may predate the status field). We dispatch but do NOT block — the user
+        # re-runs once audits complete. Synchronous polling inside a Celery task
+        # can deadlock workers.
+        from app.models.competitive_reports import CompetitorFunctionalReport
+        competitors_with_reports = {
+            r[0] for r in db.query(CompetitorFunctionalReport.product_competitor_id)
+            .filter(CompetitorFunctionalReport.product_id == product_id).all()
+        }
         triggered_audit_jobs = []
         if "competitive" in included_set:
             for comp in included_competitors:
-                if comp.audit_status != "completed":
+                has_report = comp.id in competitors_with_reports
+                if not has_report and comp.audit_status != "completed":
                     audit_job = queue_service.create_job(
                         job_type=JobType.FUNCTIONAL_AUDIT,
                         input_data={"competitor_id": comp.id},
