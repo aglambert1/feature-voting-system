@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     # Search API settings (for competitor research)
     brave_api_key: str = "your-brave-api-key-here"  # Get free key at https://brave.com/search/api/
     enable_web_search: bool = True  # Enable web search for competitor discovery
+    competitor_research_cache_ttl_hours: int = 24  # How long cached Brave results stay fresh per competitor
 
     # MCP HTTP server settings
     mcp_base_url: str = "http://localhost:8001"  # Public URL of MCP server (for OAuth metadata)

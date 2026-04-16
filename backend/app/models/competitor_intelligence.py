@@ -264,6 +264,10 @@ class ProductCompetitor(Base):
     audit_last_run = Column(DateTime, nullable=True)
     synthesis_included = Column(Boolean, nullable=False, default=False)
 
+    # Cached web research (populated per-competitor, reused across audits within TTL)
+    cached_search_results = Column(JSON, nullable=True)
+    cached_search_at = Column(DateTime, nullable=True)
+
     status = Column(String(50), nullable=False, default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

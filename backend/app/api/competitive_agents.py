@@ -1311,6 +1311,48 @@ def trigger_functional_audit(
     )
 
 
+@router.post("/{product_id}/competitors/{competitor_id}/refresh-research")
+def refresh_competitor_research(
+    product_id: int,
+    competitor_id: int,
+    current_user: User = Depends(get_product_owner_or_admin),
+    db: Session = Depends(get_db),
+):
+    """Force a re-fetch of cached web research for a competitor.
+
+    Runs synchronously (~5s). Populates `cached_search_results` and
+    `cached_search_at`. Subsequent audits within TTL will use the cache
+    and skip Brave.
+    """
+    from app.models.competitor_intelligence import CIProduct, ProductFeature
+    from app.services.competitor_research_cache import CompetitorResearchCache
+
+    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
+    competitor = get_competitor_or_404(db, product_id, competitor_id)
+
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    features = (
+        db.query(ProductFeature)
+        .filter(ProductFeature.product_id == product_id, ProductFeature.status == "active")
+        .limit(15)
+        .all()
+    )
+    product_context = {
+        "product_name": product.product_name if product else "",
+        "product_category": product.product_category if product else None,
+        "core_features": [f.feature_name for f in features],
+    }
+
+    results = CompetitorResearchCache(db).refresh(competitor, product_context)
+
+    return {
+        "competitor_id": competitor.id,
+        "competitor_name": competitor.competitor_name,
+        "results_count": len(results),
+        "cached_at": competitor.cached_search_at.isoformat() if competitor.cached_search_at else None,
+    }
+
+
 @router.get("/{product_id}/competitors/{competitor_id}/functional-report", response_model=Optional[FunctionalReportDetail])
 def get_functional_report(
     product_id: int,

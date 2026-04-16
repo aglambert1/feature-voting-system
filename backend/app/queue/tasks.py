@@ -1589,20 +1589,55 @@ def functional_audit_task(self, job_id: int):
         ).limit(15).all()
         product_context['core_features'] = [f.feature_name for f in features]
 
-        # Get web search results (from previous web search or fetch now)
-        web_search_results = input_data.get('web_search_results', [])
+        # Resolve web search results via per-competitor cache (Phase B).
+        #
+        # Priority order:
+        #   1. Explicit web_search_results in input_data (legacy / tests)
+        #   2. Fresh cache on ProductCompetitor (within TTL)
+        #   3. Live refresh via CompetitorResearchCache (if web_research enabled)
+        #   4. Empty (if caller disabled web_research and no cache exists)
+        #
+        # When we have cached/pre-fetched results, we flip effective_web_research
+        # to False so the agent renders them into the prompt instead of running
+        # the tool-use loop (which would duplicate work and cost more tokens).
+        web_search_results = input_data.get('web_search_results') or []
+        effective_web_research = web_research_enabled
 
-        if not web_search_results and competitor.competitor_url:
-            # Could trigger web search here if needed
-            # For now, use any cached search data
-            pass
+        if not web_search_results:
+            from app.services.competitor_research_cache import CompetitorResearchCache
+
+            cache = CompetitorResearchCache(db)
+            cached = cache.get_fresh(competitor)
+            if cached is not None:
+                web_search_results = cached
+                effective_web_research = False
+                queue_service.update_progress(
+                    job_id, 25.0,
+                    f"using cached research for {competitor.competitor_name}...",
+                )
+            elif web_research_enabled:
+                queue_service.update_progress(
+                    job_id, 20.0,
+                    f"pre-fetching research for {competitor.competitor_name}...",
+                )
+
+                def _cache_progress(i: int, total: int) -> None:
+                    pct = 20.0 + (i / total) * 5.0
+                    queue_service.update_progress(
+                        job_id, pct, f"fetching research {i}/{total}...",
+                    )
+
+                web_search_results = cache.refresh(
+                    competitor, product_context, progress_cb=_cache_progress,
+                )
+                effective_web_research = False
 
         # Fetch any caller-supplied source URLs
         fetched_sources = _fetch_source_urls(
             source_urls,
             queue_service=queue_service,
             job_id=job_id,
-            progress_start=20.0,
+            progress_start=25.0,
             progress_span=5.0,
         )
 
@@ -1626,6 +1661,10 @@ def functional_audit_task(self, job_id: int):
         queue_service.update_progress(job_id, 30.0, f"Running JTBD audit on {competitor.competitor_name}...")
 
         # Initialize LLM service and agent
+        #
+        # effective_web_research may differ from the request param: when we've
+        # already fetched cached or fresh results above, we pass them in the
+        # prompt and don't need the agent's tool loop.
         llm_service = LLMService()
         agent = CompetitorFunctionalAuditAgent(
             db=db,
@@ -1633,7 +1672,7 @@ def functional_audit_task(self, job_id: int):
             product_id=product_id,
             user_id=job.user_id,
             job_id=job.job_uuid,
-            web_research_enabled=web_research_enabled,
+            web_research_enabled=effective_web_research,
         )
 
         # Run the audit

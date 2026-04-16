@@ -349,6 +349,65 @@ def ci_run_competitor_audit(
 
 
 @mcp.tool()
+def ci_refresh_research(product_id: int, competitor_name: str) -> dict:
+    """Force a re-fetch of cached web research for a competitor.
+
+    Runs 3-5 targeted Brave queries (features, pricing, integrations, reviews, vs-product),
+    merges and dedupes results, and stores them on the competitor. Subsequent audits
+    within the TTL (default 24h) will use the cached payload and skip Brave entirely.
+
+    Runs synchronously (~5s). Use when you know a competitor has shipped something new
+    and the stored cache is stale.
+
+    Args:
+        product_id: The product the competitor belongs to.
+        competitor_name: Name (or partial name) of the competitor.
+    """
+    from app.models.competitor_intelligence import CIProduct, ProductCompetitor, ProductFeature
+    from app.services.competitor_research_cache import CompetitorResearchCache
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        competitor = db.query(ProductCompetitor).filter(
+            ProductCompetitor.product_id == product_id,
+            ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
+        ).first()
+
+        if not competitor:
+            return {"error": f"No competitor matching '{competitor_name}' found for product {product_id}"}
+
+        # Build product_context for the "vs" query — matches the shape
+        # functional_audit_task assembles, so the cache queries are stable
+        # across refresh paths.
+        product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+        features = (
+            db.query(ProductFeature)
+            .filter(ProductFeature.product_id == product_id, ProductFeature.status == "active")
+            .limit(15)
+            .all()
+        )
+        product_context = {
+            "product_name": product.product_name if product else "",
+            "product_category": product.product_category if product else None,
+            "core_features": [f.feature_name for f in features],
+        }
+
+        results = CompetitorResearchCache(db).refresh(competitor, product_context)
+
+        return {
+            "competitor_id": competitor.id,
+            "competitor_name": competitor.competitor_name,
+            "results_count": len(results),
+            "cached_at": competitor.cached_search_at.isoformat() if competitor.cached_search_at else None,
+            "message": f"Refreshed research for {competitor.competitor_name}. "
+                       f"Cached {len(results)} results; next audit within TTL will use this payload.",
+        }
+
+
+@mcp.tool()
 def ci_set_deep_analysis(product_id: int, competitor_name: str, enabled: bool = True) -> dict:
     """Enable or disable a competitor for deep analysis and synthesis inclusion.
 

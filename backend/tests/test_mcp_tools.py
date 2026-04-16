@@ -2102,3 +2102,63 @@ class TestProductRunAnalysisScopedInputs:
                 QueueJob.job_type == JobType.PRODUCT_ANALYSIS,
             ).all()
             assert len(jobs) == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase B — ci_refresh_research: force cache refresh
+# ---------------------------------------------------------------------------
+
+class TestCiRefreshResearch:
+    def test_owner_refreshes_cache(
+        self, db_session, product_a, competitor, owner
+    ):
+        from mcp_server.tools.competitive import ci_refresh_research
+
+        fake_results = [
+            {"url": "https://rival.co/features", "title": "Features", "snippet": "x"},
+            {"url": "https://rival.co/pricing", "title": "Pricing", "snippet": "y"},
+        ]
+        fake_cache = MagicMock()
+        fake_cache.refresh.return_value = fake_results
+
+        # After the MCP tool calls refresh(), it reads competitor.cached_search_at
+        # for the return payload — simulate that the service wrote a timestamp.
+        def _set_timestamp(comp, *_args, **_kw):
+            from datetime import datetime
+            comp.cached_search_at = datetime.utcnow()
+            comp.cached_search_results = fake_results
+            return fake_results
+        fake_cache.refresh.side_effect = _set_timestamp
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch(
+                 "app.services.competitor_research_cache.CompetitorResearchCache",
+                 return_value=fake_cache,
+             ):
+            result = ci_refresh_research(product_a.id, "Rival")
+
+        assert "error" not in result
+        assert result["competitor_id"] == competitor.id
+        assert result["competitor_name"] == "Rival Co"
+        assert result["results_count"] == 2
+        assert result["cached_at"] is not None
+        fake_cache.refresh.assert_called_once()
+
+    def test_refresh_returns_error_when_competitor_not_found(
+        self, db_session, product_a, owner
+    ):
+        from mcp_server.tools.competitive import ci_refresh_research
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_refresh_research(product_a.id, "Nonexistent Competitor")
+            assert "error" in result
+            assert "No competitor matching" in result["error"]
+
+    def test_refresh_denied_for_outsider(
+        self, db_session, product_a, competitor, outsider
+    ):
+        from mcp_server.tools.competitive import ci_refresh_research
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = ci_refresh_research(product_a.id, "Rival")
+            assert "error" in result

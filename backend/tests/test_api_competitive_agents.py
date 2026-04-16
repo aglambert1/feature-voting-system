@@ -276,3 +276,70 @@ class TestTriggerFunctionalAuditScopedInputs:
         assert detail["got"] == 6
 
 
+class TestRefreshCompetitorResearch:
+    """REST-side cache refresh endpoint — must match MCP ci_refresh_research behavior."""
+
+    @pytest.fixture
+    def test_competitor(self, db_session, test_product):
+        comp = ProductCompetitor(
+            product_id=test_product.id,
+            competitor_name="Rival Co",
+            competitor_url="https://rival.co",
+            status="active",
+        )
+        db_session.add(comp)
+        db_session.commit()
+        db_session.refresh(comp)
+        return comp
+
+    def test_po_refreshes_cache(
+        self, client, po_user, db_session, test_product, test_competitor
+    ):
+        from datetime import datetime
+
+        fake_results = [
+            {"url": "https://rival.co/features", "title": "Features", "snippet": "x"},
+            {"url": "https://rival.co/pricing", "title": "Pricing", "snippet": "y"},
+        ]
+        fake_cache = MagicMock()
+
+        def _set_timestamp(comp, *_args, **_kwargs):
+            comp.cached_search_at = datetime.utcnow()
+            comp.cached_search_results = fake_results
+            return fake_results
+
+        fake_cache.refresh.side_effect = _set_timestamp
+
+        with patch(
+            "app.services.competitor_research_cache.CompetitorResearchCache",
+            return_value=fake_cache,
+        ):
+            resp = client.post(
+                f"/product-intelligence/agents/{test_product.id}/competitors/{test_competitor.id}/refresh-research",
+                headers=auth_headers(po_user),
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["competitor_id"] == test_competitor.id
+        assert data["competitor_name"] == "Rival Co"
+        assert data["results_count"] == 2
+        assert data["cached_at"] is not None
+        fake_cache.refresh.assert_called_once()
+
+    def test_refresh_404_when_competitor_missing(
+        self, client, po_user, test_product
+    ):
+        resp = client.post(
+            f"/product-intelligence/agents/{test_product.id}/competitors/99999/refresh-research",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 404
+
+    def test_refresh_requires_auth(self, client, test_product, test_competitor):
+        resp = client.post(
+            f"/product-intelligence/agents/{test_product.id}/competitors/{test_competitor.id}/refresh-research",
+        )
+        assert resp.status_code == 401
+
+
