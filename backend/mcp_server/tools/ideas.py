@@ -224,10 +224,9 @@ def ideas_create(
 
     Args:
         product_id: The product to create the idea for.
-        source: One of: "manual", "competitor_gaps", "landscape", "synthesis".
+        source: One of: "manual", "competitor_gaps", "synthesis".
             - "manual": User-submitted idea. Requires title + description. Runs full AI triage.
             - "competitor_gaps": Bulk create from ALL gaps in a competitor's audit report. Requires competitor_name.
-            - "landscape": Create from ALL feature opportunities in the landscape report. No extra params.
             - "synthesis": Create from a specific synthesized opportunity. Requires opportunity_id.
         title: Idea title (required for source="manual").
         description: Idea description (required for source="manual").
@@ -235,7 +234,7 @@ def ideas_create(
         feature_id: Competitor feature ID to convert (for source="competitor_feature", advanced use).
         opportunity_id: Synthesized opportunity ID (required for source="synthesis").
     """
-    valid_sources = {"manual", "competitor_gaps", "landscape", "synthesis"}
+    valid_sources = {"manual", "competitor_gaps", "synthesis"}
     if source not in valid_sources:
         return {"error": f"Invalid source '{source}'. Must be one of: {sorted(valid_sources)}"}
 
@@ -248,8 +247,6 @@ def ideas_create(
             return _create_manual(db, product_id, title, description)
         elif source == "competitor_gaps":
             return _create_from_gaps(db, product_id, competitor_name)
-        elif source == "landscape":
-            return _create_from_landscape(db, product_id)
         elif source == "synthesis":
             return _create_from_synthesis(db, product_id, opportunity_id)
 
@@ -388,91 +385,6 @@ def _create_from_gaps(db, product_id: int, competitor_name: str) -> dict:
         "message": f"Created {len(created)} idea(s) from {competitor.competitor_name}'s gaps. "
                    f"{skipped} gap(s) already had ideas." if skipped else
                    f"Created {len(created)} idea(s) from {competitor.competitor_name}'s gaps.",
-    }
-
-
-def _create_from_landscape(db, product_id: int) -> dict:
-    """Create ideas from all feature opportunities in the landscape report."""
-    from app.models.competitive_reports import LandscapeOpportunityReport
-    from app.models.idea import Idea, IdeaStatus, SourceType
-    from app.models.queue import JobType
-    from app.services.queue_service import QueueService
-    from app.queue.tasks import triage_idea_task
-    from mcp_server.db import dispatch_task
-
-    report = db.query(LandscapeOpportunityReport).filter(
-        LandscapeOpportunityReport.product_id == product_id
-    ).first()
-    if not report or not report.feature_opportunities:
-        return {"error": "No landscape report with feature opportunities found. Run ci_run_analysis first."}
-
-    # Check which opportunities already have ideas
-    existing_ideas = db.query(Idea).filter(
-        Idea.product_id == product_id,
-        Idea.source_type == SourceType.COMPETITOR_AUTOMATED,
-    ).all()
-    existing_opp_indices = set()
-    for idea in existing_ideas:
-        metadata = idea.source_metadata or {}
-        if metadata.get('source') == 'landscape_synthesis':
-            opp_idx = metadata.get('opportunity_index')
-            if opp_idx is not None:
-                existing_opp_indices.add(opp_idx)
-
-    created = []
-    skipped = 0
-    queue_service = QueueService(db)
-    user_id = resolve_user_id_for_job(db, product_id)
-
-    for idx, opp in enumerate(report.feature_opportunities):
-        if idx in existing_opp_indices:
-            skipped += 1
-            continue
-
-        feature_name = opp.get('feature_name', 'Unknown Feature')
-        idea = Idea(
-            product_id=product_id,
-            title=f"Add: {feature_name}",
-            what_description=opp.get('summary', ''),
-            why_description=opp.get('user_value', ''),
-            use_case_description=opp.get('market_context', ''),
-            status=IdeaStatus.PENDING,
-            source_type=SourceType.COMPETITOR_AUTOMATED,
-            source_metadata={
-                'source': 'landscape_synthesis',
-                'opportunity_index': idx,
-                'feature_name': feature_name,
-                'priority_score': opp.get('priority_score'),
-                'competitors_with_feature': opp.get('competitors_with_feature', []),
-            },
-            submitter_id=user_id,
-        )
-        db.add(idea)
-        db.flush()
-
-        job = queue_service.create_job(
-            job_type=JobType.IDEA_TRIAGE,
-            input_data={'idea_id': idea.id},
-            product_id=product_id,
-            user_id=user_id,
-        )
-        created.append({"idea_id": idea.id, "title": idea.title, "job_uuid": job.job_uuid})
-
-    db.commit()
-
-    for item in created:
-        try:
-            dispatch_task(triage_idea_task, item["job_uuid"])
-        except Exception:
-            pass
-
-    return {
-        "ideas_created": len(created),
-        "ideas_skipped": skipped,
-        "ideas": created,
-        "message": f"Created {len(created)} idea(s) from landscape opportunities. "
-                   f"{skipped} already had ideas." if skipped else
-                   f"Created {len(created)} idea(s) from landscape opportunities.",
     }
 
 

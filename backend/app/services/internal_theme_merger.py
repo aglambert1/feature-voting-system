@@ -3,7 +3,7 @@ Internal Theme Merger Service.
 
 This service merges themes from structured internal feedback (WinLossTheme, SupportTheme)
 with activity-extracted insights (DealActivityInsight, SupportActivityInsight) into
-unified evidence for the OpportunitySynthesisAgent.
+unified evidence for the UnifiedSynthesisAgent.
 
 When themes from different sources are semantically similar, they are merged
 with combined metrics and marked as "high confidence" since multiple sources agree.
@@ -433,7 +433,7 @@ class InternalThemeMergerService:
 
     def to_synthesis_format(self, merged: MergedInternalEvidence) -> Dict[str, Any]:
         """
-        Convert merged evidence to the format expected by OpportunitySynthesisAgent.
+        Convert merged evidence to the format expected by UnifiedSynthesisAgent.
 
         Returns a dict suitable for passing to the synthesis agent.
         """

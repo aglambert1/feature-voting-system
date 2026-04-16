@@ -24,7 +24,7 @@ from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.queue import QueueJob, JobType, JobStatus
 from app.models.idea_comment import IdeaComment
 from app.models.idea_status_history import IdeaStatusHistory
-from app.models.competitive_reports import CompetitorFunctionalReport, LandscapeOpportunityReport
+from app.models.competitive_reports import CompetitorFunctionalReport
 from app.models.pm_review import PMReviewQueue, ReviewQueueType, ReviewQueueStatus, ReviewQueuePriority
 from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
 from app.models.user import User, UserRole
@@ -728,32 +728,14 @@ class TestIdeasCreate:
             assert result["ideas_created"] == 2
             assert result["ideas_skipped"] == 0
 
-    def test_landscape_no_report(self, db_session, product_a, owner):
+    def test_landscape_source_removed(self, db_session, product_a, owner):
+        """The 'landscape' source was removed in Phase 4b; confirm it returns an error."""
         from mcp_server.tools.ideas import ideas_create
 
         with _mock_session(db_session), _patch_user(owner.id):
             result = ideas_create(product_a.id, source="landscape")
             assert "error" in result
-            assert "No landscape report" in result["error"]
-
-    def test_landscape_creates_ideas(self, db_session, product_a, owner):
-        from mcp_server.tools.ideas import ideas_create
-
-        report = LandscapeOpportunityReport(
-            product_id=product_a.id,
-            report_version=1,
-            feature_opportunities=[
-                {"feature_name": "Auto-triage", "summary": "AI triage", "user_value": "Save time", "market_context": "Common"},
-            ],
-        )
-        db_session.add(report)
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(owner.id), \
-             patch("mcp_server.db.dispatch_task"):
-            result = ideas_create(product_a.id, source="landscape")
-            assert "error" not in result
-            assert result["ideas_created"] == 1
+            assert "Invalid source" in result["error"]
 
     def test_synthesis_requires_opportunity_id(self, db_session, product_a, owner):
         from mcp_server.tools.ideas import ideas_create
@@ -1152,65 +1134,6 @@ class TestCiDeactivateCompetitor:
             assert "Permission denied" in result["error"]
 
 
-# ---------------------------------------------------------------------------
-# ci_get_landscape_opportunities — feature opportunities from landscape
-# ---------------------------------------------------------------------------
-
-class TestCiGetLandscapeOpportunities:
-    def test_returns_opportunities(self, db_session, product_a, viewer, viewer_access):
-        from mcp_server.tools.competitive import ci_get_landscape_opportunities
-        from datetime import datetime
-
-        report = LandscapeOpportunityReport(
-            product_id=product_a.id,
-            report_version=1,
-            feature_opportunities=[
-                {
-                    "feature_name": "AI Triage",
-                    "summary": "Auto-categorize incoming ideas",
-                    "priority_score": 0.85,
-                    "competitors_with_feature": ["Rival Co"],
-                },
-            ],
-            high_impact_gaps=[
-                {
-                    "rank": 1,
-                    "feature_name": "AI Triage",
-                    "market_gravity": "High demand from enterprise customers",
-                    "competitors_with_feature": ["Rival Co"],
-                },
-            ],
-            source_competitor_names=["Rival Co"],
-            generated_at=datetime(2026, 4, 10, 12, 0, 0),
-        )
-        db_session.add(report)
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_landscape_opportunities(product_a.id)
-            assert "error" not in result
-            assert len(result["feature_opportunities"]) == 1
-            assert result["feature_opportunities"][0]["feature_name"] == "AI Triage"
-            assert len(result["high_impact_gaps"]) == 1
-            assert result["source_competitors"] == ["Rival Co"]
-
-    def test_no_report(self, db_session, product_a, viewer, viewer_access):
-        from mcp_server.tools.competitive import ci_get_landscape_opportunities
-
-        with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_landscape_opportunities(product_a.id)
-            assert "error" in result
-            assert "No landscape analysis" in result["error"]
-
-    def test_outsider_denied(self, db_session, product_a, outsider):
-        from mcp_server.tools.competitive import ci_get_landscape_opportunities
-
-        with _mock_session(db_session), _patch_user(outsider.id):
-            result = ci_get_landscape_opportunities(product_a.id)
-            assert "error" in result
-            assert "Permission denied" in result["error"]
-
-
 # ===========================================================================
 # Phase 5 Tests
 # ===========================================================================
@@ -1327,72 +1250,6 @@ class TestMonitoringUpdateConfig:
             result = monitoring_update_config(product_a.id, monitoring_enabled=True)
             assert "error" in result
             assert "EDIT" in result["error"]
-
-
-# ---------------------------------------------------------------------------
-# synthesis_list_runs / synthesis_get_run
-# ---------------------------------------------------------------------------
-
-class TestSynthesisListRuns:
-    def test_returns_runs(self, db_session, product_a, owner):
-        from mcp_server.tools.synthesis import synthesis_list_runs
-        from app.models.synthesis import SynthesisRun
-
-        run = SynthesisRun(product_id=product_a.id, status="completed")
-        db_session.add(run)
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(owner.id):
-            result = synthesis_list_runs(product_a.id)
-            assert "error" not in result
-            assert len(result["runs"]) == 1
-            assert result["runs"][0]["status"] == "completed"
-
-    def test_outsider_denied(self, db_session, product_a, outsider):
-        from mcp_server.tools.synthesis import synthesis_list_runs
-
-        with _mock_session(db_session), _patch_user(outsider.id):
-            result = synthesis_list_runs(product_a.id)
-            assert "error" in result
-
-
-class TestSynthesisGetRun:
-    def test_returns_run_with_opportunities(self, db_session, product_a, owner):
-        from mcp_server.tools.synthesis import synthesis_get_run
-        from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
-
-        run = SynthesisRun(product_id=product_a.id, status="completed")
-        db_session.add(run)
-        db_session.flush()
-
-        opp = SynthesizedOpportunity(
-            synthesis_run_id=run.id,
-            product_id=product_a.id,
-            opportunity_name="Test Opp",
-            opportunity_summary="Summary",
-            priority_score=0.9,
-            source_count=3,
-        )
-        db_session.add(opp)
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(owner.id):
-            result = synthesis_get_run(product_a.id, run.id)
-            assert "error" not in result
-            assert len(result["opportunities"]) == 1
-            assert result["opportunities"][0]["name"] == "Test Opp"
-
-    def test_wrong_product(self, db_session, product_a, product_b, owner):
-        from mcp_server.tools.synthesis import synthesis_get_run
-        from app.models.synthesis import SynthesisRun
-
-        run = SynthesisRun(product_id=product_a.id, status="completed")
-        db_session.add(run)
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(owner.id):
-            result = synthesis_get_run(product_b.id, run.id)
-            assert "error" in result
 
 
 # ---------------------------------------------------------------------------

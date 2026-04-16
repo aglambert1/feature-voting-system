@@ -193,7 +193,7 @@ class CompetitorAnalysisSession(Base):
 
     Use the V2 Competitive Intelligence Agent workflow instead:
     - CompetitorFunctionalReport for competitor analysis
-    - LandscapeOpportunityReport for opportunity synthesis
+    - SynthesisReport (unified synthesis) for opportunity synthesis
 
     This model is kept for backward compatibility during migration.
     The database should be reinitialized to drop this table.
@@ -389,7 +389,7 @@ class CompetitorGeneratedIdea(Base):
     """
     DEPRECATED: This model is part of the legacy session-based workflow.
 
-    In V2, ideas are generated from LandscapeOpportunityReport.opportunities
+    In V2, ideas are generated from SynthesisReport.opportunities
     via the idea normalization pipeline (IdeaNormalizerService).
     The database should be reinitialized to drop this table.
     """

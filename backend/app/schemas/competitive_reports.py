@@ -3,10 +3,12 @@ Pydantic schemas for competitive report agents.
 
 These schemas define the structured output format for:
 - CompetitorFunctionalAuditAgent
-- LandscapeOpportunitySynthesizerAgent
+
+Landscape-synthesis schemas were removed in Phase 4b; cross-competitor
+synthesis now uses app.schemas.unified_synthesis.
 """
 
-from typing import List, Optional, Literal
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -186,118 +188,6 @@ class FunctionalAuditOutput(BaseModel):
 
 
 # =============================================================================
-# Landscape Opportunity Synthesizer Output Schemas
-# =============================================================================
-
-class FeatureClusterEntry(BaseModel):
-    """A single row in the feature cluster matrix (Section 1)."""
-    feature_category: str = Field(
-        description="Category or name of the feature"
-    )
-    prevalence: Literal["Table Stakes", "Common", "Emerging", "Frontier"] = Field(
-        description="Table Stakes=80%+, Common=50-79%, Emerging=25-49%, Frontier=<25%"
-    )
-    our_status: Literal["Have", "Gap", "Partial"] = Field(
-        description="Have=we have it, Gap=we don't, Partial=partially implemented"
-    )
-    competitors_with_feature: List[str] = Field(
-        description="Names of competitors that have this feature"
-    )
-    notes: Optional[str] = Field(
-        default=None,
-        description="Additional notes about this feature cluster"
-    )
-
-
-class FeatureOpportunity(BaseModel):
-    """
-    A feature opportunity for export to voting/roadmap systems (Section 2).
-
-    This schema is designed to be portable and system-agnostic.
-    """
-    feature_name: str = Field(
-        description="Concise name of the feature"
-    )
-    summary: str = Field(
-        description="1-2 sentence description of what the feature does"
-    )
-    user_value: str = Field(
-        description="The primary benefit to the customer"
-    )
-    jtbd_statement: Optional[str] = Field(
-        default=None,
-        description="The customer job this feature serves: 'When [situation], I want to [motivation], so I can [outcome]'"
-    )
-    market_context: str = Field(
-        description="Which competitors have it and whether Table Stakes or Innovation"
-    )
-    priority_score: Optional[float] = Field(
-        default=None,
-        ge=0.0,
-        le=1.0,
-        description="Relative priority score (0.0-1.0)"
-    )
-    competitors_with_feature: List[str] = Field(
-        default=[],
-        description="List of competitor names that have this feature"
-    )
-    source_evidence: List[str] = Field(
-        default=[],
-        description="Supporting evidence (quotes, reviews, etc.)"
-    )
-
-
-class HighImpactGap(BaseModel):
-    """A high-impact gap feature (Section 3)."""
-    rank: int = Field(
-        ge=1,
-        le=10,
-        description="Rank 1-10, with 1 being highest priority"
-    )
-    feature_name: str = Field(
-        description="Name of the gap feature"
-    )
-    market_gravity: str = Field(
-        description="Why this has high market gravity (demand, competition, etc.)"
-    )
-    competitors_with_feature: List[str] = Field(
-        description="Which competitors have this feature"
-    )
-    user_demand_evidence: str = Field(
-        description="Evidence of user demand (reviews, requests, etc.)"
-    )
-
-
-class LandscapeSynthesisOutput(BaseModel):
-    """
-    Complete output schema for LandscapeOpportunitySynthesizerAgent.
-
-    Sections:
-    1. Feature cluster matrix
-    2. Feature opportunities (JSON export)
-    3. High-impact gaps
-    """
-    feature_cluster_matrix: List[FeatureClusterEntry] = Field(
-        description="Section 1: Feature cluster matrix showing prevalence"
-    )
-    feature_opportunities: List[FeatureOpportunity] = Field(
-        description="Section 2: Feature opportunities for voting system export"
-    )
-    high_impact_gaps: List[HighImpactGap] = Field(
-        default=[],
-        description="Section 3: Top high-impact gaps with market gravity"
-    )
-    innovation_whitespace: Optional[str] = Field(
-        default=None,
-        description="Persistent unsolved problem found across competitors"
-    )
-    analysis_summary: Optional[str] = Field(
-        default=None,
-        description="Brief summary of the landscape analysis"
-    )
-
-
-# =============================================================================
 # API Response Schemas
 # =============================================================================
 
@@ -317,28 +207,3 @@ class FunctionalReportResponse(BaseModel):
     evidence_citations: Optional[List[EvidenceCitation]] = None
     generated_at: Optional[str] = None
     queue_job_id: Optional[int] = None
-
-
-class LandscapeReportResponse(BaseModel):
-    """API response schema for a landscape opportunity report."""
-    id: int
-    product_id: int
-    report_version: int
-    report_content_md: Optional[str] = None
-    feature_cluster_matrix: Optional[List[FeatureClusterEntry]] = None
-    feature_opportunities: Optional[List[FeatureOpportunity]] = None
-    high_impact_gaps: Optional[List[HighImpactGap]] = None
-    source_competitor_report_ids: Optional[List[int]] = None
-    source_competitor_names: Optional[List[str]] = None
-    generated_at: Optional[str] = None
-    queue_job_id: Optional[int] = None
-
-
-class FeatureOpportunitiesExport(BaseModel):
-    """Portable export format for feature opportunities."""
-    version: str = "1.0"
-    generated_at: str
-    product_id: int
-    product_name: Optional[str] = None
-    feature_ideas: List[FeatureOpportunity]
-    metadata: dict = Field(default_factory=dict)

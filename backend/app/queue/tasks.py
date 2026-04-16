@@ -1649,6 +1649,38 @@ def functional_audit_task(self, job_id: int):
             except Exception as diff_err:
                 print(f"[functional_audit_task] Warning: Change detection failed: {diff_err}")
 
+        # Increment citation counts for evidence referenced in this report
+        try:
+            from app.services.evidence_service import increment_evidence_citations
+
+            cited_ids: set = set()
+
+            # evidence_citations: list of {evidence_id, finding_type, ...}
+            for citation in (result.get("evidence_citations") or []):
+                if isinstance(citation, dict) and citation.get("evidence_id") is not None:
+                    cited_ids.add(citation["evidence_id"])
+
+            # job_assessments[*].features[*].evidence_ids
+            for assessment in (result.get("job_assessments") or []):
+                if not isinstance(assessment, dict):
+                    continue
+                for feature in (assessment.get("features") or []):
+                    if not isinstance(feature, dict):
+                        continue
+                    for eid in (feature.get("evidence_ids") or []):
+                        if eid is not None:
+                            cited_ids.add(eid)
+
+            if cited_ids:
+                increment_evidence_citations(
+                    db,
+                    list(cited_ids),
+                    f"functional_report:{report.id}",
+                )
+                db.commit()
+        except Exception as cite_err:
+            print(f"[functional_audit_task] Warning: Citation increment failed: {cite_err}")
+
         output_data = {
             'report_id': report.id,
             'competitor_id': competitor_id,
@@ -1680,451 +1712,46 @@ def functional_audit_task(self, job_id: int):
             db.close()
 
 
-@shared_task(bind=True, name='app.queue.tasks.landscape_synthesis_task', max_retries=2, default_retry_delay=60, soft_time_limit=900)
-def landscape_synthesis_task(self, job_id: int):
-    """
-    Run landscape synthesis across all competitor functional reports.
-
-    This task:
-    1. Gathers all functional reports for the product
-    2. Runs the LandscapeOpportunitySynthesizerAgent
-    3. Stores the landscape report
-    4. Auto-exports all reports to filesystem
-
-    Args:
-        job_id: The QueueJob ID for this synthesis
-    """
-    from app.agents.landscape_synthesizer_agent import (
-        LandscapeOpportunitySynthesizerAgent,
-        generate_markdown_report
-    )
-    from app.models.competitive_reports import (
-        CompetitorFunctionalReport,
-        LandscapeOpportunityReport
-    )
-    from app.schemas.competitive_reports import LandscapeSynthesisOutput
-    from app.services.llm_service import LLMService
-    from app.services.report_export_service import get_report_export_service
-
-    db = None
-    try:
-        db = SessionLocal()
-        queue_service = QueueService(db)
-
-        # Get job details
-        job = queue_service.get_job(job_id)
-        if not job:
-            raise ValueError(f"Job {job_id} not found")
-
-        queue_service.mark_running(job_id)
-
-        product_id = job.product_id
-        input_data = job.input_data or {}
-
-        # Get product context
-        product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-        if not product:
-            raise ValueError(f"Product {product_id} not found")
-
-        product_context = {
-            'product_name': product.product_name,
-            'product_category': product.product_category,
-            'description': product.product_description,
-        }
-
-        # Get product features
-        features = db.query(ProductFeature).filter(
-            ProductFeature.product_id == product_id,
-            ProductFeature.status == 'active'
-        ).limit(15).all()
-        product_context['core_features'] = [f.feature_name for f in features]
-
-        # Get functional reports — scoped to selected competitors only
-        audit_report_ids = input_data.get('audit_report_ids')
-        if audit_report_ids:
-            # V2 chord path: use specific report IDs from the audits that just ran
-            functional_reports = db.query(CompetitorFunctionalReport).filter(
-                CompetitorFunctionalReport.id.in_(audit_report_ids)
-            ).all()
-        else:
-            # Manual trigger: only include reports for selected (deep_analysis_enabled) competitors
-            selected_competitor_ids = [
-                c.id for c in db.query(ProductCompetitor).filter(
-                    ProductCompetitor.product_id == product_id,
-                    ProductCompetitor.status == 'active',
-                    ProductCompetitor.deep_analysis_enabled == True
-                ).all()
-            ]
-            functional_reports = db.query(CompetitorFunctionalReport).filter(
-                CompetitorFunctionalReport.product_id == product_id,
-                CompetitorFunctionalReport.product_competitor_id.in_(selected_competitor_ids)
-            ).all() if selected_competitor_ids else []
-
-        if not functional_reports:
-            raise ValueError(f"No functional reports found for selected competitors of product {product_id}")
-
-        # Format reports for the agent
-        competitor_reports = []
-        report_ids = []
-        report_tuples = []  # For export service
-
-        # Query all competitor-linked evidence for this product
-        from app.models.evidence import Evidence
-        all_competitor_evidence = db.query(Evidence).filter(
-            Evidence.product_id == product_id,
-            Evidence.competitor_id.isnot(None),
-        ).order_by(Evidence.created_at.desc()).all()
-
-        # Group evidence by competitor_id
-        evidence_by_competitor: dict = {}
-        for ev in all_competitor_evidence:
-            evidence_by_competitor.setdefault(ev.competitor_id, []).append(ev)
-
-        for report in functional_reports:
-            # Get competitor name
-            competitor = db.query(ProductCompetitor).filter(
-                ProductCompetitor.id == report.product_competitor_id
-            ).first()
-            competitor_name = competitor.competitor_name if competitor else f"Competitor {report.product_competitor_id}"
-
-            # Get evidence for this competitor (limit to 10 most recent)
-            competitor_evidence = evidence_by_competitor.get(report.product_competitor_id, [])[:10]
-            evidence_data = [{
-                'title': ev.title,
-                'content': (ev.content or '')[:1500],
-                'evidence_type': ev.evidence_type.value if ev.evidence_type else None,
-                'source_url': ev.source_url,
-                'source_description': ev.source_description,
-            } for ev in competitor_evidence]
-
-            competitor_reports.append({
-                'competitor_name': competitor_name,
-                'audit': {
-                    'competitor_context': report.competitor_context,
-                    'functional_comparison': report.functional_comparison,
-                    'gaps_deep_dive': report.gaps_deep_dive,
-                    'technical_constraints': report.technical_constraints,
-                },
-                'evidence': evidence_data,
-            })
-            report_ids.append(report.id)
-            report_tuples.append((report, competitor_name))
-
-        # Initialize LLM service and agent
-        llm_service = LLMService()
-        agent = LandscapeOpportunitySynthesizerAgent(
-            db=db,
-            llm_service=llm_service,
-            product_id=product_id,
-            user_id=job.user_id,
-            job_id=job.job_uuid
-        )
-
-        # Run the synthesis
-        agent_input = {
-            'product_context': product_context,
-            'competitor_reports': competitor_reports,
-        }
-
-        # Use higher max_tokens for synthesis output (increased from 8000 to
-        # accommodate larger analyses with more competitors and evidence)
-        result = agent.execute(agent_input, max_tokens=12000)
-
-        # Convert dict to Pydantic for markdown generation
-        result_model = LandscapeSynthesisOutput(**result)
-
-        # Generate markdown report
-        markdown_content = generate_markdown_report(
-            product.product_name,
-            result_model,
-            len(functional_reports)
-        )
-
-        # Collect competitor names from reports used in synthesis
-        source_competitor_names = [cr['competitor_name'] for cr in competitor_reports]
-
-        # Store or update the landscape report
-        existing_report = db.query(LandscapeOpportunityReport).filter(
-            LandscapeOpportunityReport.product_id == product_id
-        ).first()
-
-        # Capture previous data for change detection before overwriting
-        previous_landscape_data = None
-        if existing_report:
-            previous_landscape_data = {
-                "feature_opportunities": existing_report.feature_opportunities or [],
-                "high_impact_gaps": existing_report.high_impact_gaps or [],
-            }
-            existing_report.report_version += 1
-            existing_report.report_content_md = markdown_content
-            existing_report.feature_cluster_matrix = result['feature_cluster_matrix']
-            existing_report.feature_opportunities = result['feature_opportunities']
-            existing_report.high_impact_gaps = result['high_impact_gaps']
-            existing_report.source_competitor_report_ids = report_ids
-            existing_report.source_competitor_names = source_competitor_names
-            existing_report.queue_job_id = job_id
-            existing_report.generated_at = datetime.utcnow()
-            landscape_report = existing_report
-        else:
-            landscape_report = LandscapeOpportunityReport(
-                product_id=product_id,
-                report_version=1,
-                report_content_md=markdown_content,
-                feature_cluster_matrix=result['feature_cluster_matrix'],
-                feature_opportunities=result['feature_opportunities'],
-                high_impact_gaps=result['high_impact_gaps'],
-                source_competitor_report_ids=report_ids,
-                source_competitor_names=source_competitor_names,
-                queue_job_id=job_id
-            )
-            db.add(landscape_report)
-
-        db.commit()
-        db.refresh(landscape_report)
-
-        # Compute structured diff from previous version
-        if previous_landscape_data:
-            try:
-                from app.services.change_detection_service import ChangeDetectionService
-                current_landscape_data = {
-                    "feature_opportunities": result['feature_opportunities'],
-                    "high_impact_gaps": result['high_impact_gaps'],
-                }
-                landscape_report.changes_from_previous = ChangeDetectionService.compute_landscape_report_diff(
-                    current_landscape_data, previous_landscape_data
-                )
-                db.commit()
-            except Exception as diff_err:
-                print(f"[landscape_synthesis_task] Warning: Change detection failed: {diff_err}")
-
-        # Auto-export all reports to filesystem
-        export_service = get_report_export_service()
-        export_result = export_service.export_analysis_run(
-            product_id=product_id,
-            product_name=product.product_name,
-            functional_reports=report_tuples,
-            landscape_report=landscape_report
-        )
-
-        # Auto-generate ideas from high-priority opportunities (V2 approach)
-        ideas_generated = 0
-        triage_jobs_created = 0
-        from app.models.idea import Idea, SourceType, IdeaStatus
-
-        # Get config for priority threshold
-        config = db.query(CompetitiveAgentConfig).filter(
-            CompetitiveAgentConfig.product_id == product_id
-        ).first()
-        priority_threshold = config.intensity_idea_threshold if config else 0.0
-
-        if priority_threshold > 0 and result.get('feature_opportunities'):
-            queue_service.update_progress(
-                job_id, 92.0,
-                f"Generating ideas from high-priority opportunities (threshold: {priority_threshold})..."
-            )
-
-            total_competitors_analyzed = len(functional_reports)
-
-            for opportunity in result['feature_opportunities']:
-                priority_score = opportunity.get('priority_score', 0)
-                if priority_score is None or priority_score < priority_threshold:
-                    continue
-
-                # Check if idea already exists with same feature name (simple dedup)
-                feature_name = opportunity.get('feature_name', '')
-                existing_idea = db.query(Idea).filter(
-                    Idea.product_id == product_id,
-                    Idea.title == feature_name,
-                    Idea.source_type == SourceType.COMPETITOR_AUTOMATED
-                ).first()
-
-                if existing_idea:
-                    continue  # Skip - already generated
-
-                # Calculate priority level for display
-                if priority_score >= 0.85:
-                    priority_level = "critical"
-                elif priority_score >= 0.70:
-                    priority_level = "high"
-                elif priority_score >= 0.55:
-                    priority_level = "medium"
-                else:
-                    priority_level = "low"
-
-                # Build competitive context for PO display
-                competitors_with_feature = opportunity.get('competitors_with_feature', [])
-                competitive_context = {
-                    "priority_score": priority_score,
-                    "priority_level": priority_level,
-                    "competitors_with_feature": competitors_with_feature,
-                    "total_competitors_analyzed": total_competitors_analyzed,
-                    "market_context": opportunity.get('market_context', ''),
-                    "source_evidence_count": len(opportunity.get('source_evidence', [])),
-                    "landscape_report_id": landscape_report.id,
-                }
-
-                # Build source metadata
-                source_metadata = {
-                    "landscape_report_id": landscape_report.id,
-                    "landscape_report_version": landscape_report.report_version,
-                    "feature_name": feature_name,
-                    "priority_score": priority_score,
-                    "competitors": competitors_with_feature,
-                }
-
-                # Build use case from evidence
-                source_evidence = opportunity.get('source_evidence', [])
-                use_case = "Based on competitive analysis:\n"
-                if source_evidence:
-                    for evidence in source_evidence[:3]:
-                        use_case += f"• {evidence}\n"
-                else:
-                    use_case += f"• {len(competitors_with_feature)} competitors offer this capability"
-
-                # Create the idea
-                new_idea = Idea(
-                    title=feature_name[:255],  # Max 255 chars
-                    what_description=opportunity.get('summary', feature_name),
-                    why_description=f"{opportunity.get('user_value', '')} {opportunity.get('market_context', '')}".strip(),
-                    use_case_description=use_case,
-                    product_id=product_id,
-                    source_type=SourceType.COMPETITOR_AUTOMATED,
-                    source_metadata=source_metadata,
-                    competitive_context=competitive_context,
-                    status=IdeaStatus.PENDING,
-                    is_active=False,
-                    auto_categorized=False,
-                )
-                db.add(new_idea)
-                db.flush()  # Get the ID
-
-                ideas_generated += 1
-
-                # Create triage job for duplicate/feature-exists detection
-                triage_job = queue_service.create_job(
-                    job_type=JobType.IDEA_TRIAGE,
-                    input_data={'idea_id': new_idea.id},
-                    product_id=product_id,
-                    parent_job_id=job_id,
-                )
-                db.commit()
-
-                # Queue the triage task
-                triage_idea_task.delay(triage_job.id)
-                triage_jobs_created += 1
-
-            print(f"[landscape_synthesis_task] Generated {ideas_generated} ideas, {triage_jobs_created} triage jobs created")
-
-        output_data = {
-            'landscape_report_id': landscape_report.id,
-            'report_version': landscape_report.report_version,
-            'competitors_analyzed': len(functional_reports),
-            'feature_clusters': len(result['feature_cluster_matrix']),
-            'feature_opportunities': len(result['feature_opportunities']),
-            'high_impact_gaps': len(result['high_impact_gaps']),
-            'source_report_ids': report_ids,
-            'export_folder': export_result.get('folder'),
-            'export_files': export_result.get('total_files', 0),
-            'ideas_generated': ideas_generated,
-            'triage_jobs_created': triage_jobs_created,
-        }
-
-        queue_service.mark_success(job_id, output_data)
-
-        # If this was triggered as part of V2 workflow, mark parent job complete
-        if job.parent_job_id:
-            parent_job = queue_service.get_job(job.parent_job_id)
-            if parent_job and parent_job.status == JobStatus.RUNNING:
-                parent_output = parent_job.output_data or {}
-                parent_output['landscape_synthesis_job_id'] = job_id
-                parent_output['landscape_report_id'] = landscape_report.id
-                parent_output['status'] = 'completed'
-                queue_service.mark_success(job.parent_job_id, parent_output)
-                print(f"[landscape_synthesis_task] Marked parent job {job.parent_job_id} as success")
-
-        return output_data
-
-    except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[landscape_synthesis_task] Error for job {job_id}: {error_msg}")
-
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
-
-        raise self.retry(exc=e)
-
-    finally:
-        if db:
-            db.close()
-
-
-@shared_task(bind=True, name='app.queue.tasks.aggregate_functional_audits', soft_time_limit=1200)
-def aggregate_functional_audits(self, audit_results: list, parent_job_id: int):
+@shared_task(bind=True, name='app.queue.tasks.aggregate_functional_audits_v2', soft_time_limit=300)
+def aggregate_functional_audits_v2(self, audit_results: list, parent_job_id: int):
     """
     Callback task after all functional audits complete.
 
-    Triggers landscape synthesis automatically.
+    Marks the parent orchestration job as successful. Landscape synthesis
+    is no longer auto-triggered — the user should run unified_synthesis
+    explicitly via synthesis_run_unified.
 
     Args:
         audit_results: List of results from functional_audit_task
         parent_job_id: The parent orchestration job ID
     """
-    from app.models.queue import QueueJob, JobType, JobStatus
-
     db = None
     try:
         db = SessionLocal()
         queue_service = QueueService(db)
 
-        # Get parent job to find product_id
-        parent_job = queue_service.get_job(parent_job_id)
-        if not parent_job:
-            raise ValueError(f"Parent job {parent_job_id} not found")
-
-        product_id = parent_job.product_id
-
-        # Count successful audits
         successful_audits = [r for r in audit_results if r and r.get('report_id')]
         failed_audits = len(audit_results) - len(successful_audits)
 
-        print(f"[aggregate_functional_audits] {len(successful_audits)} successful, {failed_audits} failed")
+        print(f"[aggregate_functional_audits_v2] {len(successful_audits)} successful, {failed_audits} failed")
 
-        if not successful_audits:
-            raise ValueError("All functional audits failed, cannot proceed with synthesis")
-
-        # Create landscape synthesis job
-        synthesis_job = QueueJob(
-            job_type=JobType.LANDSCAPE_SYNTHESIS,
-            status=JobStatus.PENDING,
-            product_id=product_id,
-            parent_job_id=parent_job_id,
-            input_data={
-                'audit_report_ids': [r['report_id'] for r in successful_audits],
-            }
-        )
-        db.add(synthesis_job)
-        db.commit()
-        db.refresh(synthesis_job)
-
-        # Trigger landscape synthesis
-        landscape_synthesis_task.delay(synthesis_job.id)
-
-        return {
-            'status': 'synthesis_triggered',
+        queue_service.mark_success(parent_job_id, {
+            'status': 'audits_completed',
             'successful_audits': len(successful_audits),
             'failed_audits': failed_audits,
-            'synthesis_job_id': synthesis_job.id,
+            'audit_report_ids': [r['report_id'] for r in successful_audits],
+        })
+
+        return {
+            'status': 'audits_completed',
+            'successful_audits': len(successful_audits),
+            'failed_audits': failed_audits,
         }
 
     except Exception as e:
         error_msg = str(e)
         error_tb = traceback.format_exc()
-        print(f"[aggregate_functional_audits] Error: {error_msg}")
+        print(f"[aggregate_functional_audits_v2] Error: {error_msg}")
 
         if db:
             try:
@@ -2148,7 +1775,7 @@ def run_competitive_analysis_v2(self, job_id: int):
     This task:
     1. Creates functional audit jobs for all enabled competitors
     2. Dispatches audits in parallel using Celery chord
-    3. Chord callback triggers landscape synthesis
+    3. Chord callback marks the parent job complete
 
     Args:
         job_id: The parent orchestration job ID
@@ -2214,8 +1841,8 @@ def run_competitive_analysis_v2(self, job_id: int):
         }
         db.commit()
 
-        # Dispatch parallel audits with callback for synthesis
-        workflow = chord(audit_tasks)(aggregate_functional_audits.s(job_id))
+        # Dispatch parallel audits; callback marks the parent job complete
+        workflow = chord(audit_tasks)(aggregate_functional_audits_v2.s(job_id))
 
         return {
             'status': 'workflow_started',
@@ -2671,365 +2298,6 @@ def activity_insight_task(self, job_id: int):
                     if import_record:
                         import_record.status = "failed"
                         import_record.error_message = error_msg
-                        db.commit()
-            except Exception:
-                pass
-
-        raise
-
-    finally:
-        if db:
-            db.close()
-
-
-@shared_task(bind=True, name='app.queue.tasks.opportunity_synthesis_task', soft_time_limit=900)
-def opportunity_synthesis_task(self, job_id: int):
-    """
-    Synthesize opportunities from competitive, customer, and internal sources.
-
-    This task:
-    1. Gathers data from all available sources
-    2. Runs the OpportunitySynthesisAgent
-    3. Stores SynthesizedOpportunity records
-    4. Updates the SynthesisRun status
-
-    Args:
-        job_id: The QueueJob ID for this task
-    """
-    from app.agents.synthesis_agent import OpportunitySynthesisAgent
-    from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
-    from app.models.competitive_reports import LandscapeOpportunityReport
-    from app.models.internal_feedback import InternalFeedbackImport
-    from app.models.idea import Idea, IdeaStatus
-    from app.schemas.synthesis import OpportunitySynthesisOutput
-    from app.services.llm_service import LLMService
-    from app.services.internal_theme_merger import InternalThemeMergerService
-    from datetime import datetime
-    from sqlalchemy import desc
-
-    db = None
-    try:
-        db = SessionLocal()
-        queue_service = QueueService(db)
-
-        # Get job details
-        job = queue_service.get_job(job_id)
-        if not job:
-            raise ValueError(f"Job {job_id} not found")
-
-        queue_service.mark_running(job_id)
-
-        # Extract job parameters
-        input_data = job.input_data or {}
-        synthesis_run_id = input_data.get('synthesis_run_id')
-        product_id = job.product_id
-        user_id = job.user_id
-
-        if not synthesis_run_id:
-            raise ValueError("synthesis_run_id is required in input_data")
-
-        if not product_id:
-            raise ValueError("product_id is required")
-
-        # Get synthesis run record
-        synthesis_run = db.query(SynthesisRun).filter(
-            SynthesisRun.id == synthesis_run_id
-        ).first()
-
-        if not synthesis_run:
-            raise ValueError(f"SynthesisRun {synthesis_run_id} not found")
-
-        # Gather data from all sources
-        queue_service.update_progress(job_id, 10.0, "Gathering competitive data...")
-
-        # 1. Competitive opportunities from landscape report
-        competitive_opportunities = []
-        landscape_report = db.query(LandscapeOpportunityReport).filter(
-            LandscapeOpportunityReport.product_id == product_id
-        ).first()
-
-        if landscape_report and landscape_report.feature_opportunities:
-            competitive_opportunities = landscape_report.feature_opportunities
-
-        queue_service.update_progress(job_id, 25.0, "Gathering customer ideas...")
-
-        # 2. Customer ideas (top voted)
-        # Vote count is computed via relationship, not a stored column
-        from app.models.vote import Vote
-        from sqlalchemy import func as sql_func
-
-        customer_ideas = []
-        # Subquery to count votes per idea
-        vote_counts = db.query(
-            Vote.idea_id,
-            sql_func.sum(Vote.vote_value).label('vote_count')
-        ).group_by(Vote.idea_id).subquery()
-
-        # Query ideas with their vote counts, ordered by votes descending
-        # Only include ACCEPTED ideas (those open for voting)
-        ideas_with_votes = db.query(
-            Idea,
-            sql_func.coalesce(vote_counts.c.vote_count, 0).label('vote_count')
-        ).outerjoin(
-            vote_counts, Idea.id == vote_counts.c.idea_id
-        ).filter(
-            Idea.product_id == product_id,
-            Idea.status == IdeaStatus.ACCEPTED
-        ).order_by(desc('vote_count')).limit(50).all()
-
-        for idea, vote_count in ideas_with_votes:
-            customer_ideas.append({
-                'id': idea.id,
-                'title': idea.title,
-                'description': idea.what_description,  # Use what_description as the description
-                'vote_count': int(vote_count) if vote_count else 0,
-                'status': idea.status.value if idea.status else 'submitted',
-                # Pass JTBD + job linkage to synthesis so agent can semantic-match against jobs
-                'jtbd_statement': getattr(idea, 'jtbd_statement', None),
-                'job_id_key': getattr(idea, 'job_id_key', None),
-            })
-
-        queue_service.update_progress(job_id, 40.0, "Gathering internal feedback...")
-
-        # 3. Internal feedback themes (merged from structured + activity sources)
-        # Use the InternalThemeMergerService to combine themes from:
-        # - Structured imports (WinLossTheme, SupportTheme)
-        # - Activity imports (DealActivityInsight, SupportActivityInsight)
-        # Similar themes are merged with confidence boosted when sources agree
-        merger = InternalThemeMergerService(db)
-        merged_evidence = merger.merge_internal_evidence(product_id)
-        internal_evidence_data = merger.to_synthesis_format(merged_evidence)
-
-        winloss_themes = internal_evidence_data.get('winloss_themes', [])
-        support_themes = internal_evidence_data.get('support_themes', [])
-
-        # Track which internal sources were used
-        internal_sources_used = merged_evidence.sources_used  # ["structured", "activity"]
-
-        queue_service.update_progress(job_id, 45.0, "Gathering factbase evidence...")
-
-        # 4. Evidence/research from factbase (hybrid routing)
-        from app.models.evidence import Evidence, COMPETITIVE_EVIDENCE_TYPES
-        all_evidence = db.query(Evidence).filter(
-            Evidence.product_id == product_id
-        ).order_by(Evidence.created_at.desc()).limit(100).all()
-
-        # Split by hybrid routing:
-        # - Competitive-typed → enrich competitive input
-        # - Non-competitive → 4th source (research_signals)
-        competitive_evidence_enrichment = []
-        research_signals = []
-
-        for ev in all_evidence:
-            ev_dict = {
-                'id': ev.id,
-                'evidence_id': ev.id,
-                'title': ev.title,
-                'evidence_type': ev.evidence_type.value if ev.evidence_type else None,
-                'content': ev.content,
-                'source_url': ev.source_url,
-                'source_description': ev.source_description,
-                'jtbd_statement': ev.jtbd_statement,
-                'competitor_id': ev.competitor_id,
-            }
-            if ev.is_competitive():
-                competitive_evidence_enrichment.append(ev_dict)
-            else:
-                research_signals.append(ev_dict)
-
-        # Enrich competitive opportunities with factbase evidence
-        if competitive_evidence_enrichment:
-            for opp in competitive_opportunities:
-                opp.setdefault('factbase_evidence', [])
-            # Append competitive evidence as additional context
-            for ev in competitive_evidence_enrichment:
-                competitive_opportunities.append({
-                    'feature_name': ev['title'],
-                    'prevalence': 'Factbase Evidence',
-                    'our_status': 'Evidence',
-                    'competitors_with_feature': [],
-                    'priority_score': 0,
-                    'factbase_evidence_id': ev['id'],
-                    'factbase_evidence_type': ev['evidence_type'],
-                    'factbase_source': ev['source_description'] or ev['source_url'] or '',
-                    'factbase_content': (ev['content'] or '')[:300],
-                })
-
-        # Update source snapshot
-        sources_used = []
-        if competitive_opportunities:
-            sources_used.append("competitive")
-        if customer_ideas:
-            sources_used.append("customer")
-        if winloss_themes or support_themes:
-            sources_used.append("internal")
-        if research_signals:
-            sources_used.append("evidence_research")
-
-        # Count high-confidence themes (those with evidence from both structured + activity)
-        high_confidence_winloss = sum(1 for t in winloss_themes if t.get('confidence') == 'high')
-        high_confidence_support = sum(1 for t in support_themes if t.get('confidence') == 'high')
-
-        source_snapshot = {
-            'landscape_report_id': landscape_report.id if landscape_report else None,
-            'competitive_opportunities_count': len(competitive_opportunities),
-            'ideas_count': len(customer_ideas),
-            'ideas_total_votes': sum(i.get('vote_count', 0) for i in customer_ideas),
-            # Internal evidence now comes from merged sources
-            'structured_import_id': merged_evidence.structured_import_id,
-            'activity_import_id': merged_evidence.activity_import_id,
-            'internal_sources_used': internal_sources_used,
-            'winloss_themes_count': len(winloss_themes),
-            'support_themes_count': len(support_themes),
-            'high_confidence_winloss_count': high_confidence_winloss,
-            'high_confidence_support_count': high_confidence_support,
-            'evidence_count': len(all_evidence),
-            'competitive_evidence_count': len(competitive_evidence_enrichment),
-            'research_evidence_count': len(research_signals),
-        }
-
-        synthesis_run.source_snapshot = source_snapshot
-        synthesis_run.sources_used = sources_used
-        db.commit()
-
-        queue_service.update_progress(job_id, 50.0, "Running synthesis agent...")
-
-        # Initialize LLM service and agent with product-specific scoring weights
-        from app.models.competitor_intelligence import CIProduct
-        from app.services.scoring_defaults import get_weights_for_product
-        product = db.query(CIProduct).get(product_id)
-        scoring_weights = get_weights_for_product(product) if product else None
-
-        llm_service = LLMService()
-        agent = OpportunitySynthesisAgent(
-            db=db,
-            llm_service=llm_service,
-            product_id=product_id,
-            user_id=user_id,
-            job_id=job.job_uuid,
-            scoring_weights=scoring_weights
-        )
-
-        # Run the agent with higher max_tokens for complex JSON output
-        # Synthesis generates detailed evidence for up to 15 opportunities
-        result = agent.execute(
-            {
-                'competitive_opportunities': competitive_opportunities,
-                'customer_ideas': customer_ideas,
-                'winloss_themes': winloss_themes,
-                'support_themes': support_themes,
-                'research_signals': research_signals,
-            },
-            max_tokens=8000  # Higher limit for complex synthesis output
-        )
-
-        queue_service.update_progress(job_id, 80.0, "Storing synthesis results...")
-
-        # Parse output
-        if isinstance(result, OpportunitySynthesisOutput):
-            output = result
-        else:
-            output = OpportunitySynthesisOutput(**result)
-
-        # Store synthesized opportunities
-        four_way = 0
-        three_way = 0
-        two_way = 0
-        single_source = 0
-
-        # Batch-generate JTBD embeddings (1 API call instead of N sequential)
-        jtbd_texts = [opp.jtbd_statement for opp in output.opportunities if opp.jtbd_statement]
-        jtbd_embeddings = {}
-        if jtbd_texts:
-            try:
-                from app.services.embedding_service import generate_embeddings_batch
-                embs = generate_embeddings_batch(jtbd_texts, input_type="document")
-                jtbd_embeddings = dict(zip(jtbd_texts, embs))
-            except Exception as jtbd_emb_err:
-                print(f"[opportunity_synthesis_task] Warning: Batch JTBD embedding failed: {jtbd_emb_err}")
-
-        for opp in output.opportunities:
-            db_opp = SynthesizedOpportunity(
-                synthesis_run_id=synthesis_run_id,
-                product_id=product_id,
-                opportunity_name=opp.opportunity_name,
-                opportunity_summary=opp.opportunity_summary,
-                priority_score=opp.priority_score,
-                source_count=opp.source_count,
-                sources=opp.sources,
-                competitive_evidence=opp.competitive_evidence.model_dump() if opp.competitive_evidence else None,
-                customer_evidence=opp.customer_evidence.model_dump() if opp.customer_evidence else None,
-                internal_evidence=opp.internal_evidence.model_dump() if opp.internal_evidence else None,
-                evidence_signals=opp.evidence_signals.model_dump() if opp.evidence_signals else None,
-                recommended_action=opp.recommended_action,
-                feature_keywords=opp.feature_keywords,
-                jtbd_statement=opp.jtbd_statement
-            )
-
-            # Use pre-computed JTBD embedding
-            if opp.jtbd_statement and opp.jtbd_statement in jtbd_embeddings:
-                db_opp.jtbd_embedding = jtbd_embeddings[opp.jtbd_statement]
-
-            db.add(db_opp)
-
-            if opp.source_count >= 4:
-                four_way += 1
-            elif opp.source_count == 3:
-                three_way += 1
-            elif opp.source_count == 2:
-                two_way += 1
-            else:
-                single_source += 1
-
-        # Update synthesis run
-        synthesis_run.status = 'completed'
-        synthesis_run.analysis_summary = output.analysis_summary
-        synthesis_run.summary_stats = {
-            'four_way_matches': four_way,
-            'three_way_matches': three_way,
-            'two_way_matches': two_way,
-            'single_source': single_source,
-            'total_opportunities': len(output.opportunities)
-        }
-        synthesis_run.completed_at = datetime.utcnow()
-
-        db.commit()
-
-        # Mark job success
-        queue_service.mark_success(job_id, {
-            'synthesis_run_id': synthesis_run_id,
-            'opportunities_count': len(output.opportunities),
-            'four_way_matches': four_way,
-            'three_way_matches': three_way,
-            'two_way_matches': two_way,
-            'single_source': single_source
-        })
-
-        return {
-            'status': 'completed',
-            'synthesis_run_id': synthesis_run_id,
-            'opportunities': len(output.opportunities)
-        }
-
-    except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[opportunity_synthesis_task] Error for job {job_id}: {error_msg}")
-
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-
-                # Update synthesis run status
-                synthesis_run_id = (job.input_data or {}).get('synthesis_run_id') if 'job' in dir() else None
-                if synthesis_run_id:
-                    synthesis_run = db.query(SynthesisRun).filter(
-                        SynthesisRun.id == synthesis_run_id
-                    ).first()
-                    if synthesis_run:
-                        synthesis_run.status = 'failed'
-                        synthesis_run.error_message = error_msg
                         db.commit()
             except Exception:
                 pass
@@ -3728,6 +2996,40 @@ def unified_synthesis_task(self, job_id: int):
 
         db.commit()
         db.refresh(synthesis_report)
+
+        # Increment citation counts for evidence referenced in this synthesis report
+        try:
+            from app.services.evidence_service import increment_evidence_citations
+
+            cited_ids: set = set()
+
+            # job_scorecard[*].evidence_ids
+            for entry in (synthesis_report.job_scorecard or []):
+                if not isinstance(entry, dict):
+                    continue
+                for eid in (entry.get("evidence_ids") or []):
+                    if eid is not None:
+                        cited_ids.add(eid)
+
+            # opportunities[*].evidence_signals.items[*].evidence_id
+            for opp in (synthesis_report.opportunities or []):
+                if not isinstance(opp, dict):
+                    continue
+                signals = opp.get("evidence_signals") or {}
+                if isinstance(signals, dict):
+                    for item in (signals.get("items") or []):
+                        if isinstance(item, dict) and item.get("evidence_id") is not None:
+                            cited_ids.add(item["evidence_id"])
+
+            if cited_ids:
+                increment_evidence_citations(
+                    db,
+                    list(cited_ids),
+                    f"synthesis_report:{synthesis_report.id}",
+                )
+                db.commit()
+        except Exception as cite_err:
+            print(f"[unified_synthesis_task] Warning: Citation increment failed: {cite_err}")
 
         queue_service.update_progress(job_id, 95.0, "Auto-generating ideas (if enabled)...")
 

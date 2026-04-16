@@ -2,16 +2,17 @@
 Synthesis models for multi-source opportunity synthesis.
 
 This module defines database models for:
-1. SynthesisRun - Tracks a synthesis run combining multiple sources (legacy)
+1. SynthesisRun - Tracks a synthesis run combining multiple sources (legacy
+   placeholder kept for SynthesizedOpportunity FK compatibility)
 2. SynthesizedOpportunity - Opportunities identified from cross-source analysis
 3. SynthesisConfig - Per-product configuration for the unified synthesis agent
-4. SynthesisReport - Unified synthesis report (Phase 3; replaces
-   LandscapeOpportunityReport once Phase 4 cleanup lands)
+4. SynthesisReport - Unified synthesis report (Phase 3)
 
-These models support the Opportunity Synthesis Agent which combines:
-- Competitive intelligence (from landscape reports)
+These models support the unified synthesis agent which combines:
+- Competitive intelligence (from competitor functional reports)
 - Customer feedback (from voting system)
 - Internal feedback (from win/loss and support themes)
+- Evidence research (from the product factbase)
 """
 
 from datetime import datetime
@@ -47,11 +48,12 @@ class SynthesisRun(Base):
     Tracks a synthesis run that combines multiple data sources.
 
     Each run captures a snapshot of available data from:
-    - Competitive: LandscapeOpportunityReport (feature opportunities)
+    - Competitive: CompetitorFunctionalReports (per-competitor audits)
     - Customer: Ideas with votes
     - Internal: WinLossThemes and SupportThemes
+    - Evidence: Evidence records from the product factbase
 
-    The Opportunity Synthesis Agent processes these sources to
+    The unified synthesis agent processes these sources to
     identify intersections and generate prioritized opportunities.
     """
     __tablename__ = "synthesis_runs"
@@ -386,7 +388,7 @@ class SynthesisConfig(Base):
 
 
 class SynthesisReport(Base):
-    """Unified synthesis report replacing LandscapeOpportunityReport.
+    """Unified synthesis report.
 
     Produced by the unified synthesis agent. Handles:
     - Competitive mode (only competitor audits + competitor-linked evidence)

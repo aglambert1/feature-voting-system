@@ -44,7 +44,6 @@ from app.models.competitive_agent import (
 )
 from app.models.competitive_reports import (
     CompetitorFunctionalReport,
-    LandscapeOpportunityReport,
 )
 from app.models.internal_feedback import (
     InternalFeedbackImport,
@@ -86,7 +85,7 @@ __all__ = [
     "PMReviewQueue", "CompetitorSnapshot", "MonitoringConfig",
     "ReviewQueueType", "ReviewQueueStatus", "ReviewQueuePriority", "AlertType",
     "AgentMode", "CompetitiveAgentConfig",
-    "CompetitorFunctionalReport", "LandscapeOpportunityReport",
+    "CompetitorFunctionalReport",
     "InternalFeedbackImport", "WinLossTheme", "SupportTheme", "ImportStatus",
     "ActivityImport", "DealActivityInsight", "SupportActivityInsight",
     "SynthesisRun", "SynthesizedOpportunity", "SynthesisStatus", "SynthesisSourceType",

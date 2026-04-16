@@ -48,7 +48,8 @@ def product_list() -> dict:
 def product_get_context(product_id: int) -> dict:
     """Get full context about a product including its features, positioning, and analysis history."""
     from app.models.competitor_intelligence import CIProduct, ProductFeature
-    from app.models.competitive_reports import LandscapeOpportunityReport
+    from app.models.synthesis import SynthesisReport
+    from sqlalchemy import desc
 
     with get_session() as db:
         denied = require_product_access(db, product_id)
@@ -64,9 +65,12 @@ def product_get_context(product_id: int) -> dict:
             ProductFeature.status == "active",
         ).all()
 
-        landscape = db.query(LandscapeOpportunityReport).filter(
-            LandscapeOpportunityReport.product_id == product_id
-        ).first()
+        latest_report = (
+            db.query(SynthesisReport)
+            .filter(SynthesisReport.product_id == product_id)
+            .order_by(desc(SynthesisReport.report_version))
+            .first()
+        )
 
         return {
             "product_id": product.id,
@@ -78,8 +82,8 @@ def product_get_context(product_id: int) -> dict:
                 {"id": f.id, "name": f.feature_name, "description": f.feature_description}
                 for f in features
             ],
-            "last_landscape_analysis": landscape.generated_at.isoformat() if landscape else None,
-            "landscape_version": landscape.report_version if landscape else None,
+            "last_synthesis_analysis": latest_report.generated_at.isoformat() if latest_report else None,
+            "synthesis_version": latest_report.report_version if latest_report else None,
             "target_customer_profile": product.target_customer_profile,
             "job_map_version": product.job_map_version,
             "job_map_summary": f"{len(product.jobs)} jobs defined" if product.jobs else "No job map defined",

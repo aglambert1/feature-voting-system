@@ -81,7 +81,84 @@ def create_evidence(
     db.add(evidence)
     db.flush()
 
+    # Auto-link evidence to the most similar active job (if any)
+    try:
+        _link_evidence_to_job(db, evidence, product_id)
+    except Exception as e:
+        logger.warning("Failed to link evidence to job: %s", e)
+
     return evidence
+
+
+def _link_evidence_to_job(db: Session, evidence: Evidence, product_id: int) -> None:
+    """Match evidence to the most similar active job via embedding similarity.
+
+    Uses cosine similarity between the evidence's JTBD embedding and each
+    active ProductJob's statement_embedding. If the best match exceeds the
+    similarity threshold (0.5), the evidence's job_id_key is set.
+    """
+    if not evidence.jtbd_embedding:
+        return
+
+    from app.models.competitor_intelligence import ProductJob
+
+    jobs = db.query(ProductJob).filter(
+        ProductJob.product_id == product_id,
+        ProductJob.status == "active",
+    ).all()
+
+    if not jobs:
+        return
+
+    # Cosine similarity
+    import numpy as np
+    evidence_emb = np.array(evidence.jtbd_embedding)
+
+    best_job = None
+    best_sim = 0.0
+    for job in jobs:
+        if not job.statement_embedding:
+            continue
+        job_emb = np.array(job.statement_embedding)
+        sim = float(
+            np.dot(evidence_emb, job_emb)
+            / (np.linalg.norm(evidence_emb) * np.linalg.norm(job_emb) + 1e-8)
+        )
+        if sim > best_sim and sim > 0.5:  # threshold
+            best_sim = sim
+            best_job = job
+
+    if best_job:
+        evidence.job_id_key = best_job.job_id_key
+
+
+def increment_evidence_citations(
+    db: Session,
+    evidence_ids: list,
+    cited_in: str,
+) -> None:
+    """Increment citation_count and update last_cited_in for a list of evidence IDs.
+
+    Args:
+        db: SQLAlchemy session (caller manages commit/flush).
+        evidence_ids: List of evidence IDs being cited.
+        cited_in: Context where cited, e.g. "functional_report:5", "synthesis_report:3".
+    """
+    if not evidence_ids:
+        return
+
+    # Deduplicate + coerce to int so we don't pass bad types
+    unique_ids = list({int(eid) for eid in evidence_ids if eid is not None})
+    if not unique_ids:
+        return
+
+    db.query(Evidence).filter(Evidence.id.in_(unique_ids)).update(
+        {
+            Evidence.citation_count: Evidence.citation_count + 1,
+            Evidence.last_cited_in: cited_in,
+        },
+        synchronize_session=False,
+    )
 
 
 def extract_jtbd(title: str, content: str, evidence_type: str) -> Optional[str]:

@@ -94,35 +94,6 @@ def ci_get_competitor_report(product_id: int, competitor_name: str) -> dict:
 
 
 @mcp.tool()
-def ci_get_landscape(product_id: int) -> dict:
-    """Get the cross-competitor landscape analysis showing feature prevalence, gaps, and opportunities across all competitors."""
-    from app.models.competitive_reports import LandscapeOpportunityReport
-
-    with get_session() as db:
-        denied = require_product_access(db, product_id)
-        if denied:
-            return denied
-
-        report = db.query(LandscapeOpportunityReport).filter(
-            LandscapeOpportunityReport.product_id == product_id
-        ).first()
-
-        if not report:
-            return {"error": "No landscape analysis available. Run ci_run_competitor_audit for at least one competitor, then ci_run_analysis."}
-
-        return {
-            "product_id": product_id,
-            "report_version": report.report_version,
-            "generated_at": report.generated_at.isoformat(),
-            "source_competitors": report.source_competitor_names,
-            "feature_cluster_matrix": report.feature_cluster_matrix,
-            "feature_opportunities": report.feature_opportunities,
-            "high_impact_gaps": report.high_impact_gaps,
-            "changes_from_previous": report.changes_from_previous,
-        }
-
-
-@mcp.tool()
 def ci_search_features(product_id: int, query: str) -> dict:
     """Search across all competitor reports and competitive evidence for a specific capability using semantic matching. Returns both structured competitor features and ad-hoc competitive intelligence from the factbase."""
     from app.services.embedding_service import generate_embedding
@@ -299,7 +270,7 @@ def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
 
 @mcp.tool()
 def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
-    """Trigger a functional audit for a single competitor. Returns a job ID — poll with job_get_status until complete. After all competitor audits finish, run ci_run_analysis for landscape synthesis."""
+    """Trigger a functional audit for a single competitor. Returns a job ID — poll with job_get_status until complete. After all competitor audits finish, run synthesis_run_unified for unified synthesis."""
     from app.models.competitor_intelligence import ProductCompetitor
     from app.models.queue import JobType
     from app.services.queue_service import QueueService
@@ -350,7 +321,7 @@ def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
             "competitor_name": competitor.competitor_name,
             "status": "queued",
             "message": f"Functional audit for {competitor.competitor_name} queued. Poll with job_get_status until complete. "
-                       "After all audits finish, run ci_run_analysis for landscape synthesis.",
+                       "After all audits finish, run synthesis_run_unified for unified synthesis.",
         }
 
 
@@ -656,81 +627,3 @@ def ci_deactivate_competitor(product_id: int, competitor_name: str) -> dict:
         }
 
 
-@mcp.tool()
-def ci_get_landscape_opportunities(product_id: int) -> dict:
-    """Get feature opportunities identified in the cross-competitor landscape analysis. These are actionable gaps and opportunities that can be turned into ideas via ideas_create with source='landscape'.
-
-    Args:
-        product_id: The product to get landscape opportunities for.
-    """
-    from app.models.competitive_reports import LandscapeOpportunityReport
-
-    with get_session() as db:
-        denied = require_product_access(db, product_id)
-        if denied:
-            return denied
-
-        report = db.query(LandscapeOpportunityReport).filter(
-            LandscapeOpportunityReport.product_id == product_id
-        ).first()
-
-        if not report:
-            return {"error": "No landscape analysis available. Run ci_run_competitor_audit for at least one competitor, then ci_run_analysis."}
-
-        return {
-            "product_id": product_id,
-            "report_version": report.report_version,
-            "generated_at": report.generated_at.isoformat(),
-            "source_competitors": report.source_competitor_names,
-            "feature_opportunities": report.feature_opportunities,
-            "high_impact_gaps": report.high_impact_gaps,
-        }
-
-
-@mcp.tool()
-def ci_run_analysis(product_id: int) -> dict:
-    """Trigger a landscape synthesis across all audited competitors. Returns a job ID — poll with job_get_status until complete. Requires at least one completed ci_run_competitor_audit."""
-    from app.models.queue import JobType
-    from app.models.competitive_reports import CompetitorFunctionalReport
-    from app.services.queue_service import QueueService
-
-    with get_session() as db:
-        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
-        if denied:
-            return denied
-
-        # Need at least one functional report
-        report_count = db.query(CompetitorFunctionalReport).join(
-            CompetitorFunctionalReport.competitor
-        ).filter(
-            CompetitorFunctionalReport.competitor.has(product_id=product_id)
-        ).count()
-        if report_count == 0:
-            return {
-                "error": "No functional reports found. Use ci_get_competitor_list to see competitors, "
-                         "then run ci_run_competitor_audit for at least one competitor first.",
-            }
-
-        conflict = require_no_active_job(db, product_id, JobType.LANDSCAPE_SYNTHESIS, "Landscape synthesis")
-        if conflict:
-            return conflict
-
-        queue_service = QueueService(db)
-        job = queue_service.create_job(
-            job_type=JobType.LANDSCAPE_SYNTHESIS,
-            input_data={"product_id": product_id},
-            product_id=product_id,
-            user_id=resolve_user_id_for_job(db, product_id),
-        )
-
-        from app.queue.tasks import landscape_synthesis_task
-        from mcp_server.db import dispatch_task
-        result = dispatch_task(landscape_synthesis_task, job.id)
-        queue_service.mark_queued(job.id, result.id)
-
-        return {
-            "job_id": job.id,
-            "job_uuid": job.job_uuid,
-            "status": "queued",
-            "message": "Landscape synthesis queued. Use job_get_status to check progress.",
-        }

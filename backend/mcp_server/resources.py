@@ -6,15 +6,19 @@ from mcp_server.db import get_session
 
 @mcp.resource("featureiq://product/{product_id}/landscape")
 def get_landscape_markdown(product_id: int) -> str:
-    """Latest landscape report as markdown."""
-    from app.models.competitive_reports import LandscapeOpportunityReport
+    """Latest unified synthesis report as markdown."""
+    from app.models.synthesis import SynthesisReport
+    from sqlalchemy import desc
 
     with get_session() as db:
-        report = db.query(LandscapeOpportunityReport).filter(
-            LandscapeOpportunityReport.product_id == product_id
-        ).first()
+        report = (
+            db.query(SynthesisReport)
+            .filter(SynthesisReport.product_id == product_id)
+            .order_by(desc(SynthesisReport.report_version))
+            .first()
+        )
         if not report or not report.report_content_md:
-            return "No landscape report available for this product."
+            return "No synthesis report available for this product."
         return report.report_content_md
 
 
@@ -50,21 +54,16 @@ def get_competitors_summary(product_id: int) -> str:
 @mcp.resource("featureiq://product/{product_id}/data-freshness")
 def get_data_freshness(product_id: int) -> str:
     """When each data source was last updated."""
-    from app.models.competitive_reports import LandscapeOpportunityReport
-    from app.models.synthesis import SynthesisRun
+    from app.models.synthesis import SynthesisReport
     from app.models.internal_feedback import InternalFeedbackImport
     from app.models.idea import Idea
-    from sqlalchemy import func
+    from sqlalchemy import func, desc
 
     with get_session() as db:
-        landscape = db.query(LandscapeOpportunityReport).filter(
-            LandscapeOpportunityReport.product_id == product_id
-        ).first()
-
-        latest_synthesis = (
-            db.query(SynthesisRun)
-            .filter(SynthesisRun.product_id == product_id, SynthesisRun.status == "completed")
-            .order_by(SynthesisRun.completed_at.desc())
+        latest_report = (
+            db.query(SynthesisReport)
+            .filter(SynthesisReport.product_id == product_id)
+            .order_by(desc(SynthesisReport.report_version))
             .first()
         )
 
@@ -80,8 +79,7 @@ def get_data_freshness(product_id: int) -> str:
         ).scalar() or 0
 
         lines = [f"# Data Freshness for Product {product_id}\n"]
-        lines.append(f"- **Landscape Analysis:** {landscape.generated_at.isoformat() if landscape else 'Never'}")
-        lines.append(f"- **Opportunity Synthesis:** {latest_synthesis.completed_at.isoformat() if latest_synthesis and latest_synthesis.completed_at else 'Never'}")
+        lines.append(f"- **Synthesis Report:** {latest_report.generated_at.isoformat() if latest_report else 'Never'}")
         lines.append(f"- **Internal Feedback:** {latest_import.processed_at.isoformat() if latest_import and latest_import.processed_at else 'Never'}")
         lines.append(f"- **Customer Ideas:** {idea_count} active ideas")
 
