@@ -7,6 +7,11 @@ from mcp_server.db import get_session
 from mcp_server.permissions import require_product_access, require_no_active_job, resolve_user_id_for_job
 
 from app.models.competitor_intelligence import ProductPermissionLevel
+from app.models.synthesis import (
+    DEFAULT_AUTO_GENERATE_IDEAS,
+    DEFAULT_IDEA_PRIORITY_THRESHOLD,
+    DEFAULT_INCLUDED_SOURCE_TYPES,
+)
 
 
 VALID_SOURCE_TYPES = {"competitive", "customer", "internal", "evidence"}
@@ -105,7 +110,9 @@ def _config_to_dict(config) -> dict:
         "product_id": config.product_id,
         "included_source_types": list(config.included_source_types or []),
         "auto_generate_ideas": bool(config.auto_generate_ideas),
-        "idea_priority_threshold": float(config.idea_priority_threshold or 0.7),
+        "idea_priority_threshold": float(
+            config.idea_priority_threshold or DEFAULT_IDEA_PRIORITY_THRESHOLD
+        ),
         "scoring_weight_overrides": config.scoring_weight_overrides,
         "updated_at": config.updated_at.isoformat() if config.updated_at else None,
     }
@@ -125,7 +132,8 @@ def synthesis_configure(
         source_types: Subset of ['competitive', 'customer', 'internal', 'evidence'].
         auto_generate_ideas: When True, opportunities above the threshold spawn ideas.
         idea_priority_threshold: Threshold (0.0-1.0) — opportunities scoring above
-            threshold * 100 spawn ideas. Default 0.7.
+            threshold * 100 spawn ideas. See DEFAULT_IDEA_PRIORITY_THRESHOLD in
+            app.models.synthesis for the canonical default.
     """
     from app.models.synthesis import SynthesisConfig
 
@@ -158,13 +166,15 @@ def synthesis_configure(
         if not config:
             config = SynthesisConfig(
                 product_id=product_id,
-                included_source_types=source_types or ["competitive"],
+                included_source_types=source_types or list(DEFAULT_INCLUDED_SOURCE_TYPES),
                 auto_generate_ideas=(
-                    auto_generate_ideas if auto_generate_ideas is not None else True
+                    auto_generate_ideas if auto_generate_ideas is not None
+                    else DEFAULT_AUTO_GENERATE_IDEAS
                 ),
                 idea_priority_threshold=(
                     float(idea_priority_threshold)
-                    if idea_priority_threshold is not None else 0.7
+                    if idea_priority_threshold is not None
+                    else DEFAULT_IDEA_PRIORITY_THRESHOLD
                 ),
             )
             db.add(config)
@@ -205,9 +215,9 @@ def synthesis_get_config(product_id: int) -> dict:
                 "exists": False,
                 "config": {
                     "product_id": product_id,
-                    "included_source_types": ["competitive"],
-                    "auto_generate_ideas": True,
-                    "idea_priority_threshold": 0.7,
+                    "included_source_types": list(DEFAULT_INCLUDED_SOURCE_TYPES),
+                    "auto_generate_ideas": DEFAULT_AUTO_GENERATE_IDEAS,
+                    "idea_priority_threshold": DEFAULT_IDEA_PRIORITY_THRESHOLD,
                     "scoring_weight_overrides": None,
                 },
                 "message": "No config exists; defaults shown.",

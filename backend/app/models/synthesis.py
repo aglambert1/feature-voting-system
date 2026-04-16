@@ -340,6 +340,18 @@ class SynthesizedOpportunity(Base):
         }
 
 
+# =============================================================================
+# SynthesisConfig defaults — single source of truth. All code paths that need
+# a default (API serializers, MCP tools, the synthesis task) reference these.
+# =============================================================================
+DEFAULT_INCLUDED_SOURCE_TYPES = ["competitive"]
+DEFAULT_AUTO_GENERATE_IDEAS = True
+# Min priority score (0.0-1.0) for auto-generating an idea from a synthesized
+# opportunity. 0.8 means only opportunities scored 80+ spawn ideas. Lower values
+# create more ideas (more noise); higher values create fewer (more curated).
+DEFAULT_IDEA_PRIORITY_THRESHOLD = 0.8
+
+
 class SynthesisConfig(Base):
     """Per-product synthesis configuration.
 
@@ -363,8 +375,8 @@ class SynthesisConfig(Base):
     included_source_types = Column(JSON, nullable=False, default=list)
 
     # Idea auto-generation
-    auto_generate_ideas = Column(Boolean, nullable=False, default=True)
-    idea_priority_threshold = Column(Float, nullable=False, default=0.7)
+    auto_generate_ideas = Column(Boolean, nullable=False, default=DEFAULT_AUTO_GENERATE_IDEAS)
+    idea_priority_threshold = Column(Float, nullable=False, default=DEFAULT_IDEA_PRIORITY_THRESHOLD)
 
     # Product-specific scoring overrides (merges with scoring_defaults.py)
     scoring_weight_overrides = Column(JSON, nullable=True)

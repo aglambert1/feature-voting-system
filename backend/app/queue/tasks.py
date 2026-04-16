@@ -2656,20 +2656,26 @@ def unified_synthesis_task(self, job_id: int):
             raise ValueError(f"Product {product_id} not found")
 
         # Step 1: Load (or create default) SynthesisConfig
+        # Defaults come from DEFAULT_* constants in app.models.synthesis.
+        from app.models.synthesis import (
+            DEFAULT_INCLUDED_SOURCE_TYPES,
+            DEFAULT_IDEA_PRIORITY_THRESHOLD,
+        )
         config = db.query(SynthesisConfig).filter(
             SynthesisConfig.product_id == product_id
         ).first()
         if not config:
             config = SynthesisConfig(
                 product_id=product_id,
-                included_source_types=["competitive"],
-                auto_generate_ideas=True,
-                idea_priority_threshold=0.7,
+                included_source_types=list(DEFAULT_INCLUDED_SOURCE_TYPES),
+                # auto_generate_ideas + idea_priority_threshold inherit model defaults
             )
             db.add(config)
             db.flush()
 
-        included_sources = list(config.included_source_types or ["competitive"])
+        included_sources = list(
+            config.included_source_types or list(DEFAULT_INCLUDED_SOURCE_TYPES)
+        )
         included_set = {s.lower() for s in included_sources}
 
         # Step 2: Load included competitors (synthesis_included == True)
@@ -3059,7 +3065,9 @@ def unified_synthesis_task(self, job_id: int):
         triage_jobs_created = 0
         if config.auto_generate_ideas and opportunities_out:
             # Threshold is 0.0-1.0 in config; opportunity priority_score is 0-100
-            score_threshold = float(config.idea_priority_threshold or 0.7) * 100.0
+            score_threshold = float(
+                config.idea_priority_threshold or DEFAULT_IDEA_PRIORITY_THRESHOLD
+            ) * 100.0
             for opp in opportunities_out:
                 if float(opp.get("priority_score", 0.0)) < score_threshold:
                     continue

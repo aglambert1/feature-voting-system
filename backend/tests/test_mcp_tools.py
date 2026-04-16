@@ -1925,7 +1925,7 @@ class TestSynthesisGetConfig:
             assert result["exists"] is False
             assert result["config"]["included_source_types"] == ["competitive"]
             assert result["config"]["auto_generate_ideas"] is True
-            assert result["config"]["idea_priority_threshold"] == 0.7
+            assert result["config"]["idea_priority_threshold"] == 0.8
 
     def test_returns_stored_config(self, db_session, product_a, owner):
         from mcp_server.tools.synthesis import (

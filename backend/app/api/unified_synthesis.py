@@ -23,6 +23,9 @@ from app.models.synthesis import (
     SynthesisConfig,
     SynthesisReport,
     SynthesizedOpportunity,
+    DEFAULT_AUTO_GENERATE_IDEAS,
+    DEFAULT_IDEA_PRIORITY_THRESHOLD,
+    DEFAULT_INCLUDED_SOURCE_TYPES,
 )
 from app.services.permission_service import PermissionService
 from app.services.queue_service import QueueService
@@ -110,7 +113,9 @@ def _config_to_dict(config: SynthesisConfig) -> dict:
         "product_id": config.product_id,
         "included_source_types": list(config.included_source_types or []),
         "auto_generate_ideas": bool(config.auto_generate_ideas),
-        "idea_priority_threshold": float(config.idea_priority_threshold or 0.7),
+        "idea_priority_threshold": float(
+            config.idea_priority_threshold or DEFAULT_IDEA_PRIORITY_THRESHOLD
+        ),
         "scoring_weight_overrides": config.scoring_weight_overrides,
         "updated_at": config.updated_at.isoformat() if config.updated_at else None,
     }
@@ -124,9 +129,9 @@ def _get_or_default_config(db: Session, product_id: int) -> dict:
         return _config_to_dict(config)
     return {
         "product_id": product_id,
-        "included_source_types": ["competitive"],
-        "auto_generate_ideas": True,
-        "idea_priority_threshold": 0.7,
+        "included_source_types": list(DEFAULT_INCLUDED_SOURCE_TYPES),
+        "auto_generate_ideas": DEFAULT_AUTO_GENERATE_IDEAS,
+        "idea_priority_threshold": DEFAULT_IDEA_PRIORITY_THRESHOLD,
         "scoring_weight_overrides": None,
         "updated_at": None,
     }
@@ -184,13 +189,15 @@ async def put_synthesis_config(
     if not config:
         config = SynthesisConfig(
             product_id=product_id,
-            included_source_types=payload.source_types or ["competitive"],
+            included_source_types=payload.source_types or list(DEFAULT_INCLUDED_SOURCE_TYPES),
             auto_generate_ideas=(
-                payload.auto_generate_ideas if payload.auto_generate_ideas is not None else True
+                payload.auto_generate_ideas if payload.auto_generate_ideas is not None
+                else DEFAULT_AUTO_GENERATE_IDEAS
             ),
             idea_priority_threshold=(
                 float(payload.idea_priority_threshold)
-                if payload.idea_priority_threshold is not None else 0.7
+                if payload.idea_priority_threshold is not None
+                else DEFAULT_IDEA_PRIORITY_THRESHOLD
             ),
             scoring_weight_overrides=payload.scoring_weight_overrides,
         )
