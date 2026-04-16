@@ -1880,3 +1880,118 @@ class TestProductGetContextIncludesJobMap:
             assert result["target_customer_profile"] is None
             assert result["job_map_version"] == 0
             assert result["job_map_summary"] == "No job map defined"
+
+
+# ---------------------------------------------------------------------------
+# ci_set_audit — enable/disable audit with synthesis default
+# ---------------------------------------------------------------------------
+
+class TestCiSetAudit:
+    def test_ci_set_audit_enables_synthesis_by_default(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_set_audit
+
+        # Verify starting state: synthesis_included is False
+        assert competitor.synthesis_included is False
+        assert competitor.audit_enabled is False
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_set_audit(product_a.id, competitor.id, enabled=True)
+            assert "error" not in result
+            assert result["audit_enabled"] is True
+            assert result["synthesis_included"] is True
+
+        # Verify DB state
+        db_session.refresh(competitor)
+        assert competitor.audit_enabled is True
+        assert competitor.deep_analysis_enabled is True  # backward compat
+        assert competitor.synthesis_included is True
+
+    def test_ci_set_audit_disable(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_set_audit
+
+        competitor.audit_enabled = True
+        competitor.synthesis_included = True
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_set_audit(product_a.id, competitor.id, enabled=False)
+            assert "error" not in result
+            assert result["audit_enabled"] is False
+
+        db_session.refresh(competitor)
+        assert competitor.audit_enabled is False
+        assert competitor.deep_analysis_enabled is False
+        # synthesis_included stays as-is when disabling audit
+        assert competitor.synthesis_included is True
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_set_audit
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_set_audit(product_a.id, competitor.id, enabled=True)
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# ci_set_synthesis_inclusion — include/exclude from synthesis
+# ---------------------------------------------------------------------------
+
+class TestCiSetSynthesisInclusion:
+    def test_ci_set_synthesis_inclusion(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_set_synthesis_inclusion
+
+        assert competitor.synthesis_included is False
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_set_synthesis_inclusion(product_a.id, competitor.id, included=True)
+            assert "error" not in result
+            assert result["synthesis_included"] is True
+
+        db_session.refresh(competitor)
+        assert competitor.synthesis_included is True
+
+    def test_exclude_from_synthesis(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_set_synthesis_inclusion
+
+        competitor.synthesis_included = True
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_set_synthesis_inclusion(product_a.id, competitor.id, included=False)
+            assert "error" not in result
+            assert result["synthesis_included"] is False
+
+        db_session.refresh(competitor)
+        assert competitor.synthesis_included is False
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_set_synthesis_inclusion
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_set_synthesis_inclusion(product_a.id, competitor.id, included=True)
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# ci_get_competitor_list — shows audit/synthesis status
+# ---------------------------------------------------------------------------
+
+class TestCiGetCompetitorListAuditStatus:
+    def test_ci_get_competitor_list_shows_audit_status(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_list
+
+        competitor.audit_enabled = True
+        competitor.audit_status = "completed"
+        competitor.synthesis_included = True
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_get_competitor_list(product_a.id)
+            assert "error" not in result
+            assert len(result["competitors"]) == 1
+            c = result["competitors"][0]
+            assert c["audit_enabled"] is True
+            assert c["audit_status"] == "completed"
+            assert c["synthesis_included"] is True

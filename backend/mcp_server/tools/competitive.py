@@ -34,6 +34,9 @@ def ci_get_competitor_list(product_id: int) -> dict:
                 "competitor_url": c.competitor_url,
                 "deep_analysis_enabled": c.deep_analysis_enabled,
                 "deep_analysis_status": c.deep_analysis_status,
+                "audit_enabled": c.audit_enabled,
+                "audit_status": c.audit_status,
+                "synthesis_included": c.synthesis_included,
                 "has_report": report is not None,
                 "report_version": report.report_version if report else None,
                 "last_analyzed": report.generated_at.isoformat() if report else None,
@@ -84,6 +87,8 @@ def ci_get_competitor_report(product_id: int, competitor_name: str) -> dict:
             "gaps_deep_dive": report.gaps_deep_dive,
             "technical_constraints": report.technical_constraints,
             "changes_from_previous": report.changes_from_previous,
+            "job_assessments": report.job_assessments,
+            "evidence_citations": report.evidence_citations,
             "additional_evidence": [e.to_summary_dict() for e in linked_evidence],
         }
 
@@ -320,7 +325,11 @@ def ci_run_competitor_audit(product_id: int, competitor_name: str) -> dict:
         # Auditing a competitor implies it should be included in synthesis
         if not competitor.deep_analysis_enabled:
             competitor.deep_analysis_enabled = True
-            db.flush()
+        if not competitor.audit_enabled:
+            competitor.audit_enabled = True
+        if not competitor.synthesis_included:
+            competitor.synthesis_included = True
+        db.flush()
 
         queue_service = QueueService(db)
         job = queue_service.create_job(
@@ -377,6 +386,150 @@ def ci_set_deep_analysis(product_id: int, competitor_name: str, enabled: bool = 
             "competitor_name": competitor.competitor_name,
             "deep_analysis_enabled": competitor.deep_analysis_enabled,
             "message": f"{'Enabled' if enabled else 'Disabled'} deep analysis for {competitor.competitor_name}.",
+        }
+
+
+@mcp.tool()
+def ci_set_audit(product_id: int, competitor_id: int, enabled: bool) -> dict:
+    """Enable or disable a competitor for functional audit. When enabling, the competitor is also included in synthesis by default.
+
+    Args:
+        product_id: The product.
+        competitor_id: The competitor to configure.
+        enabled: True to enable audit, False to disable.
+    """
+    from app.models.competitor_intelligence import ProductCompetitor
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        competitor = db.query(ProductCompetitor).filter(
+            ProductCompetitor.id == competitor_id,
+            ProductCompetitor.product_id == product_id,
+        ).first()
+
+        if not competitor:
+            return {"error": f"Competitor {competitor_id} not found for product {product_id}"}
+
+        competitor.audit_enabled = enabled
+        competitor.deep_analysis_enabled = enabled  # backward compat
+        if enabled and not competitor.synthesis_included:
+            competitor.synthesis_included = True
+        db.flush()
+
+        return {
+            "competitor_id": competitor.id,
+            "competitor_name": competitor.competitor_name,
+            "audit_enabled": competitor.audit_enabled,
+            "synthesis_included": competitor.synthesis_included,
+            "message": f"{'Enabled' if enabled else 'Disabled'} audit for {competitor.competitor_name}."
+                       + (" Also included in synthesis." if enabled and competitor.synthesis_included else ""),
+        }
+
+
+@mcp.tool()
+def ci_set_synthesis_inclusion(product_id: int, competitor_id: int, included: bool) -> dict:
+    """Include or exclude a competitor from synthesis. This is separate from auditing — a competitor can be audited but excluded from synthesis.
+
+    Args:
+        product_id: The product.
+        competitor_id: The competitor to configure.
+        included: True to include in synthesis, False to exclude.
+    """
+    from app.models.competitor_intelligence import ProductCompetitor
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        competitor = db.query(ProductCompetitor).filter(
+            ProductCompetitor.id == competitor_id,
+            ProductCompetitor.product_id == product_id,
+        ).first()
+
+        if not competitor:
+            return {"error": f"Competitor {competitor_id} not found for product {product_id}"}
+
+        competitor.synthesis_included = included
+        db.flush()
+
+        return {
+            "competitor_id": competitor.id,
+            "competitor_name": competitor.competitor_name,
+            "synthesis_included": competitor.synthesis_included,
+            "message": f"{'Included' if included else 'Excluded'} {competitor.competitor_name} from synthesis.",
+        }
+
+
+@mcp.tool()
+def ci_get_job_comparison(product_id: int, job_id: str) -> dict:
+    """Compare how all audited competitors score on a specific job from the job map.
+
+    Args:
+        product_id: The product.
+        job_id: The job ID from the job map (e.g., 'j1').
+    """
+    from app.models.competitor_intelligence import ProductCompetitor, CIProduct
+    from app.models.competitive_reports import CompetitorFunctionalReport
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
+        # Validate job_id exists in the product's job map
+        product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+        if not product or not product.job_map:
+            return {"error": "No job map configured for this product. Run job map extraction first."}
+
+        # Find the job in the job map
+        job_info = None
+        jobs = product.job_map.get("jobs", [])
+        for j in jobs:
+            if j.get("id") == job_id:
+                job_info = j
+                break
+
+        if not job_info:
+            available_ids = [j.get("id") for j in jobs]
+            return {"error": f"Job '{job_id}' not found in job map. Available: {available_ids}"}
+
+        # Get all reports for this product
+        reports = db.query(CompetitorFunctionalReport).join(
+            ProductCompetitor,
+            CompetitorFunctionalReport.product_competitor_id == ProductCompetitor.id
+        ).filter(
+            ProductCompetitor.product_id == product_id,
+            ProductCompetitor.status == "active",
+        ).all()
+
+        comparison = []
+        for report in reports:
+            competitor = db.query(ProductCompetitor).filter(
+                ProductCompetitor.id == report.product_competitor_id
+            ).first()
+
+            assessment = None
+            if report.job_assessments:
+                for ja in report.job_assessments:
+                    if ja.get("job_id") == job_id:
+                        assessment = ja
+                        break
+
+            comparison.append({
+                "competitor_id": competitor.id if competitor else None,
+                "competitor_name": competitor.competitor_name if competitor else "Unknown",
+                "assessment": assessment,
+            })
+
+        return {
+            "product_id": product_id,
+            "job_id": job_id,
+            "job_info": job_info,
+            "competitors": comparison,
         }
 
 

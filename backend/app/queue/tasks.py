@@ -1439,6 +1439,10 @@ def functional_audit_task(self, job_id: int):
             'description': product.product_description if product else None,
         }
 
+        # Load job map for JTBD analysis
+        job_map = product.job_map if product else None
+        target_customer_profile = product.target_customer_profile if product else None
+
         # Get product features for context
         features = db.query(ProductFeature).filter(
             ProductFeature.product_id == product_id,
@@ -1489,6 +1493,10 @@ def functional_audit_task(self, job_id: int):
             'web_search_results': web_search_results,
             'user_provided_evidence': user_provided_evidence,
         }
+        if job_map:
+            agent_input["job_map"] = job_map
+        if target_customer_profile:
+            agent_input["target_customer_profile"] = target_customer_profile
 
         # Use higher max_tokens for detailed audit output
         result = agent.execute(agent_input, max_tokens=8000)
@@ -1520,6 +1528,9 @@ def functional_audit_task(self, job_id: int):
             existing_report.technical_constraints = result['technical_constraints']
             existing_report.raw_search_results = web_search_results if isinstance(web_search_results, list) else None
             existing_report.queue_job_id = job_id
+            # Store JTBD fields (may be empty if no job map)
+            existing_report.job_assessments = result.get("job_assessments")
+            existing_report.evidence_citations = result.get("evidence_citations")
             report = existing_report
         else:
             # Create new report
@@ -1533,7 +1544,10 @@ def functional_audit_task(self, job_id: int):
                 gaps_deep_dive=result['gaps_deep_dive'],
                 technical_constraints=result['technical_constraints'],
                 raw_search_results=web_search_results if isinstance(web_search_results, list) else None,
-                queue_job_id=job_id
+                queue_job_id=job_id,
+                # JTBD fields (may be empty if no job map)
+                job_assessments=result.get("job_assessments"),
+                evidence_citations=result.get("evidence_citations"),
             )
             db.add(report)
 
