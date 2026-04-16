@@ -741,36 +741,45 @@ def generate_markdown_report(
     if has_job_assessments:
         lines.extend(["## 2. Job Assessments", ""])
         for ja in output.job_assessments:
+            importance_label = f" _(importance: {ja.importance})_" if hasattr(ja, 'importance') and ja.importance else ""
             lines.extend([
-                f"### {ja.job_id}: {ja.job_statement}",
+                f"### {ja.job_id}: {ja.job_statement}{importance_label}",
                 "",
                 f"**Our Score:** {ja.our_score}/10 | **Competitor Score:** {ja.competitor_score}/10",
                 "",
                 f"**Rationale:** {ja.score_rationale}",
                 "",
             ])
-            if hasattr(ja, 'our_strengths') and ja.our_strengths:
-                lines.append("**Our Strengths:**")
-                for s in ja.our_strengths:
-                    lines.append(f"- {s}")
+            # Features that drive the scores (unified advantage + gap view)
+            if hasattr(ja, 'features') and ja.features:
+                lines.append("**Features driving the scores:**")
                 lines.append("")
-            if hasattr(ja, 'competitor_strengths') and ja.competitor_strengths:
-                lines.append("**Competitor Strengths:**")
-                for s in ja.competitor_strengths:
-                    lines.append(f"- {s}")
+                lines.append("| Feature | Whose | Position | Description |")
+                lines.append("|---------|-------|----------|-------------|")
+                cited_evidence = set()
+                for feat in ja.features:
+                    lines.append(
+                        f"| {feat.feature_name} | {feat.whose} | **{feat.position}** | "
+                        f"{feat.description} |"
+                    )
+                    if getattr(feat, 'evidence_ids', None):
+                        cited_evidence.update(feat.evidence_ids)
                 lines.append("")
+                if cited_evidence:
+                    lines.append(
+                        f"_Evidence cited: {', '.join(str(e) for e in sorted(cited_evidence))}_"
+                    )
+                    lines.append("")
+            # Outcome coverage
             if hasattr(ja, 'outcome_coverage') and ja.outcome_coverage:
                 lines.append("**Outcome Coverage:**")
                 lines.append("")
-                lines.append("| Outcome | Us | Them |")
-                lines.append("|---------|----|----- |")
+                lines.append("| Desired Outcome | Our Coverage | Competitor Coverage |")
+                lines.append("|-----------------|--------------|---------------------|")
                 for oc in ja.outcome_coverage:
                     lines.append(
-                        f"| {oc.outcome} | {oc.our_coverage} | {oc.competitor_coverage} |"
+                        f"| {oc.desired_outcome} | {oc.our_coverage} | {oc.competitor_coverage} |"
                     )
-                lines.append("")
-            if hasattr(ja, 'evidence_ids') and ja.evidence_ids:
-                lines.append(f"**Evidence cited:** {', '.join(str(e) for e in ja.evidence_ids)}")
                 lines.append("")
     else:
         lines.extend(["## 2. Deep-Dive on Gaps", ""])
