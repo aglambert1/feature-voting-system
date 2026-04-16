@@ -167,3 +167,66 @@ class TestProductJobs:
         )
         assert resp.status_code == 200
         assert resp.json() == []
+
+
+class TestQueueProductAnalysisScopedInputs:
+    """REST-side scoped-input params on POST .../analyze/queue — must match the MCP surface."""
+
+    @patch("app.api.products.send_task")
+    def test_defaults_put_web_research_true_and_empty_urls_in_input_data(
+        self, mock_task, client, po_user, db_session, test_product
+    ):
+        from app.models.queue import QueueJob, JobType
+        mock_task.return_value = MagicMock(id="task-qa-1")
+
+        resp = client.post(
+            f"/product-intelligence/products/{test_product.id}/analyze/queue",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200
+        job_uuid = resp.json()["job_uuid"]
+        job = db_session.query(QueueJob).filter(
+            QueueJob.job_uuid == job_uuid,
+            QueueJob.job_type == JobType.PRODUCT_ANALYSIS,
+        ).one()
+        assert job.input_data["web_research_enabled"] is True
+        assert job.input_data["source_urls"] == []
+
+    @patch("app.api.products.send_task")
+    def test_scoped_params_flow_into_input_data(
+        self, mock_task, client, po_user, db_session, test_product
+    ):
+        from app.models.queue import QueueJob, JobType
+        mock_task.return_value = MagicMock(id="task-qa-2")
+
+        resp = client.post(
+            f"/product-intelligence/products/{test_product.id}/analyze/queue",
+            headers=auth_headers(po_user),
+            json={
+                "web_research": False,
+                "source_urls": ["https://example.com/features"],
+            },
+        )
+        assert resp.status_code == 200
+        job_uuid = resp.json()["job_uuid"]
+        job = db_session.query(QueueJob).filter(QueueJob.job_uuid == job_uuid).one()
+        assert job.input_data["web_research_enabled"] is False
+        assert job.input_data["source_urls"] == ["https://example.com/features"]
+
+    def test_too_many_source_urls_returns_400_with_structured_payload(
+        self, client, po_user, test_product
+    ):
+        resp = client.post(
+            f"/product-intelligence/products/{test_product.id}/analyze/queue",
+            headers=auth_headers(po_user),
+            json={
+                "web_research": False,
+                "source_urls": [f"https://example.com/p{i}" for i in range(6)],
+            },
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["error_code"] == "SCOPED_INPUT_LIMIT_EXCEEDED"
+        assert detail["field"] == "source_urls"
+        assert detail["limit"] == 5
+        assert detail["got"] == 6

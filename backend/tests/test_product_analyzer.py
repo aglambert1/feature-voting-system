@@ -57,7 +57,8 @@ def test_product_analyzer_agent_successful_execution(db_session, mock_llm_servic
         "stop_reason": "end_turn"
     }
 
-    agent = ProductAnalyzerAgent(db=db_session, llm_service=mock_llm_service)
+    # web_research_enabled=False → no tools registered → uses call_agent (not call_agent_with_tools)
+    agent = ProductAnalyzerAgent(db=db_session, llm_service=mock_llm_service, web_research_enabled=False)
 
     result = agent.execute({
         'product_name': 'Test CRM',
@@ -108,3 +109,53 @@ def test_product_analyzer_stage_name(db_session, mock_llm_service):
     """Test that agent reports correct stage name."""
     agent = ProductAnalyzerAgent(db=db_session, llm_service=mock_llm_service)
     assert agent.get_stage() == "product_analysis"
+
+
+def test_build_user_prompt_injects_fetched_sources(db_session, mock_llm_service):
+    """fetched_sources should render as a '## Fetched Source Pages' block with URL + text."""
+    agent = ProductAnalyzerAgent(db=db_session, llm_service=mock_llm_service, web_research_enabled=False)
+
+    prompt = agent.build_user_prompt({
+        'product_name': 'Test CRM',
+        'product_description': 'A CRM',
+        'source_type': 'text',
+        'fetched_sources': [
+            {
+                'url': 'https://test-crm.com/features',
+                'title': 'CRM Features',
+                'text': 'Contact sync with Gmail and Outlook.',
+            },
+        ],
+    })
+
+    assert "## Fetched Source Pages" in prompt
+    assert "https://test-crm.com/features" in prompt
+    assert "Contact sync with Gmail and Outlook." in prompt
+
+
+def test_build_user_prompt_no_fetched_sources_section_when_empty(db_session, mock_llm_service):
+    agent = ProductAnalyzerAgent(db=db_session, llm_service=mock_llm_service, web_research_enabled=False)
+    prompt = agent.build_user_prompt({
+        'product_name': 'Test',
+        'product_description': 'Thing',
+        'source_type': 'text',
+    })
+    assert "## Fetched Source Pages" not in prompt
+
+
+def test_build_concise_user_prompt_preserves_fetched_sources(db_session, mock_llm_service):
+    """Truncation recovery must keep source data — only OUTPUT should shrink."""
+    agent = ProductAnalyzerAgent(db=db_session, llm_service=mock_llm_service, web_research_enabled=False)
+
+    concise = agent.build_concise_user_prompt({
+        'product_name': 'Test CRM',
+        'product_description': 'A CRM',
+        'source_type': 'text',
+        'fetched_sources': [
+            {'url': 'https://test-crm.com/f', 'title': 'Features', 'text': 'Gmail sync.'},
+        ],
+    })
+
+    assert concise is not None
+    assert "Gmail sync." in concise
+    assert "HARD LIMITS" in concise

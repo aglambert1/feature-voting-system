@@ -10,7 +10,7 @@ The agent uses an external prompt template (Competitor_Functional_Audit_Prompt.m
 for flexibility in production environments.
 """
 
-from typing import Dict, Any, Type, List
+from typing import Dict, Any, Type, List, Optional
 
 from pydantic import BaseModel
 
@@ -53,13 +53,14 @@ class CompetitorFunctionalAuditAgent(BaseAgent):
 
     PROMPT_FILENAME = "Competitor_Functional_Audit_Prompt.md"
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, web_research_enabled: bool = True, **kwargs):
         super().__init__(*args, **kwargs)
         self.search_service = get_search_service()
+        self.web_research_enabled = web_research_enabled
 
     def get_tools(self) -> List[Dict[str, Any]]:
-        """Provide web search tool if available."""
-        if self.search_service.is_available():
+        """Provide web search tool if enabled and available."""
+        if self.web_research_enabled and self.search_service.is_available():
             return [self.search_service.get_tool_definition()]
         return []
 
@@ -100,7 +101,7 @@ class CompetitorFunctionalAuditAgent(BaseAgent):
         When a job map is available, the agent uses JTBD as its analytical lens.
         When no job map is provided, it falls back to feature-centric analysis.
         """
-        has_search = self.search_service.is_available()
+        has_search = self.web_research_enabled and self.search_service.is_available()
 
         search_section = ""
         if has_search:
@@ -263,6 +264,7 @@ You MUST respond with a valid JSON object matching this exact structure:
         product_context = input_data.get('product_context', {})
         web_search_results = input_data.get('web_search_results', [])
         user_provided_evidence = input_data.get('user_provided_evidence', [])
+        fetched_sources = input_data.get('fetched_sources', [])
         job_map = input_data.get('job_map')
         target_customer_profile = input_data.get('target_customer_profile')
 
@@ -286,6 +288,9 @@ You MUST respond with a valid JSON object matching this exact structure:
         # Format search results (clean HTML if needed)
         search_content = self._format_search_results(web_search_results)
 
+        # Format fetched source pages (from user-supplied source_urls)
+        fetched_sources_content = self._format_fetched_sources(fetched_sources)
+
         # Format user-provided evidence (grouped by job if job map exists)
         evidence_content = self._format_user_evidence(
             user_provided_evidence, job_map
@@ -301,7 +306,7 @@ You MUST respond with a valid JSON object matching this exact structure:
 
         # Add search instructions if available
         search_instructions = ""
-        if self.search_service.is_available():
+        if self.web_research_enabled and self.search_service.is_available():
             search_instructions = f"""
 ## Web Research Instructions
 Use the web_search tool to gather additional information about {competitor_name}. Suggested searches:
@@ -347,7 +352,7 @@ Include `gaps_deep_dive` in your response."""
 {search_instructions}
 ## Competitor Source Data
 {search_content}
-
+{fetched_sources_content}
 {evidence_content}
 
 {task_context}
@@ -355,6 +360,75 @@ Include `gaps_deep_dive` in your response."""
 {analysis_instruction}"""
 
         return prompt
+
+    def build_concise_user_prompt(self, input_data: Dict[str, Any]) -> Optional[str]:
+        """Build a concise prompt for truncation recovery.
+
+        Preserves all source data (competitor info, product context, search results,
+        fetched sources, evidence) — the previous response was truncated because
+        the OUTPUT was too long, so we tighten output constraints while keeping
+        inputs intact.
+        """
+        competitor_name = input_data.get('competitor_name', 'Unknown Competitor')
+        competitor_url = input_data.get('competitor_url', '')
+        product_context = input_data.get('product_context', {})
+        web_search_results = input_data.get('web_search_results', [])
+        fetched_sources = input_data.get('fetched_sources', [])
+        user_provided_evidence = input_data.get('user_provided_evidence', [])
+        job_map = input_data.get('job_map')
+        target_customer_profile = input_data.get('target_customer_profile')
+
+        has_job_map = bool(
+            job_map and (
+                job_map.get('jobs')
+                or job_map.get('functional_jobs')
+                or job_map.get('emotional_jobs')
+                or job_map.get('social_jobs')
+            )
+        )
+
+        product_info = self._format_product_context(product_context, target_customer_profile)
+        job_map_section = self._format_job_map(job_map) if has_job_map else ""
+        search_content = self._format_search_results(web_search_results)
+        fetched_sources_content = self._format_fetched_sources(fetched_sources)
+        evidence_content = self._format_user_evidence(user_provided_evidence, job_map)
+
+        if has_job_map:
+            limits = (
+                "1. functional_comparison: MAX 15 rows. Pick most strategically important.\n"
+                "2. job_assessments: one per job in the job map. features[] MAX 5 per job. "
+                "evidence_citations MAX 3 per job. MAX 10 words per evaluation field.\n"
+                "3. technical_constraints: MAX 5 items per sub-list.\n"
+            )
+        else:
+            limits = (
+                "1. functional_comparison: MAX 15 rows.\n"
+                "2. gaps_deep_dive: MAX 5 entries. MAX 15 words per field.\n"
+                "3. technical_constraints: MAX 5 items per sub-list.\n"
+            )
+
+        return f"""# Competitor Analysis Request (CONCISE RECOVERY)
+
+CRITICAL CONSTRAINT: A previous analysis was cut off because the response was too long.
+You MUST follow these HARD LIMITS exactly:
+
+{limits}
+4. No markdown, no explanatory text — raw JSON only.
+
+## Competitor Information
+- **Name:** {competitor_name}
+- **URL:** {competitor_url}
+
+## Our Product Context
+{product_info}
+{job_map_section}
+## Competitor Source Data
+{search_content}
+{fetched_sources_content}
+{evidence_content}
+
+Respond with ONLY a valid JSON object following the schema in the system prompt.
+Return ONLY the JSON object."""
 
     def _format_product_context(
         self,
@@ -488,6 +562,38 @@ Include `gaps_deep_dive` in your response."""
             return html_cleaner.clean_search_results(results)
 
         return "No web search results available. Analyze based on general knowledge."
+
+    def _format_fetched_sources(self, fetched_sources: list) -> str:
+        """Format pages fetched from user-supplied source_urls.
+
+        Each entry is a dict with {url, title, text}. Rendered as a
+        '## Fetched Source Pages' block so the agent treats them as
+        authoritative alongside (or instead of) web search results.
+        """
+        if not fetched_sources:
+            return ""
+
+        parts = [
+            "",
+            "## Fetched Source Pages",
+            "",
+            "The following pages were explicitly provided by the caller. "
+            "Treat this content as authoritative.",
+            "",
+        ]
+
+        for src in fetched_sources:
+            url = src.get('url', '')
+            title = src.get('title', '') or url or 'Untitled'
+            text = src.get('text', '') or ''
+            parts.append(f"### {title}")
+            if url:
+                parts.append(f"**URL:** {url}")
+            parts.append("")
+            parts.append(text)
+            parts.append("")
+
+        return "\n".join(parts)
 
     def _format_user_evidence(
         self,

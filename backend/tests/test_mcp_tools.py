@@ -1995,3 +1995,110 @@ class TestSynthesisGetUnifiedReportEmpty:
             result = synthesis_get_unified_report(product_a.id)
             assert "error" in result
             assert "synthesis_run_unified" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Scoped-input params on ci_run_competitor_audit and product_run_analysis
+# ---------------------------------------------------------------------------
+
+class TestCiRunCompetitorAuditScopedInputs:
+    def test_defaults_put_web_research_true_and_empty_urls_in_input_data(
+        self, db_session, product_a, competitor, owner
+    ):
+        from mcp_server.tools.competitive import ci_run_competitor_audit
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("mcp_server.db.dispatch_task") as mock_dispatch:
+            mock_dispatch.return_value = MagicMock(id="celery-1")
+            result = ci_run_competitor_audit(product_a.id, "Rival")
+            assert "error" not in result
+
+            job = db_session.query(QueueJob).filter(QueueJob.id == result["job_id"]).one()
+            assert job.input_data["web_research_enabled"] is True
+            assert job.input_data["source_urls"] == []
+            assert job.input_data["competitor_id"] == competitor.id
+
+    def test_web_research_false_flows_into_input_data(
+        self, db_session, product_a, competitor, owner
+    ):
+        from mcp_server.tools.competitive import ci_run_competitor_audit
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("mcp_server.db.dispatch_task") as mock_dispatch:
+            mock_dispatch.return_value = MagicMock(id="celery-2")
+            result = ci_run_competitor_audit(
+                product_a.id, "Rival", web_research=False,
+                source_urls=["https://rival.co/pricing", "https://rival.co/features"],
+            )
+            assert "error" not in result
+            job = db_session.query(QueueJob).filter(QueueJob.id == result["job_id"]).one()
+            assert job.input_data["web_research_enabled"] is False
+            assert job.input_data["source_urls"] == [
+                "https://rival.co/pricing", "https://rival.co/features"
+            ]
+
+    def test_too_many_source_urls_returns_structured_error(
+        self, db_session, product_a, competitor, owner
+    ):
+        from mcp_server.tools.competitive import ci_run_competitor_audit
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_run_competitor_audit(
+                product_a.id, "Rival", web_research=False,
+                source_urls=[f"https://rival.co/p{i}" for i in range(6)],
+            )
+            assert "error" in result
+            assert result["error_code"] == "SCOPED_INPUT_LIMIT_EXCEEDED"
+            assert result["field"] == "source_urls"
+            assert result["limit"] == 5
+            assert result["got"] == 6
+            # No job should be queued
+            jobs = db_session.query(QueueJob).filter(
+                QueueJob.product_id == product_a.id,
+                QueueJob.job_type == JobType.FUNCTIONAL_AUDIT,
+            ).all()
+            assert len(jobs) == 0
+
+
+class TestProductRunAnalysisScopedInputs:
+    def test_source_urls_flow_into_input_data(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_run_analysis
+
+        # Product description must be >= 50 chars to pass the validation in the tool
+        product_a.product_description = "A very detailed product description that easily exceeds fifty characters in length."
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("mcp_server.db.dispatch_task") as mock_dispatch:
+            mock_dispatch.return_value = MagicMock(id="celery-3")
+            result = product_run_analysis(
+                product_a.id, web_research=False,
+                source_urls=["https://example.com/page"],
+            )
+            assert "error" not in result
+
+            job = db_session.query(QueueJob).filter(QueueJob.id == result["job_id"]).one()
+            assert job.input_data["web_research_enabled"] is False
+            assert job.input_data["source_urls"] == ["https://example.com/page"]
+
+    def test_too_many_source_urls_returns_structured_error(
+        self, db_session, product_a, owner
+    ):
+        from mcp_server.tools.product import product_run_analysis
+
+        product_a.product_description = "A very detailed product description that easily exceeds fifty characters in length."
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_run_analysis(
+                product_a.id, web_research=False,
+                source_urls=[f"https://example.com/p{i}" for i in range(6)],
+            )
+            assert "error" in result
+            assert result["error_code"] == "SCOPED_INPUT_LIMIT_EXCEEDED"
+            # No job should be queued
+            jobs = db_session.query(QueueJob).filter(
+                QueueJob.product_id == product_a.id,
+                QueueJob.job_type == JobType.PRODUCT_ANALYSIS,
+            ).all()
+            assert len(jobs) == 0

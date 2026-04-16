@@ -140,6 +140,7 @@ Your task is to build a comprehensive product profile using ALL available inform
 ## Source Attribution
 For each detailed feature, set source_reference to indicate provenance:
 - "provided" — directly from the user's input description
+- "fetched:[domain]" — from a user-supplied source page (listed under '## Fetched Source Pages')
 - "web:[domain]" — discovered via web search (cite the source domain)
 - "knowledge" — from your training data (use lower confidence: 0.5-0.7)
 
@@ -168,9 +169,12 @@ Your role is to analyze product descriptions and extract structured information 
 3. Generate strategic insights
 
 You must be thorough but concise. Focus on aspects relevant to competitive analysis.
-Extract as many verifiable features as possible from the provided description.
+Extract as many verifiable features as possible from the provided description and any fetched source pages.
 
-Set source_reference to "provided" for features from the description, or "knowledge" for features from your training data (use lower confidence for these).
+Source attribution — set source_reference to:
+- "provided" for features from the description
+- "fetched:[domain]" for features from any '## Fetched Source Pages' block
+- "knowledge" for features from your training data (use lower confidence for these).
 
 Always respond with valid JSON matching the specified schema.
 Do not include any markdown formatting or code blocks — just the raw JSON."""
@@ -179,6 +183,7 @@ Do not include any markdown formatting or code blocks — just the raw JSON."""
         product_name = input_data.get('product_name', '')
         product_description = input_data.get('product_description', '')
         source_type = input_data.get('source_type', 'text')
+        fetched_sources = input_data.get('fetched_sources', [])
         has_search = self.web_research_enabled and self.search_service.is_available()
 
         search_instructions = ""
@@ -193,6 +198,8 @@ Use the web_search tool to supplement the provided description. Suggested search
 Make 3-5 targeted searches. Skip searches that seem unlikely to yield results for this product type.
 """
 
+        fetched_sources_section = self._format_fetched_sources(fetched_sources)
+
         prompt = f"""Analyze the following product and build a comprehensive profile.
 
 Product Name: {product_name if product_name else "(extract from description)"}
@@ -200,7 +207,7 @@ Source Type: {source_type}
 
 Product Description:
 {product_description}
-{search_instructions}
+{fetched_sources_section}{search_instructions}
 ## Required Output (JSON)
 
 Return a JSON object with these fields:
@@ -230,10 +237,18 @@ IMPORTANT:
         return prompt
 
     def build_concise_user_prompt(self, input_data: Dict[str, Any]) -> Optional[str]:
-        """Build a concise prompt for truncation recovery (no web search)."""
+        """Build a concise prompt for truncation recovery (no web search).
+
+        Preserves all provided source data (description + fetched_sources) —
+        the previous response was truncated because OUTPUT was too long, so we
+        tighten output constraints while keeping inputs intact.
+        """
         product_name = input_data.get('product_name', '')
         product_description = input_data.get('product_description', '')
         source_type = input_data.get('source_type', 'text')
+        fetched_sources = input_data.get('fetched_sources', [])
+
+        fetched_sources_section = self._format_fetched_sources(fetched_sources)
 
         return f"""Analyze the following product and extract structured data.
 
@@ -251,7 +266,7 @@ Product Name: {product_name if product_name else "(extract from description)"}
 Source Type: {source_type}
 Product Description:
 {product_description}
-
+{fetched_sources_section}
 Return a JSON object with these fields:
 - product_name (string)
 - product_category (string)
@@ -265,6 +280,38 @@ Return a JSON object with these fields:
 - data_sources (list of sources used)
 
 Return ONLY the JSON object."""
+
+    def _format_fetched_sources(self, fetched_sources: list) -> str:
+        """Format pages fetched from user-supplied source_urls.
+
+        Each entry is a dict with {url, title, text}. Rendered as a
+        '## Fetched Source Pages' block so the agent treats them as
+        authoritative alongside (or instead of) web search results.
+        """
+        if not fetched_sources:
+            return ""
+
+        parts = [
+            "",
+            "## Fetched Source Pages",
+            "",
+            "The following pages were explicitly provided by the caller. "
+            "Treat this content as authoritative.",
+            "",
+        ]
+
+        for src in fetched_sources:
+            url = src.get('url', '')
+            title = src.get('title', '') or url or 'Untitled'
+            text = src.get('text', '') or ''
+            parts.append(f"### {title}")
+            if url:
+                parts.append(f"**URL:** {url}")
+            parts.append("")
+            parts.append(text)
+            parts.append("")
+
+        return "\n".join(parts)
 
     def get_output_schema(self) -> Type[BaseModel]:
         return ProductAnalysisOutput

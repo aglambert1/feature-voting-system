@@ -141,6 +141,12 @@ class AddCompetitorRequest(BaseModel):
     competitor_url: str = Field(..., min_length=5, max_length=500)
 
 
+class FunctionalAuditRequest(BaseModel):
+    """Optional parameters to scope a functional audit."""
+    web_research: bool = True
+    source_urls: Optional[List[str]] = None
+
+
 class CompetitorAlertResponse(BaseModel):
     """Response schema for competitor alert."""
     id: int
@@ -1225,12 +1231,29 @@ async def trigger_competitive_analysis_v2(
 def trigger_functional_audit(
     product_id: int,
     competitor_id: int,
+    request: FunctionalAuditRequest = None,
     current_user: User = Depends(get_product_owner_or_admin),
     db: Session = Depends(get_db)
 ):
-    """Trigger a functional audit for a single competitor."""
+    """Trigger a functional audit for a single competitor.
+
+    Optional body params:
+    - web_research (default true): skip Brave web search if false.
+    - source_urls (max 5): specific pages to fetch and feed to the agent.
+    """
+    from app.services.scoped_input_validator import validate_scoped_inputs, ScopedInputError
+
     verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
     get_competitor_or_404(db, product_id, competitor_id)
+
+    web_research = True
+    source_urls: list[str] = []
+    if request is not None:
+        try:
+            source_urls = validate_scoped_inputs(request.source_urls)
+        except ScopedInputError as err:
+            raise HTTPException(status_code=400, detail=err.payload)
+        web_research = request.web_research
 
     queue_service = QueueService(db)
 
@@ -1255,7 +1278,11 @@ def trigger_functional_audit(
         status=JobStatus.PENDING,
         product_id=product_id,
         user_id=current_user.id,
-        input_data={'competitor_id': competitor_id}
+        input_data={
+            'competitor_id': competitor_id,
+            'web_research_enabled': web_research,
+            'source_urls': source_urls,
+        }
     )
     db.add(job)
     db.commit()

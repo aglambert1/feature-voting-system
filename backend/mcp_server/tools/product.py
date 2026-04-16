@@ -369,17 +369,29 @@ def product_get_analysis_history(product_id: int, limit: int = 10) -> dict:
 
 
 @mcp.tool()
-def product_run_analysis(product_id: int, source_url: str = "", web_research: bool = True) -> dict:
-    """Queue an AI analysis of a product. By default, supplements provided data with web research (searches for features, pricing, integrations, reviews). Set web_research=false to analyze only provided information.
+def product_run_analysis(
+    product_id: int,
+    source_url: str = "",
+    web_research: bool = True,
+    source_urls: list[str] | None = None,
+) -> dict:
+    """Queue an AI analysis of a product. By default, supplements provided data with web research (searches for features, pricing, integrations, reviews). Set web_research=false to skip Brave and rely on training knowledge + provided sources.
 
     Args:
         product_id: The product to analyze.
-        source_url: Optional URL to fetch content from for analysis (e.g. product homepage).
-        web_research: Search the web for additional product information (default true). Set false to limit analysis to provided data only.
+        source_url: Optional single URL to fetch as the primary product description (e.g. product homepage). Extracted text replaces the stored product_description for this run.
+        web_research: Search the web for additional product information (default true). Set false to skip Brave search and rely on training knowledge + any provided source pages.
+        source_urls: Optional list of additional pages (max 5) the agent should use as authoritative context — feature pages, pricing, docs, etc. Complements source_url (which replaces the description). Fetched server-side and passed to the agent as '## Fetched Source Pages'.
     """
     from app.models.competitor_intelligence import CIProduct
     from app.models.queue import JobType
     from app.services.queue_service import QueueService
+    from app.services.scoped_input_validator import validate_scoped_inputs, ScopedInputError
+
+    try:
+        source_urls = validate_scoped_inputs(source_urls)
+    except ScopedInputError as err:
+        return err.payload
 
     with get_session() as db:
         denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
@@ -402,7 +414,11 @@ def product_run_analysis(product_id: int, source_url: str = "", web_research: bo
                          "Either provide a source_url or update the product with a detailed description first.",
             }
 
-        input_data = {"product_id": product_id, "web_research_enabled": web_research}
+        input_data = {
+            "product_id": product_id,
+            "web_research_enabled": web_research,
+            "source_urls": source_urls,
+        }
         source_type = "text"
         source_data = None
 

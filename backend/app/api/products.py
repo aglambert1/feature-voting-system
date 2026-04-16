@@ -1328,10 +1328,19 @@ async def fetch_url_meta(
 # ============================================================================
 
 class QueueAnalyzeRequest(BaseModel):
-    """Schema for queue-based product analysis."""
+    """Schema for queue-based product analysis.
+
+    `web_research` and `source_urls` are scoped-input controls:
+    - web_research=False skips Brave search; the agent relies on training
+      knowledge + any fetched source pages.
+    - source_urls (max 5) are pages fetched server-side and passed to the
+      agent as authoritative context.
+    """
     product_description: Optional[str] = Field(None, min_length=10)
     source_type: Optional[str] = Field(None, pattern="^(text|document|url)$")
     source_data: Optional[dict] = None
+    web_research: bool = True
+    source_urls: Optional[List[str]] = None
 
 
 class JobResponse(BaseModel):
@@ -1382,6 +1391,17 @@ def queue_product_analysis(
     """
     from app.services.permission_service import PermissionService
     from app.queue.tasks import analyze_product_task
+    from app.services.scoped_input_validator import validate_scoped_inputs, ScopedInputError
+
+    # Validate scoped inputs before any DB work
+    web_research = True
+    validated_source_urls: list[str] = []
+    if request is not None:
+        try:
+            validated_source_urls = validate_scoped_inputs(request.source_urls)
+        except ScopedInputError as err:
+            raise HTTPException(status_code=400, detail=err.payload)
+        web_research = request.web_research
 
     # Check permission
     permission_service = PermissionService(db)
@@ -1415,7 +1435,10 @@ def queue_product_analysis(
         )
 
     # Prepare input data
-    input_data = {}
+    input_data = {
+        'web_research_enabled': web_research,
+        'source_urls': validated_source_urls,
+    }
     if request:
         if request.product_description:
             input_data['product_description'] = request.product_description
