@@ -38,7 +38,7 @@ def upgrade() -> None:
 
     op.add_column(
         "product_competitors",
-        sa.Column("audit_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("audit_enabled", sa.Boolean(), nullable=False, server_default='0'),
     )
     op.add_column(
         "product_competitors",
@@ -50,7 +50,7 @@ def upgrade() -> None:
     )
     op.add_column(
         "product_competitors",
-        sa.Column("synthesis_included", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("synthesis_included", sa.Boolean(), nullable=False, server_default='0'),
     )
 
 

@@ -19,10 +19,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Create enums for PostgreSQL (no-op on SQLite)
-    jobtype_enum = sa.Enum('functional', 'emotional', 'social', name='jobtype')
-    jobimportance_enum = sa.Enum('critical', 'high', 'medium', 'low', name='jobimportance')
-
     # Add JTBD columns to ci_products
     op.add_column('ci_products', sa.Column('target_customer_profile', sa.JSON(), nullable=True))
     op.add_column('ci_products', sa.Column('job_map', sa.JSON(), nullable=True))
@@ -30,19 +26,20 @@ def upgrade() -> None:
     op.add_column('ci_products', sa.Column('job_map_last_updated', sa.DateTime(), nullable=True))
 
     # Create product_jobs table
+    # Use String for enum columns (compatible with both SQLite and PostgreSQL)
     op.create_table(
         'product_jobs',
         sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
         sa.Column('product_id', sa.Integer(), nullable=False),
         sa.Column('job_id_key', sa.String(50), nullable=False),
-        sa.Column('job_type', jobtype_enum, nullable=False),
+        sa.Column('job_type', sa.String(20), nullable=False),  # functional, emotional, social
         sa.Column('statement', sa.Text(), nullable=False),
         sa.Column('desired_outcomes', sa.JSON(), nullable=True),
-        sa.Column('importance', jobimportance_enum, nullable=False, server_default='medium'),
+        sa.Column('importance', sa.String(20), nullable=False, server_default='medium'),  # critical, high, medium, low
         sa.Column('statement_embedding', sa.JSON(), nullable=True),
         sa.Column('status', sa.String(50), server_default='active', nullable=True),
-        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
-        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
         sa.ForeignKeyConstraint(['product_id'], ['ci_products.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('product_id', 'job_id_key', name='unique_product_job_key'),
@@ -58,10 +55,6 @@ def downgrade() -> None:
     op.drop_index('ix_product_jobs_product_id', table_name='product_jobs')
     op.drop_index('ix_product_jobs_id', table_name='product_jobs')
     op.drop_table('product_jobs')
-
-    # Drop enums (PostgreSQL only, no-op on SQLite)
-    sa.Enum(name='jobimportance').drop(op.get_bind(), checkfirst=True)
-    sa.Enum(name='jobtype').drop(op.get_bind(), checkfirst=True)
 
     # Remove JTBD columns from ci_products
     op.drop_column('ci_products', 'job_map_last_updated')
