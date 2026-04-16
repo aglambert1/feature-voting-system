@@ -591,6 +591,29 @@ export default function ProductDetailPage() {
 
         {/* Agent Status Section */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          {/* Jobs-to-be-Done Tile */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900">Jobs-to-be-Done</h3>
+              <span className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
+                JTBD
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              <div className="text-sm text-gray-600">
+                Define who this product is for and the functional, emotional, and social jobs they hire it to do.
+              </div>
+
+              <Link
+                to={`/product-intelligence/products/${productId}/job-map`}
+                className="w-full inline-block text-center px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
+              >
+                Edit Job Map →
+              </Link>
+            </div>
+          </div>
+
           {/* Idea Triage Agent Tile */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between mb-4">
