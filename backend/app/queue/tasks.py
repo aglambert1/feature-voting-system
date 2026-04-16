@@ -1502,8 +1502,9 @@ def functional_audit_task(self, job_id: int):
         if target_customer_profile:
             agent_input["target_customer_profile"] = target_customer_profile
 
-        # Use higher max_tokens for detailed audit output
-        result = agent.execute(agent_input, max_tokens=8000)
+        # Higher max_tokens for detailed JTBD audit output (job_assessments with
+        # nested features and outcome_coverage per job can produce ~10-15k tokens)
+        result = agent.execute(agent_input, max_tokens=16000)
 
         queue_service.update_progress(job_id, 80.0, "Generating report...")
 
