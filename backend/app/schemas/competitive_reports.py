@@ -188,6 +188,58 @@ class FunctionalAuditOutput(BaseModel):
 
 
 # =============================================================================
+# Staged Audit Schemas (Phase C)
+#
+# Splits the large single-call output into two calls:
+# - Stage 1: competitor_context + functional_comparison + technical_constraints
+#   (fast, ~45s for a small output)
+# - Stage 2: job_assessments + evidence_citations + gaps_deep_dive
+#   (slower, ~90-150s — uses Stage 1 output as conditioning context)
+#
+# The task merges both stage outputs back into FunctionalAuditOutput before
+# persisting, so downstream consumers (report generator, synthesis) see the
+# same shape they did pre-split.
+# =============================================================================
+
+class FunctionalAuditStage1Output(BaseModel):
+    """Stage 1 of the staged audit: fast sections that can be returned early.
+
+    Small enough to fit comfortably in max_tokens=8000 and complete in ~45s,
+    giving the caller visible progress well before the heavier Stage 2.
+    """
+    competitor_context: CompetitorContext = Field(
+        description="Section 0: Competitor context summary"
+    )
+    functional_comparison: List[FunctionalComparison] = Field(
+        description="Section 1: Functional comparison table"
+    )
+    technical_constraints: TechnicalConstraints = Field(
+        description="Section 3: Technical constraints and requirements"
+    )
+
+
+class FunctionalAuditStage2Output(BaseModel):
+    """Stage 2 of the staged audit: heavy JTBD analysis.
+
+    Conditioned on Stage 1 output (passed into the user prompt) so the agent
+    doesn't re-derive context. Job assessments are the long tail; gaps_deep_dive
+    is populated only when no job map is available.
+    """
+    job_assessments: List[JobAssessment] = Field(
+        default=[],
+        description="Per-job unified comparison (populated when job map is available)"
+    )
+    evidence_citations: List[EvidenceCitation] = Field(
+        default=[],
+        description="Evidence records cited in the analysis"
+    )
+    gaps_deep_dive: List[GapDeepDive] = Field(
+        default=[],
+        description="Deep-dive on gap features (populated when no job map)"
+    )
+
+
+# =============================================================================
 # API Response Schemas
 # =============================================================================
 

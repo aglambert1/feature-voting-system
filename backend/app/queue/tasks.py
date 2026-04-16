@@ -1658,13 +1658,17 @@ def functional_audit_task(self, job_id: int):
                 'source_description': ev.source_description,
             })
 
-        queue_service.update_progress(job_id, 30.0, f"Running JTBD audit on {competitor.competitor_name}...")
-
-        # Initialize LLM service and agent
+        # Initialize LLM service and agent (Phase C: staged execution)
         #
         # effective_web_research may differ from the request param: when we've
         # already fetched cached or fresh results above, we pass them in the
         # prompt and don't need the agent's tool loop.
+        #
+        # Staged audit: Stage 1 produces competitor_context + functional_comparison
+        # + technical_constraints (~45s). Stage 2 uses that output as conditioning
+        # context and produces job_assessments + evidence_citations + gaps_deep_dive
+        # (~90-150s). This gives the caller visible progress at ~50% instead of a
+        # single ~4-minute wait.
         llm_service = LLMService()
         agent = CompetitorFunctionalAuditAgent(
             db=db,
@@ -1675,7 +1679,6 @@ def functional_audit_task(self, job_id: int):
             web_research_enabled=effective_web_research,
         )
 
-        # Run the audit
         agent_input = {
             'competitor_name': competitor.competitor_name,
             'competitor_url': competitor.competitor_url or '',
@@ -1689,11 +1692,32 @@ def functional_audit_task(self, job_id: int):
         if target_customer_profile:
             agent_input["target_customer_profile"] = target_customer_profile
 
-        # Higher max_tokens for detailed JTBD audit output (job_assessments with
-        # nested features and outcome_coverage per job can produce ~10-15k tokens)
-        result = agent.execute(agent_input, max_tokens=16000)
+        # --- Stage 1: context + comparison + technical_constraints ---
+        queue_service.update_progress(
+            job_id, 30.0,
+            f"generating competitor context for {competitor.competitor_name}...",
+        )
+        stage_1 = agent.execute_stage_1(agent_input, max_tokens=8000)
 
-        queue_service.update_progress(job_id, 80.0, "Generating report...")
+        # --- Stage 2: job_assessments + evidence_citations + gaps_deep_dive ---
+        queue_service.update_progress(
+            job_id, 50.0,
+            "context ready, generating job assessments...",
+        )
+        stage_2_input = {**agent_input, "stage_1_output": stage_1}
+        stage_2 = agent.execute_stage_2(stage_2_input, max_tokens=12000)
+
+        queue_service.update_progress(job_id, 75.0, "finalizing job assessments...")
+
+        # Merge the two stage outputs into the full schema shape that downstream
+        # consumers (report generator, report row, synthesis) expect. Stage-specific
+        # keys are additive, so `**stage_1, **stage_2` is sufficient.
+        result = {**stage_1, **stage_2}
+        # Validate the merged payload against the full schema before persisting —
+        # gives us a single clean failure point if either stage dropped a required field.
+        result = FunctionalAuditOutput(**result).model_dump()
+
+        queue_service.update_progress(job_id, 85.0, "Generating report...")
 
         # Generate markdown report (convert dict to Pydantic for the report generator)
         result_model = FunctionalAuditOutput(**result)
@@ -1804,6 +1828,11 @@ def functional_audit_task(self, job_id: int):
         except Exception as cite_err:
             print(f"[functional_audit_task] Warning: Citation increment failed: {cite_err}")
 
+        # output_data envelope is partial-write-ready: `stages_completed` +
+        # `stage_1_output` + `stage_2_output` let a future follow-up write
+        # Stage 1 at the 50% mark so pollers can read it mid-flight. The
+        # top-level keys (report_id, features_compared, gaps_identified) are
+        # preserved for existing consumers.
         output_data = {
             'report_id': report.id,
             'competitor_id': competitor_id,
@@ -1811,6 +1840,9 @@ def functional_audit_task(self, job_id: int):
             'report_version': report.report_version,
             'features_compared': len(result['functional_comparison']),
             'gaps_identified': len(result['gaps_deep_dive']),
+            'stages_completed': ['stage_1', 'stage_2'],
+            'stage_1_output': stage_1,
+            'stage_2_output': stage_2,
         }
 
         queue_service.mark_success(job_id, output_data)

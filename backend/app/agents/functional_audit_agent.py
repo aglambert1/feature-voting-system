@@ -10,15 +10,25 @@ The agent uses an external prompt template (Competitor_Functional_Audit_Prompt.m
 for flexibility in production environments.
 """
 
-from typing import Dict, Any, Type, List, Optional
+import json
+from typing import Dict, Any, Type, List, Literal, Optional
 
 from pydantic import BaseModel
 
 from app.agents.base_agent import BaseAgent
-from app.schemas.competitive_reports import FunctionalAuditOutput
+from app.schemas.competitive_reports import (
+    FunctionalAuditOutput,
+    FunctionalAuditStage1Output,
+    FunctionalAuditStage2Output,
+)
 from app.services.prompt_loader import get_prompt_loader
 from app.services.html_cleaner import get_html_cleaner
 from app.services.search_service import get_search_service
+
+
+# Staged execution modes. "full" preserves the pre-split single-call behavior
+# and remains the default so any caller not opting into staging is unaffected.
+AuditStage = Literal["full", "stage1", "stage2"]
 
 
 class CompetitorFunctionalAuditAgent(BaseAgent):
@@ -53,10 +63,47 @@ class CompetitorFunctionalAuditAgent(BaseAgent):
 
     PROMPT_FILENAME = "Competitor_Functional_Audit_Prompt.md"
 
-    def __init__(self, *args, web_research_enabled: bool = True, **kwargs):
+    def __init__(
+        self,
+        *args,
+        web_research_enabled: bool = True,
+        stage: AuditStage = "full",
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.search_service = get_search_service()
         self.web_research_enabled = web_research_enabled
+        self.stage: AuditStage = stage
+
+    def execute_stage_1(self, input_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        """Run Stage 1 (context + comparison + technical_constraints).
+
+        Temporarily flips `self.stage` to "stage1" so `get_output_schema`,
+        `get_system_prompt`, and `build_user_prompt` all produce Stage 1 variants.
+        Restores the previous stage after execution so the agent can be reused.
+        """
+        previous_stage = self.stage
+        self.stage = "stage1"
+        try:
+            return self.execute(input_data, **kwargs)
+        finally:
+            self.stage = previous_stage
+
+    def execute_stage_2(
+        self, input_data_with_stage_1_output: Dict[str, Any], **kwargs
+    ) -> Dict[str, Any]:
+        """Run Stage 2 (job_assessments + evidence_citations + gaps_deep_dive).
+
+        `input_data_with_stage_1_output` must include `stage_1_output` — the
+        dict produced by `execute_stage_1`. The prompt renders it as conditioning
+        context so the agent doesn't re-derive Stage 1 content.
+        """
+        previous_stage = self.stage
+        self.stage = "stage2"
+        try:
+            return self.execute(input_data_with_stage_1_output, **kwargs)
+        finally:
+            self.stage = previous_stage
 
     def get_tools(self) -> List[Dict[str, Any]]:
         """Provide web search tool if enabled and available."""
@@ -91,10 +138,26 @@ class CompetitorFunctionalAuditAgent(BaseAgent):
         return "functional_audit"
 
     def get_output_schema(self) -> Type[BaseModel]:
-        """Return the Pydantic schema for output validation."""
+        """Return the Pydantic schema for output validation.
+
+        Staged execution returns a narrower schema per stage. Callers that
+        don't opt into staging (stage="full") see the unchanged FunctionalAuditOutput.
+        """
+        if self.stage == "stage1":
+            return FunctionalAuditStage1Output
+        if self.stage == "stage2":
+            return FunctionalAuditStage2Output
         return FunctionalAuditOutput
 
     def get_system_prompt(self) -> str:
+        """Route to the right system prompt variant for the current stage."""
+        if self.stage == "stage1":
+            return self._build_stage1_system_prompt()
+        if self.stage == "stage2":
+            return self._build_stage2_system_prompt()
+        return self._build_full_system_prompt()
+
+    def _build_full_system_prompt(self) -> str:
         """
         Build system prompt with JTBD framework and JSON output instructions.
 
@@ -244,6 +307,162 @@ You MUST respond with a valid JSON object matching this exact structure:
 6. Output ONLY valid JSON — no markdown code blocks, no explanatory text
 7. Ensure all strings are properly escaped and the JSON is complete"""
 
+    def _build_stage1_system_prompt(self) -> str:
+        """Stage 1 of the staged audit: context + comparison + technical_constraints only.
+
+        Smaller output target (~4-6k tokens) so this stage completes in ~45s.
+        Deliberately excludes job_assessments, evidence_citations, and gaps_deep_dive —
+        those are Stage 2's job.
+        """
+        has_search = self.web_research_enabled and self.search_service.is_available()
+
+        search_section = ""
+        if has_search:
+            search_section = """
+## Research Strategy
+
+You have access to a web_search tool. Use 3-5 targeted searches on the
+competitor (features, pricing, integrations, reviews) to supplement any
+pre-provided data. Cross-reference web results with provided evidence.
+"""
+
+        return f"""You are a Product Strategist applying Jobs-to-be-Done (JTBD) to competitive analysis.
+
+This is STAGE 1 of a two-stage audit. In this stage you produce ONLY these sections:
+- competitor_context (positioning, core_differentiation, target_customer, key_features)
+- functional_comparison (15-25 feature rows with Parity/Advantage/Gap/Differentiator)
+- technical_constraints (integrations, api_capabilities, platform_requirements, additional_notes)
+
+DO NOT produce job_assessments, evidence_citations, or gaps_deep_dive — those are produced
+in Stage 2 using your Stage 1 output as conditioning context.
+{search_section}
+## Output Format
+
+Respond with a valid JSON object matching this exact structure (and nothing else):
+
+```json
+{{{{
+  "competitor_context": {{{{
+    "positioning": "Their hero message",
+    "core_differentiation": "What makes them unique",
+    "target_customer": "Their ICP",
+    "key_features": ["Feature 1", "Feature 2", "Feature 3", "Feature 4", "Feature 5"]
+  }}}},
+  "functional_comparison": [
+    {{{{
+      "feature_category": "Category",
+      "competitor_feature_name": "Feature name",
+      "functional_description": "What it actually does",
+      "mapping_status": "Gap",
+      "job_id": "j1 or null if no job map"
+    }}}}
+  ],
+  "technical_constraints": {{{{
+    "integrations": ["Integration 1", "Integration 2"],
+    "api_capabilities": "API description or null",
+    "platform_requirements": "Platform requirements or null",
+    "additional_notes": "Other notes or null"
+  }}}}
+}}}}
+```
+
+## Mapping Status Definitions
+- Parity: both have similar capability
+- Advantage: we have / they don't
+- Gap: they have / we don't
+- Differentiator: unique workflow they offer
+
+## Guidelines
+1. 15-25 features for comprehensive coverage
+2. Use standard categories: Core Functionality, UX/UI, Integrations, Security/Compliance, AI/Automation, Reporting/Analytics, Administration, Mobile, Collaboration
+3. Be specific: "AI-powered receipt scanning with OCR" not just "AI features"
+4. Focus on Gaps and Differentiators — these are most valuable for product strategy
+5. If a job map IS provided, link each feature to its most relevant `job_id` in the comparison row
+6. Output ONLY valid JSON — no markdown code blocks, no explanatory text
+7. Ensure all strings are properly escaped and the JSON is complete"""
+
+    def _build_stage2_system_prompt(self) -> str:
+        """Stage 2 of the staged audit: job_assessments + evidence_citations + gaps_deep_dive.
+
+        Stage 1 output is passed into the user prompt as conditioning context so
+        this stage doesn't re-derive positioning/comparison — it analyzes the job map
+        using Stage 1's feature set.
+        """
+        return """You are a Product Strategist applying Jobs-to-be-Done (JTBD) to competitive analysis.
+
+This is STAGE 2 of a two-stage audit. Stage 1 (competitor_context + functional_comparison +
+technical_constraints) is already complete and will be provided in the user prompt as
+conditioning context. In this stage you produce ONLY these sections:
+- job_assessments (one per job in the job map; features[] with position=advantage/gap/parity/differentiator)
+- evidence_citations (link evidence IDs to specific findings)
+- gaps_deep_dive (ONLY if no job map is provided)
+
+Do NOT restate or modify Stage 1 output — use it as given.
+
+## Scoring Principles (1-10 scale)
+- 9-10: Best-in-class, fully addresses the job with excellent UX
+- 7-8: Strong coverage, minor gaps in desired outcomes
+- 5-6: Adequate but notable missing capabilities
+- 3-4: Minimal coverage, significant gaps
+- 1-2: Barely addresses the job
+
+## Evidence Integration
+When evidence is provided, cite `evidence_ids` in `features[]` and populate `evidence_citations`
+linking evidence to specific findings. Evidence from the product team is high-confidence.
+
+## Output Format
+
+Respond with a valid JSON object matching this exact structure (and nothing else):
+
+```json
+{{
+  "job_assessments": [
+    {{
+      "job_id": "j1",
+      "job_statement": "When I need to..., I want to..., so I can...",
+      "importance": "critical",
+      "our_score": 7,
+      "competitor_score": 8,
+      "score_rationale": "Explanation of what drives the score difference",
+      "features": [
+        {{
+          "feature_name": "Feature A",
+          "description": "What it does functionally",
+          "whose": "ours",
+          "position": "advantage",
+          "evidence_ids": [5]
+        }}
+      ],
+      "outcome_coverage": [
+        {{"desired_outcome": "Minimize time to complete X", "our_coverage": "full", "competitor_coverage": "partial"}}
+      ]
+    }}
+  ],
+  "evidence_citations": [
+    {{"evidence_id": 5, "finding_type": "job_score", "finding_description": "How this evidence informed the assessment"}}
+  ],
+  "gaps_deep_dive": [
+    {{"feature_name": "Feature name", "user_problem": "Pain point", "evidence": "Quote from documentation"}}
+  ]
+}}
+```
+
+## When a Job Map IS provided
+- Produce one job_assessment per job in the map
+- `features[]` draws from Stage 1's functional_comparison — tag each with position
+- `outcome_coverage` assesses each desired_outcome
+- `gaps_deep_dive` MAY be empty
+
+## When NO Job Map is provided
+- `job_assessments` and `evidence_citations` MAY be empty
+- Populate `gaps_deep_dive` for each feature flagged as `Gap` in Stage 1
+
+## Guidelines
+1. Pull feature names directly from Stage 1's functional_comparison when possible
+2. Stay anchored in Stage 1 — don't contradict the mapping_status or invent new features
+3. Output ONLY valid JSON — no markdown code blocks, no explanatory text
+4. Ensure all strings are properly escaped and the JSON is complete"""
+
     def build_user_prompt(self, input_data: Dict[str, Any]) -> str:
         """
         Build the user prompt with competitor data and optional job map.
@@ -317,8 +536,43 @@ Use the web_search tool to gather additional information about {competitor_name}
 Cross-reference web results with any pre-provided data below.
 """
 
-        # Build analysis mode instruction
-        if has_job_map:
+        # Build analysis mode instruction — varies by stage and whether job map is present.
+        if self.stage == "stage1":
+            analysis_instruction = f"""## Your Task (Stage 1 of 2)
+
+Produce ONLY Stage 1 output for {competitor_name}:
+- competitor_context
+- functional_comparison (15-25 rows, each linked to a job_id if the job map is above)
+- technical_constraints
+
+DO NOT produce job_assessments, evidence_citations, or gaps_deep_dive — those are Stage 2.
+
+Respond with ONLY a valid JSON object following the Stage 1 schema."""
+        elif self.stage == "stage2":
+            if has_job_map:
+                analysis_instruction = f"""## Your Task (Stage 2 of 2)
+
+Stage 1 output is provided above as ## Stage 1 Context (already produced). Use it as given.
+
+Now produce Stage 2 analysis for {competitor_name}:
+- For EACH job in the job map above, produce a job_assessment with scores for our product and the competitor
+- Pull features from Stage 1's functional_comparison where relevant — tag each with position
+- Cite evidence_ids where they inform your finding
+- Populate evidence_citations linking evidence to specific findings
+
+Respond with ONLY a valid JSON object following the Stage 2 schema.
+Populate `job_assessments` and `evidence_citations`. `gaps_deep_dive` may be empty."""
+            else:
+                analysis_instruction = f"""## Your Task (Stage 2 of 2)
+
+Stage 1 output is provided above as ## Stage 1 Context (already produced). Use it as given.
+
+No job map is available — use feature-centric analysis.
+For each feature marked as "Gap" in Stage 1's functional_comparison, produce a gaps_deep_dive entry.
+
+Respond with ONLY a valid JSON object following the Stage 2 schema.
+Populate `gaps_deep_dive`. `job_assessments` and `evidence_citations` may be empty."""
+        elif has_job_map:
             analysis_instruction = f"""## Your Task
 
 Analyze {competitor_name} through the JTBD lens using the job map provided above.
@@ -340,6 +594,17 @@ For each feature gap identified, provide evidence of its value.
 Respond with ONLY a valid JSON object following the schema in the system prompt.
 Include `gaps_deep_dive` in your response."""
 
+        # For Stage 2, prepend the Stage 1 output as conditioning context so the
+        # agent can anchor its analysis without re-deriving Stage 1 content.
+        stage_1_context = ""
+        if self.stage == "stage2":
+            stage_1_output = input_data.get("stage_1_output")
+            if stage_1_output is not None:
+                stage_1_context = (
+                    "\n## Stage 1 Context (already produced — use as given)\n\n"
+                    f"```json\n{json.dumps(stage_1_output, indent=2)}\n```\n"
+                )
+
         prompt = f"""# Competitor Analysis Request
 
 ## Competitor Information
@@ -354,7 +619,7 @@ Include `gaps_deep_dive` in your response."""
 {search_content}
 {fetched_sources_content}
 {evidence_content}
-
+{stage_1_context}
 {task_context}
 
 {analysis_instruction}"""
