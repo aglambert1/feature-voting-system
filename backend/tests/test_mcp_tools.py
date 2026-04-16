@@ -6,6 +6,7 @@ the helper), and that the evidence_add bug fix (removed undefined variables)
 works end-to-end with mocked embedding/LLM services.
 """
 
+import json
 import uuid
 from contextlib import contextmanager
 from unittest.mock import patch, MagicMock
@@ -23,7 +24,7 @@ from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.queue import QueueJob, JobType, JobStatus
 from app.models.idea_comment import IdeaComment
 from app.models.idea_status_history import IdeaStatusHistory
-from app.models.competitive_reports import CompetitorFunctionalReport, LandscapeOpportunityReport
+from app.models.competitive_reports import CompetitorFunctionalReport
 from app.models.pm_review import PMReviewQueue, ReviewQueueType, ReviewQueueStatus, ReviewQueuePriority
 from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
 from app.models.user import User, UserRole
@@ -727,32 +728,14 @@ class TestIdeasCreate:
             assert result["ideas_created"] == 2
             assert result["ideas_skipped"] == 0
 
-    def test_landscape_no_report(self, db_session, product_a, owner):
+    def test_landscape_source_removed(self, db_session, product_a, owner):
+        """The 'landscape' source was removed in Phase 4b; confirm it returns an error."""
         from mcp_server.tools.ideas import ideas_create
 
         with _mock_session(db_session), _patch_user(owner.id):
             result = ideas_create(product_a.id, source="landscape")
             assert "error" in result
-            assert "No landscape report" in result["error"]
-
-    def test_landscape_creates_ideas(self, db_session, product_a, owner):
-        from mcp_server.tools.ideas import ideas_create
-
-        report = LandscapeOpportunityReport(
-            product_id=product_a.id,
-            report_version=1,
-            feature_opportunities=[
-                {"feature_name": "Auto-triage", "summary": "AI triage", "user_value": "Save time", "market_context": "Common"},
-            ],
-        )
-        db_session.add(report)
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(owner.id), \
-             patch("mcp_server.db.dispatch_task"):
-            result = ideas_create(product_a.id, source="landscape")
-            assert "error" not in result
-            assert result["ideas_created"] == 1
+            assert "Invalid source" in result["error"]
 
     def test_synthesis_requires_opportunity_id(self, db_session, product_a, owner):
         from mcp_server.tools.ideas import ideas_create
@@ -1151,65 +1134,6 @@ class TestCiDeactivateCompetitor:
             assert "Permission denied" in result["error"]
 
 
-# ---------------------------------------------------------------------------
-# ci_get_landscape_opportunities — feature opportunities from landscape
-# ---------------------------------------------------------------------------
-
-class TestCiGetLandscapeOpportunities:
-    def test_returns_opportunities(self, db_session, product_a, viewer, viewer_access):
-        from mcp_server.tools.competitive import ci_get_landscape_opportunities
-        from datetime import datetime
-
-        report = LandscapeOpportunityReport(
-            product_id=product_a.id,
-            report_version=1,
-            feature_opportunities=[
-                {
-                    "feature_name": "AI Triage",
-                    "summary": "Auto-categorize incoming ideas",
-                    "priority_score": 0.85,
-                    "competitors_with_feature": ["Rival Co"],
-                },
-            ],
-            high_impact_gaps=[
-                {
-                    "rank": 1,
-                    "feature_name": "AI Triage",
-                    "market_gravity": "High demand from enterprise customers",
-                    "competitors_with_feature": ["Rival Co"],
-                },
-            ],
-            source_competitor_names=["Rival Co"],
-            generated_at=datetime(2026, 4, 10, 12, 0, 0),
-        )
-        db_session.add(report)
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_landscape_opportunities(product_a.id)
-            assert "error" not in result
-            assert len(result["feature_opportunities"]) == 1
-            assert result["feature_opportunities"][0]["feature_name"] == "AI Triage"
-            assert len(result["high_impact_gaps"]) == 1
-            assert result["source_competitors"] == ["Rival Co"]
-
-    def test_no_report(self, db_session, product_a, viewer, viewer_access):
-        from mcp_server.tools.competitive import ci_get_landscape_opportunities
-
-        with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_landscape_opportunities(product_a.id)
-            assert "error" in result
-            assert "No landscape analysis" in result["error"]
-
-    def test_outsider_denied(self, db_session, product_a, outsider):
-        from mcp_server.tools.competitive import ci_get_landscape_opportunities
-
-        with _mock_session(db_session), _patch_user(outsider.id):
-            result = ci_get_landscape_opportunities(product_a.id)
-            assert "error" in result
-            assert "Permission denied" in result["error"]
-
-
 # ===========================================================================
 # Phase 5 Tests
 # ===========================================================================
@@ -1326,72 +1250,6 @@ class TestMonitoringUpdateConfig:
             result = monitoring_update_config(product_a.id, monitoring_enabled=True)
             assert "error" in result
             assert "EDIT" in result["error"]
-
-
-# ---------------------------------------------------------------------------
-# synthesis_list_runs / synthesis_get_run
-# ---------------------------------------------------------------------------
-
-class TestSynthesisListRuns:
-    def test_returns_runs(self, db_session, product_a, owner):
-        from mcp_server.tools.synthesis import synthesis_list_runs
-        from app.models.synthesis import SynthesisRun
-
-        run = SynthesisRun(product_id=product_a.id, status="completed")
-        db_session.add(run)
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(owner.id):
-            result = synthesis_list_runs(product_a.id)
-            assert "error" not in result
-            assert len(result["runs"]) == 1
-            assert result["runs"][0]["status"] == "completed"
-
-    def test_outsider_denied(self, db_session, product_a, outsider):
-        from mcp_server.tools.synthesis import synthesis_list_runs
-
-        with _mock_session(db_session), _patch_user(outsider.id):
-            result = synthesis_list_runs(product_a.id)
-            assert "error" in result
-
-
-class TestSynthesisGetRun:
-    def test_returns_run_with_opportunities(self, db_session, product_a, owner):
-        from mcp_server.tools.synthesis import synthesis_get_run
-        from app.models.synthesis import SynthesisRun, SynthesizedOpportunity
-
-        run = SynthesisRun(product_id=product_a.id, status="completed")
-        db_session.add(run)
-        db_session.flush()
-
-        opp = SynthesizedOpportunity(
-            synthesis_run_id=run.id,
-            product_id=product_a.id,
-            opportunity_name="Test Opp",
-            opportunity_summary="Summary",
-            priority_score=0.9,
-            source_count=3,
-        )
-        db_session.add(opp)
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(owner.id):
-            result = synthesis_get_run(product_a.id, run.id)
-            assert "error" not in result
-            assert len(result["opportunities"]) == 1
-            assert result["opportunities"][0]["name"] == "Test Opp"
-
-    def test_wrong_product(self, db_session, product_a, product_b, owner):
-        from mcp_server.tools.synthesis import synthesis_get_run
-        from app.models.synthesis import SynthesisRun
-
-        run = SynthesisRun(product_id=product_a.id, status="completed")
-        db_session.add(run)
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(owner.id):
-            result = synthesis_get_run(product_b.id, run.id)
-            assert "error" in result
 
 
 # ---------------------------------------------------------------------------
@@ -1652,3 +1510,488 @@ class TestProductListMembers:
             result = product_list_members(product_a.id)
             assert "error" in result
             assert "OWNER" in result["error"]
+
+
+# ===========================================================================
+# Phase 1c: JTBD Job Map tools
+# ===========================================================================
+
+
+class TestProductGetJobMapEmpty:
+    def test_returns_empty_when_no_job_map(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_get_job_map
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_get_job_map(product_a.id)
+            assert "error" not in result
+            assert result["job_map"] is None
+            assert result["target_customer_profile"] is None
+            assert result["job_map_version"] == 0
+            assert result["jobs"] == []
+
+
+class TestProductSetJobMap:
+    def test_sets_job_map_and_creates_records(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_set_job_map
+        from app.models.competitor_intelligence import ProductJob
+
+        mock_embeddings = [[0.001 * i for i in range(1024)] for _ in range(2)]
+        mock_svc = MagicMock()
+        mock_svc.generate_embeddings_batch.return_value = mock_embeddings
+
+        job_map = json.dumps({
+            "main_job": "Manage competitive intelligence",
+            "functional_jobs": [
+                {
+                    "job_id": "j1",
+                    "job_type": "functional",
+                    "statement": "When researching competitors, I want to track features",
+                    "desired_outcomes": ["Complete picture"],
+                    "importance": "high",
+                },
+            ],
+            "emotional_jobs": [
+                {
+                    "job_id": "je1",
+                    "job_type": "emotional",
+                    "statement": "When presenting to leadership, I want to feel confident",
+                    "desired_outcomes": [],
+                    "importance": "medium",
+                },
+            ],
+            "social_jobs": [],
+        })
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embeddings_batch", mock_svc.generate_embeddings_batch):
+            result = product_set_job_map(product_a.id, job_map)
+            assert "error" not in result
+            assert result["jobs_created"] == 2
+            assert result["job_map_version"] == 1
+
+            # Verify ProductJob records were created
+            jobs = db_session.query(ProductJob).filter(
+                ProductJob.product_id == product_a.id
+            ).all()
+            assert len(jobs) == 2
+            job_ids = {j.job_id_key for j in jobs}
+            assert "j1" in job_ids
+            assert "je1" in job_ids
+
+
+class TestProductAddJob:
+    def test_adds_job_to_map(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_add_job
+        from app.models.competitor_intelligence import ProductJob
+
+        mock_embedding = [0.001 * i for i in range(1024)]
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embedding", return_value=mock_embedding):
+            result = product_add_job(
+                product_a.id,
+                job_id="j1",
+                job_type="functional",
+                statement="When tracking competitors, I want to see feature gaps",
+                importance="high",
+            )
+            assert "error" not in result
+            assert result["job_id_key"] == "j1"
+            assert result["job_type"] == "functional"
+            assert result["importance"] == "high"
+            assert result["job_map_version"] == 1
+
+            # Verify DB record
+            pj = db_session.query(ProductJob).filter(
+                ProductJob.product_id == product_a.id,
+                ProductJob.job_id_key == "j1",
+            ).first()
+            assert pj is not None
+            assert pj.statement_embedding is not None
+
+    def test_rejects_duplicate_job_id(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_add_job
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embedding", return_value=[0.0] * 1024):
+            # Add first job
+            product_add_job(
+                product_a.id, job_id="j1", job_type="functional",
+                statement="First job statement",
+            )
+            # Try to add duplicate
+            result = product_add_job(
+                product_a.id, job_id="j1", job_type="functional",
+                statement="Duplicate job statement",
+            )
+            assert "error" in result
+            assert "already exists" in result["error"]
+
+
+class TestProductEditJob:
+    def test_edits_job_statement_and_importance(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_add_job, product_edit_job
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embedding", return_value=[0.0] * 1024):
+            # Add a job first
+            product_add_job(
+                product_a.id, job_id="j1", job_type="functional",
+                statement="Original statement", importance="medium",
+            )
+
+            # Edit it
+            result = product_edit_job(
+                product_a.id, job_id="j1",
+                statement="Updated statement",
+                importance="critical",
+            )
+            assert "error" not in result
+            assert result["statement"] == "Updated statement"
+            assert result["importance"] == "critical"
+            assert result["job_map_version"] == 2  # incremented from add (1) to edit (2)
+
+    def test_returns_error_for_nonexistent_job(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_edit_job
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_edit_job(product_a.id, job_id="nonexistent", statement="x")
+            assert "error" in result
+            assert "not found" in result["error"]
+
+
+class TestProductRemoveJob:
+    def test_removes_job_from_map(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_add_job, product_remove_job
+        from app.models.competitor_intelligence import ProductJob
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embedding", return_value=[0.0] * 1024):
+            product_add_job(
+                product_a.id, job_id="j1", job_type="functional",
+                statement="Job to remove",
+            )
+
+            result = product_remove_job(product_a.id, job_id="j1")
+            assert "error" not in result
+            assert result["removed_job_id"] == "j1"
+            assert result["job_map_version"] == 2
+
+            # Verify DB record deleted
+            pj = db_session.query(ProductJob).filter(
+                ProductJob.product_id == product_a.id,
+                ProductJob.job_id_key == "j1",
+            ).first()
+            assert pj is None
+
+
+class TestProductSetTargetCustomer:
+    def test_sets_profile(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_set_target_customer
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_set_target_customer(
+                product_a.id,
+                persona_name="Mid-market PM",
+                company_characteristics="50-500 employees, B2B SaaS",
+                key_traits_json='["Data-driven", "Resource-constrained"]',
+                hiring_criteria="Needs competitive visibility",
+            )
+            assert "error" not in result
+            assert result["target_customer_profile"]["persona_name"] == "Mid-market PM"
+            assert len(result["target_customer_profile"]["key_traits"]) == 2
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.product import product_set_target_customer
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = product_set_target_customer(product_a.id, persona_name="Test")
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+class TestProductGetContextIncludesJobMap:
+    def test_includes_job_map_info(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_get_context, product_set_target_customer, product_add_job
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embedding", return_value=[0.0] * 1024):
+            # Set up target customer and a job
+            product_set_target_customer(product_a.id, persona_name="Test PM")
+            product_add_job(
+                product_a.id, job_id="j1", job_type="functional",
+                statement="Test job",
+            )
+
+            result = product_get_context(product_a.id)
+            assert "error" not in result
+            assert result["target_customer_profile"]["persona_name"] == "Test PM"
+            assert result["job_map_version"] == 1
+            assert "1 jobs defined" in result["job_map_summary"]
+
+    def test_shows_no_job_map_when_empty(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_get_context
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_get_context(product_a.id)
+            assert result["target_customer_profile"] is None
+            assert result["job_map_version"] == 0
+            assert result["job_map_summary"] == "No job map defined"
+
+
+# ---------------------------------------------------------------------------
+# ci_set_audit — enable/disable audit with synthesis default
+# ---------------------------------------------------------------------------
+
+class TestCiSetAudit:
+    def test_ci_set_audit_enables_synthesis_by_default(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_set_audit
+
+        # Verify starting state: synthesis_included is False
+        assert competitor.synthesis_included is False
+        assert competitor.audit_enabled is False
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_set_audit(product_a.id, competitor.id, enabled=True)
+            assert "error" not in result
+            assert result["audit_enabled"] is True
+            assert result["synthesis_included"] is True
+
+        # Verify DB state
+        db_session.refresh(competitor)
+        assert competitor.audit_enabled is True
+        assert competitor.deep_analysis_enabled is True  # backward compat
+        assert competitor.synthesis_included is True
+
+    def test_ci_set_audit_disable(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_set_audit
+
+        competitor.audit_enabled = True
+        competitor.synthesis_included = True
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_set_audit(product_a.id, competitor.id, enabled=False)
+            assert "error" not in result
+            assert result["audit_enabled"] is False
+
+        db_session.refresh(competitor)
+        assert competitor.audit_enabled is False
+        assert competitor.deep_analysis_enabled is False
+        # synthesis_included stays as-is when disabling audit
+        assert competitor.synthesis_included is True
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_set_audit
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_set_audit(product_a.id, competitor.id, enabled=True)
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# ci_set_synthesis_inclusion — include/exclude from synthesis
+# ---------------------------------------------------------------------------
+
+class TestCiSetSynthesisInclusion:
+    def test_ci_set_synthesis_inclusion(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_set_synthesis_inclusion
+
+        assert competitor.synthesis_included is False
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_set_synthesis_inclusion(product_a.id, competitor.id, included=True)
+            assert "error" not in result
+            assert result["synthesis_included"] is True
+
+        db_session.refresh(competitor)
+        assert competitor.synthesis_included is True
+
+    def test_exclude_from_synthesis(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_set_synthesis_inclusion
+
+        competitor.synthesis_included = True
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_set_synthesis_inclusion(product_a.id, competitor.id, included=False)
+            assert "error" not in result
+            assert result["synthesis_included"] is False
+
+        db_session.refresh(competitor)
+        assert competitor.synthesis_included is False
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_set_synthesis_inclusion
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_set_synthesis_inclusion(product_a.id, competitor.id, included=True)
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# ci_get_competitor_list — shows audit/synthesis status
+# ---------------------------------------------------------------------------
+
+class TestCiGetCompetitorListAuditStatus:
+    def test_ci_get_competitor_list_shows_audit_status(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_list
+
+        competitor.audit_enabled = True
+        competitor.audit_status = "completed"
+        competitor.synthesis_included = True
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_get_competitor_list(product_a.id)
+            assert "error" not in result
+            assert len(result["competitors"]) == 1
+            c = result["competitors"][0]
+            assert c["audit_enabled"] is True
+            assert c["audit_status"] == "completed"
+            assert c["synthesis_included"] is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 unified synthesis tools
+# ---------------------------------------------------------------------------
+
+class TestSynthesisConfigure:
+    def test_creates_and_updates_config(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import synthesis_configure
+        from app.models.synthesis import SynthesisConfig
+
+        # Create fresh
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_configure(
+                product_a.id,
+                source_types=["competitive", "customer"],
+                auto_generate_ideas=False,
+                idea_priority_threshold=0.85,
+            )
+            assert "error" not in result
+            assert result["created"] is True
+            assert result["config"]["included_source_types"] == ["competitive", "customer"]
+            assert result["config"]["auto_generate_ideas"] is False
+            assert result["config"]["idea_priority_threshold"] == 0.85
+
+        # Update existing
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_configure(
+                product_a.id,
+                source_types=["competitive", "customer", "internal"],
+            )
+            assert "error" not in result
+            assert result["created"] is False
+            assert result["config"]["included_source_types"] == [
+                "competitive", "customer", "internal"
+            ]
+            # Unchanged fields persist
+            assert result["config"]["auto_generate_ideas"] is False
+            assert result["config"]["idea_priority_threshold"] == 0.85
+
+        # Verify only one config row exists
+        count = db_session.query(SynthesisConfig).filter(
+            SynthesisConfig.product_id == product_a.id
+        ).count()
+        assert count == 1
+
+    def test_rejects_unknown_source_types(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import synthesis_configure
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_configure(product_a.id, source_types=["bogus"])
+            assert "error" in result
+            assert "bogus" in result["error"] or "Unknown" in result["error"]
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.synthesis import synthesis_configure
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = synthesis_configure(product_a.id, source_types=["competitive"])
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+class TestSynthesisGetConfig:
+    def test_returns_defaults_when_not_set(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import synthesis_get_config
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_get_config(product_a.id)
+            assert "error" not in result
+            assert result["exists"] is False
+            assert result["config"]["included_source_types"] == ["competitive"]
+            assert result["config"]["auto_generate_ideas"] is True
+            assert result["config"]["idea_priority_threshold"] == 0.8
+
+    def test_returns_stored_config(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import (
+            synthesis_configure,
+            synthesis_get_config,
+        )
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            synthesis_configure(
+                product_a.id,
+                source_types=["competitive", "evidence"],
+                idea_priority_threshold=0.5,
+            )
+            result = synthesis_get_config(product_a.id)
+            assert result["exists"] is True
+            assert result["config"]["included_source_types"] == [
+                "competitive", "evidence"
+            ]
+            assert result["config"]["idea_priority_threshold"] == 0.5
+
+
+class TestSynthesisGetCompetitors:
+    def test_shows_inclusion_flags(
+        self, db_session, product_a, owner, competitor
+    ):
+        from mcp_server.tools.synthesis import synthesis_get_competitors
+
+        competitor.audit_enabled = True
+        competitor.audit_status = "completed"
+        competitor.synthesis_included = True
+        db_session.commit()
+
+        # Second competitor — not included
+        other = ProductCompetitor(
+            product_id=product_a.id,
+            competitor_name="Other Co",
+            competitor_url="https://other.co",
+            status="active",
+            audit_enabled=False,
+            synthesis_included=False,
+        )
+        db_session.add(other)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_get_competitors(product_a.id)
+            assert "error" not in result
+            assert len(result["competitors"]) == 2
+            by_name = {c["competitor_name"]: c for c in result["competitors"]}
+            assert by_name["Rival Co"]["synthesis_included"] is True
+            assert by_name["Rival Co"]["audit_status"] == "completed"
+            assert by_name["Other Co"]["synthesis_included"] is False
+
+    def test_outsider_denied(self, db_session, product_a, outsider, competitor):
+        from mcp_server.tools.synthesis import synthesis_get_competitors
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = synthesis_get_competitors(product_a.id)
+            assert "error" in result
+
+
+class TestSynthesisGetUnifiedReportEmpty:
+    def test_returns_error_when_no_report(self, db_session, product_a, owner):
+        from mcp_server.tools.synthesis import synthesis_get_unified_report
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_get_unified_report(product_a.id)
+            assert "error" in result
+            assert "synthesis_run_unified" in result["error"]

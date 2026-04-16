@@ -100,6 +100,13 @@ class Evidence(Base):
     jtbd_embedding = Column(JSON, nullable=True)  # 1024-dim Voyage AI
     content_embedding = Column(JSON, nullable=True)  # 1024-dim Voyage AI
 
+    # Job linkage (set automatically via embedding similarity, or manually)
+    job_id_key = Column(String(50), nullable=True, index=True)
+
+    # Citation tracking — how often this evidence has been referenced by agents
+    citation_count = Column(Integer, nullable=False, default=0)
+    last_cited_in = Column(String(100), nullable=True)  # e.g. "functional_report:5", "synthesis_report:3"
+
     # Provenance
     created_by = Column(String(100), nullable=False, default="api")
 
@@ -132,6 +139,9 @@ class Evidence(Base):
             "tags": self.tags,
             "extra_data": self.extra_data,
             "jtbd_statement": self.jtbd_statement,
+            "job_id_key": self.job_id_key,
+            "citation_count": self.citation_count,
+            "last_cited_in": self.last_cited_in,
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
@@ -148,5 +158,7 @@ class Evidence(Base):
             "competitor_id": self.competitor_id,
             "tags": self.tags,
             "jtbd_statement": self.jtbd_statement,
+            "job_id_key": self.job_id_key,
+            "citation_count": self.citation_count,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

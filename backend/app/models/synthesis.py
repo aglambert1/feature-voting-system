@@ -2,13 +2,17 @@
 Synthesis models for multi-source opportunity synthesis.
 
 This module defines database models for:
-1. SynthesisRun - Tracks a synthesis run combining multiple sources
+1. SynthesisRun - Tracks a synthesis run combining multiple sources (legacy
+   placeholder kept for SynthesizedOpportunity FK compatibility)
 2. SynthesizedOpportunity - Opportunities identified from cross-source analysis
+3. SynthesisConfig - Per-product configuration for the unified synthesis agent
+4. SynthesisReport - Unified synthesis report (Phase 3)
 
-These models support the Opportunity Synthesis Agent which combines:
-- Competitive intelligence (from landscape reports)
+These models support the unified synthesis agent which combines:
+- Competitive intelligence (from competitor functional reports)
 - Customer feedback (from voting system)
 - Internal feedback (from win/loss and support themes)
+- Evidence research (from the product factbase)
 """
 
 from datetime import datetime
@@ -44,11 +48,12 @@ class SynthesisRun(Base):
     Tracks a synthesis run that combines multiple data sources.
 
     Each run captures a snapshot of available data from:
-    - Competitive: LandscapeOpportunityReport (feature opportunities)
+    - Competitive: CompetitorFunctionalReports (per-competitor audits)
     - Customer: Ideas with votes
     - Internal: WinLossThemes and SupportThemes
+    - Evidence: Evidence records from the product factbase
 
-    The Opportunity Synthesis Agent processes these sources to
+    The unified synthesis agent processes these sources to
     identify intersections and generate prioritized opportunities.
     """
     __tablename__ = "synthesis_runs"
@@ -246,6 +251,25 @@ class SynthesizedOpportunity(Base):
         index=True
     )
 
+    # Phase 3: link to unified SynthesisReport
+    # Nullable for backward compatibility with records created via SynthesisRun
+    synthesis_report_id = Column(
+        Integer,
+        ForeignKey("synthesis_reports.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True
+    )
+
+    # JTBD job linkage (resolved via ProductJob.job_id_key during synthesis)
+    job_id_key = Column(String(50), nullable=True)
+
+    # Investment tier from the unified scorecard
+    # One of: "invest_heavily", "invest", "defend", "maintain", "deprioritize"
+    investment_tier = Column(String(50), nullable=True)
+
+    # Projected satisfaction score improvement if this opportunity ships
+    job_satisfaction_delta = Column(Float, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
@@ -253,6 +277,10 @@ class SynthesizedOpportunity(Base):
     synthesis_run = relationship(
         "SynthesisRun",
         back_populates="opportunities"
+    )
+    synthesis_report = relationship(
+        "SynthesisReport",
+        backref="opportunities_list"
     )
     product = relationship("CIProduct", backref="synthesized_opportunities")
     linked_idea = relationship("Idea", backref="source_opportunities")
@@ -310,3 +338,137 @@ class SynthesizedOpportunity(Base):
             "recommended_action": self.recommended_action,
             "keywords": self.feature_keywords,
         }
+
+
+# =============================================================================
+# SynthesisConfig defaults — single source of truth. All code paths that need
+# a default (API serializers, MCP tools, the synthesis task) reference these.
+# =============================================================================
+DEFAULT_INCLUDED_SOURCE_TYPES = ["competitive"]
+DEFAULT_AUTO_GENERATE_IDEAS = True
+# Min priority score (0.0-1.0) for auto-generating an idea from a synthesized
+# opportunity. 0.8 means only opportunities scored 80+ spawn ideas. Lower values
+# create more ideas (more noise); higher values create fewer (more curated).
+DEFAULT_IDEA_PRIORITY_THRESHOLD = 0.8
+
+
+class SynthesisConfig(Base):
+    """Per-product synthesis configuration.
+
+    Controls which source types are included in synthesis and idea
+    auto-generation behavior. Competitor inclusion is tracked on
+    ProductCompetitor.synthesis_included, not here.
+    """
+    __tablename__ = "synthesis_configs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_id = Column(
+        Integer,
+        ForeignKey("ci_products.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    # Which source types to include
+    # Default: ["competitive"]; any combo of competitive/customer/internal/evidence
+    included_source_types = Column(JSON, nullable=False, default=list)
+
+    # Idea auto-generation
+    auto_generate_ideas = Column(Boolean, nullable=False, default=DEFAULT_AUTO_GENERATE_IDEAS)
+    idea_priority_threshold = Column(Float, nullable=False, default=DEFAULT_IDEA_PRIORITY_THRESHOLD)
+
+    # Product-specific scoring overrides (merges with scoring_defaults.py)
+    scoring_weight_overrides = Column(JSON, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    product = relationship("CIProduct", backref="synthesis_config")
+
+    def __repr__(self):
+        return (
+            f"<SynthesisConfig(product_id={self.product_id}, "
+            f"sources={self.included_source_types})>"
+        )
+
+
+class SynthesisReport(Base):
+    """Unified synthesis report.
+
+    Produced by the unified synthesis agent. Handles:
+    - Competitive mode (only competitor audits + competitor-linked evidence)
+    - Multi-source mode (competitors + customer + internal + evidence)
+    - Self-assessment mode (no competitors; scoring uses customer/internal/evidence)
+    """
+    __tablename__ = "synthesis_reports"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_id = Column(
+        Integer,
+        ForeignKey("ci_products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    report_version = Column(Integer, nullable=False, default=1)
+
+    # Which sources were included in this run
+    # Example: ["competitive", "customer", "internal", "evidence"]
+    included_source_types = Column(JSON, nullable=False)
+
+    # Per-job scorecard (our_score, competitor_scores, best_in_class, investment_rec)
+    # [{job_id, job_statement, importance, our_score, competitor_scores: {name: score},
+    #   best_in_class, our_rank, total_ranked, investment_recommendation, rationale,
+    #   evidence_ids}]
+    job_scorecard = Column(JSON, nullable=True)
+
+    # Feature cluster matrix, organized by job (null if no competitors)
+    # {job_id: {features: [{feature_name, prevalence, our_status,
+    #                       competitors_with_feature, notes}]}}
+    feature_cluster_matrix = Column(JSON, nullable=True)
+
+    # Unified opportunity list -- these spawn SynthesizedOpportunity rows
+    # (same structure as before, now with job_id_key linkage)
+    opportunities = Column(JSON, nullable=True)
+
+    # High-impact items (gaps to close AND advantages to defend)
+    # [{type: "gap"|"advantage", job_id, rank, description, market_gravity, competitors}]
+    high_impact_items = Column(JSON, nullable=True)
+
+    # Innovation whitespace narrative
+    innovation_whitespace = Column(Text, nullable=True)
+    analysis_summary = Column(Text, nullable=True)
+
+    # Source statistics (counts per input source)
+    # {competitor_count, competitor_report_count, idea_count, winloss_count,
+    #  support_count, evidence_count}
+    source_stats = Column(JSON, nullable=True)
+
+    # Which competitors were in this run (may be empty for self-assessment)
+    included_competitor_ids = Column(JSON, nullable=True)
+    source_competitor_report_ids = Column(JSON, nullable=True)
+
+    # Change detection from previous version
+    changes_from_previous = Column(JSON, nullable=True)
+
+    # Markdown content for display/export
+    report_content_md = Column(Text, nullable=True)
+
+    # Job tracking
+    queue_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
+    generated_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    # Relationships
+    product = relationship("CIProduct", backref="synthesis_reports")
+
+    def __repr__(self):
+        return (
+            f"<SynthesisReport(id={self.id}, product_id={self.product_id}, "
+            f"v{self.report_version})>"
+        )

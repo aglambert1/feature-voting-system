@@ -36,6 +36,11 @@ Common patterns - verify against source if unsure:
 - Migration runs automatically on local startup (`start.sh`) and Render deploy (`preDeployCommand`)
 - Follow existing naming pattern: `{revision_id}_{description}.py`
 - Register new models in `backend/app/models/__init__.py` so `Base.metadata` picks them up
+- **Must support both SQLite (local dev) and PostgreSQL (prod)**:
+  - Use `sa.String()` instead of `sa.Enum()` in migration DDL (ORM `Enum` type handles both automatically)
+  - Use `sa.text('CURRENT_TIMESTAMP')` not `sa.text('now()')`
+  - Use `server_default='0'` for booleans, not `server_default=sa.text('false')`
+  - Avoid PG-specific syntax (e.g., `CREATE TYPE`, `USING` casts)
 
 **When to update this section:**
 - Adding/renaming model fields

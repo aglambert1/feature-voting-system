@@ -158,6 +158,9 @@ class Idea(Base):
     jtbd_statement = Column(Text, nullable=True)  # "When [situation], I want to [motivation], so I can [outcome]"
     jtbd_embedding = Column(JSON, nullable=True)  # 1024-dim Voyage AI embedding for clustering
 
+    # JTBD job linkage (set during triage via embedding match to ProductJob)
+    job_id_key = Column(String(50), nullable=True, index=True)
+
     # Timestamps
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

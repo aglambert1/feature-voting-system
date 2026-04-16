@@ -23,7 +23,10 @@ from app.models.competitor_intelligence import (
     AgentExecutionLog,
     ProductPermission,
     ProductPermissionLevel,
-    ProductAnalysisHistory
+    ProductAnalysisHistory,
+    ProductJob,
+    JobType as JTBDJobType,
+    JobImportance,
 )
 from app.models.queue import QueueJob, JobType, JobStatus, JobPriority
 from app.models.pm_review import (
@@ -41,7 +44,6 @@ from app.models.competitive_agent import (
 )
 from app.models.competitive_reports import (
     CompetitorFunctionalReport,
-    LandscapeOpportunityReport,
 )
 from app.models.internal_feedback import (
     InternalFeedbackImport,
@@ -59,6 +61,8 @@ from app.models.synthesis import (
     SynthesizedOpportunity,
     SynthesisStatus,
     SourceType as SynthesisSourceType,
+    SynthesisConfig,
+    SynthesisReport,
 )
 from app.models.cost_tracking import (
     LLMUsageLog,
@@ -76,14 +80,16 @@ __all__ = [
     "CIProduct", "CompetitorAnalysisSession", "ProductCompetitor", "SessionCompetitor",
     "ProductCompetitorFeature", "CompetitorFeature", "CompetitorGeneratedIdea", "AgentExecutionLog",
     "ProductPermission", "ProductPermissionLevel", "ProductAnalysisHistory",
+    "ProductJob", "JTBDJobType", "JobImportance",
     "QueueJob", "JobType", "JobStatus", "JobPriority",
     "PMReviewQueue", "CompetitorSnapshot", "MonitoringConfig",
     "ReviewQueueType", "ReviewQueueStatus", "ReviewQueuePriority", "AlertType",
     "AgentMode", "CompetitiveAgentConfig",
-    "CompetitorFunctionalReport", "LandscapeOpportunityReport",
+    "CompetitorFunctionalReport",
     "InternalFeedbackImport", "WinLossTheme", "SupportTheme", "ImportStatus",
     "ActivityImport", "DealActivityInsight", "SupportActivityInsight",
     "SynthesisRun", "SynthesizedOpportunity", "SynthesisStatus", "SynthesisSourceType",
+    "SynthesisConfig", "SynthesisReport",
     "LLMUsageLog", "OperationType",
     "ProductInviteCode",
     "Evidence", "EvidenceType",

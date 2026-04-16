@@ -91,6 +91,12 @@ class CIProduct(Base):
     # null = use defaults from scoring_defaults.py
     scoring_weights = Column(JSON, nullable=True)
 
+    # JTBD Job Map - the analytical lens for competitive analysis
+    target_customer_profile = Column(JSON, nullable=True)  # Structured persona
+    job_map = Column(JSON, nullable=True)  # Hierarchical JTBD map
+    job_map_version = Column(Integer, default=0, nullable=False)
+    job_map_last_updated = Column(DateTime, nullable=True)
+
     status = Column(String(50), default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -103,6 +109,7 @@ class CIProduct(Base):
     permissions = relationship("ProductPermission", back_populates="product", cascade="all, delete-orphan")
     analysis_history = relationship("ProductAnalysisHistory", back_populates="product", cascade="all, delete-orphan")
     competitive_agent_config = relationship("CompetitiveAgentConfig", back_populates="product", uselist=False, cascade="all, delete-orphan")
+    jobs = relationship("ProductJob", back_populates="product", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<CIProduct(id={self.id}, name='{self.product_name}', created_by={self.created_by_user_id})>"
@@ -134,13 +141,59 @@ class CIProduct(Base):
         return DEFAULT_STATUS_VISIBILITY.get(status, False)
 
 
+class JobType(str, enum.Enum):
+    FUNCTIONAL = "functional"
+    EMOTIONAL = "emotional"
+    SOCIAL = "social"
+
+
+class JobImportance(str, enum.Enum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class ProductJob(Base):
+    """
+    Individual job from a product's JTBD job map.
+
+    Separate table enables embedding-based search and FK references
+    from other models (ideas, themes, evidence).
+    """
+    __tablename__ = "product_jobs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_id_key = Column(String(50), nullable=False)  # "j1", "je1", "js1" etc.
+    job_type = Column(Enum(JobType), nullable=False)
+    statement = Column(Text, nullable=False)  # "When [situation], I want to [action], so I can [outcome]"
+    desired_outcomes = Column(JSON, nullable=True)  # List of outcome statements
+    importance = Column(Enum(JobImportance), nullable=False, default=JobImportance.MEDIUM)
+    statement_embedding = Column(JSON, nullable=True)  # 1024-dim Voyage AI embedding
+
+    status = Column(String(50), default="active", index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    product = relationship("CIProduct", back_populates="jobs")
+
+    __table_args__ = (
+        UniqueConstraint('product_id', 'job_id_key', name='unique_product_job_key'),
+    )
+
+    def __repr__(self):
+        return f"<ProductJob(id={self.id}, product_id={self.product_id}, key='{self.job_id_key}', type='{self.job_type}')>"
+
+
 class CompetitorAnalysisSession(Base):
     """
     DEPRECATED: This model is part of the legacy session-based workflow.
 
     Use the V2 Competitive Intelligence Agent workflow instead:
     - CompetitorFunctionalReport for competitor analysis
-    - LandscapeOpportunityReport for opportunity synthesis
+    - SynthesisReport (unified synthesis) for opportunity synthesis
 
     This model is kept for backward compatibility during migration.
     The database should be reinitialized to drop this table.
@@ -204,6 +257,12 @@ class ProductCompetitor(Base):
     deep_analysis_enabled = Column(Boolean, nullable=False, default=False)  # PO marks for deep analysis
     deep_analysis_last_run = Column(DateTime, nullable=True)  # Last time deep analysis ran
     deep_analysis_status = Column(String(50), nullable=True)  # "pending", "running", "completed", "failed"
+
+    # Decoupled audit/synthesis workflow (replaces deep_analysis fields)
+    audit_enabled = Column(Boolean, nullable=False, default=False)
+    audit_status = Column(String(50), nullable=True)  # pending, running, completed, failed
+    audit_last_run = Column(DateTime, nullable=True)
+    synthesis_included = Column(Boolean, nullable=False, default=False)
 
     status = Column(String(50), nullable=False, default="active", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
@@ -330,7 +389,7 @@ class CompetitorGeneratedIdea(Base):
     """
     DEPRECATED: This model is part of the legacy session-based workflow.
 
-    In V2, ideas are generated from LandscapeOpportunityReport.opportunities
+    In V2, ideas are generated from SynthesisReport.opportunities
     via the idea normalization pipeline (IdeaNormalizerService).
     The database should be reinitialized to drop this table.
     """

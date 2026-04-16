@@ -172,47 +172,6 @@ class TestTriggerAnalysis:
         assert resp.status_code == 401
 
     @patch("app.api.competitive_agents.send_task")
-    def test_trigger_landscape_synthesis(self, mock_task, client, po_user, test_product, db_session):
-        # Landscape synthesis requires at least one functional report.
-        # Create a competitor first (required FK).
-        competitor = ProductCompetitor(
-            product_id=test_product.id,
-            competitor_name="Landscape Rival",
-            competitor_url="https://landscape-rival.com",
-        )
-        db_session.add(competitor)
-        db_session.commit()
-        db_session.refresh(competitor)
-
-        from app.models.competitive_reports import CompetitorFunctionalReport
-        report = CompetitorFunctionalReport(
-            product_id=test_product.id,
-            product_competitor_id=competitor.id,
-        )
-        db_session.add(report)
-        db_session.commit()
-
-        mock_result = MagicMock()
-        mock_result.id = "task-ls-123"
-        mock_task.return_value = mock_result
-
-        resp = client.post(
-            f"/product-intelligence/agents/{test_product.id}/run-landscape-synthesis",
-            headers=auth_headers(po_user)
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["job_type"] == "landscape_synthesis"
-
-    def test_trigger_landscape_synthesis_no_reports(self, client, po_user, test_product):
-        """Landscape synthesis without functional reports returns 400."""
-        resp = client.post(
-            f"/product-intelligence/agents/{test_product.id}/run-landscape-synthesis",
-            headers=auth_headers(po_user)
-        )
-        assert resp.status_code == 400
-
-    @patch("app.api.competitive_agents.send_task")
     def test_discover_competitors(self, mock_task, client, po_user, test_product):
         mock_result = MagicMock()
         mock_result.id = "task-dc-123"
@@ -238,12 +197,3 @@ class TestFunctionalReports:
         assert resp.json() == []
 
 
-class TestLandscapeReport:
-
-    def test_get_landscape_report_none(self, client, po_user, test_product):
-        resp = client.get(
-            f"/product-intelligence/agents/{test_product.id}/landscape-report",
-            headers=auth_headers(po_user)
-        )
-        assert resp.status_code == 200
-        assert resp.json() is None

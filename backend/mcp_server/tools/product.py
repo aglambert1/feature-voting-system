@@ -48,7 +48,8 @@ def product_list() -> dict:
 def product_get_context(product_id: int) -> dict:
     """Get full context about a product including its features, positioning, and analysis history."""
     from app.models.competitor_intelligence import CIProduct, ProductFeature
-    from app.models.competitive_reports import LandscapeOpportunityReport
+    from app.models.synthesis import SynthesisReport
+    from sqlalchemy import desc
 
     with get_session() as db:
         denied = require_product_access(db, product_id)
@@ -64,9 +65,12 @@ def product_get_context(product_id: int) -> dict:
             ProductFeature.status == "active",
         ).all()
 
-        landscape = db.query(LandscapeOpportunityReport).filter(
-            LandscapeOpportunityReport.product_id == product_id
-        ).first()
+        latest_report = (
+            db.query(SynthesisReport)
+            .filter(SynthesisReport.product_id == product_id)
+            .order_by(desc(SynthesisReport.report_version))
+            .first()
+        )
 
         return {
             "product_id": product.id,
@@ -78,8 +82,11 @@ def product_get_context(product_id: int) -> dict:
                 {"id": f.id, "name": f.feature_name, "description": f.feature_description}
                 for f in features
             ],
-            "last_landscape_analysis": landscape.generated_at.isoformat() if landscape else None,
-            "landscape_version": landscape.report_version if landscape else None,
+            "last_synthesis_analysis": latest_report.generated_at.isoformat() if latest_report else None,
+            "synthesis_version": latest_report.report_version if latest_report else None,
+            "target_customer_profile": product.target_customer_profile,
+            "job_map_version": product.job_map_version,
+            "job_map_summary": f"{len(product.jobs)} jobs defined" if product.jobs else "No job map defined",
         }
 
 
@@ -887,4 +894,470 @@ def product_list_members(product_id: int) -> dict:
                 }
                 for perm, user in permissions
             ],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Job Map tools — JTBD management
+# ---------------------------------------------------------------------------
+
+
+def _rebuild_job_map_json(db, product):
+    """Rebuild CIProduct.job_map JSON from ProductJob records."""
+    from app.models.competitor_intelligence import ProductJob
+
+    jobs = db.query(ProductJob).filter(
+        ProductJob.product_id == product.id,
+        ProductJob.status == "active"
+    ).all()
+
+    job_map = product.job_map or {}
+    functional = []
+    emotional = []
+    social = []
+
+    for j in jobs:
+        entry = {
+            "job_id": j.job_id_key,
+            "job_type": j.job_type.value,
+            "statement": j.statement,
+            "desired_outcomes": j.desired_outcomes or [],
+            "importance": j.importance.value,
+        }
+        if j.job_type.value == "functional":
+            functional.append(entry)
+        elif j.job_type.value == "emotional":
+            emotional.append(entry)
+        else:
+            social.append(entry)
+
+    job_map["functional_jobs"] = functional
+    job_map["emotional_jobs"] = emotional
+    job_map["social_jobs"] = social
+    product.job_map = job_map
+
+
+@mcp.tool()
+def product_extract_job_map(product_id: int, guidance: str = "") -> dict:
+    """Queue the JobMapExtractorAgent to generate a JTBD job map from product information. Returns a job_id for polling.
+
+    Args:
+        product_id: The product to extract a job map for.
+        guidance: Optional guidance for the extraction (e.g. target customer hints, focus areas).
+    """
+    from app.models.competitor_intelligence import CIProduct
+    from app.models.queue import JobType as QueueJobType
+    from app.services.queue_service import QueueService
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        conflict = require_no_active_job(db, product_id, QueueJobType.JOB_MAP_EXTRACTION, "Job map extraction")
+        if conflict:
+            return conflict
+
+        product = db.query(CIProduct).get(product_id)
+        if not product:
+            return {"error": f"Product {product_id} not found"}
+
+        input_data = {"product_id": product_id}
+        if guidance:
+            input_data["guidance"] = guidance
+
+        queue_service = QueueService(db)
+        job = queue_service.create_job(
+            job_type=QueueJobType.JOB_MAP_EXTRACTION,
+            input_data=input_data,
+            product_id=product_id,
+            user_id=resolve_user_id_for_job(db, product_id),
+        )
+
+        from app.queue.tasks import extract_job_map_task
+        from mcp_server.db import dispatch_task
+        result = dispatch_task(extract_job_map_task, job.id)
+        queue_service.mark_queued(job.id, result.id)
+
+        return {
+            "job_id": job.id,
+            "job_uuid": job.job_uuid,
+            "status": "queued",
+            "message": "Job map extraction queued. Use job_get_status to check progress.",
+        }
+
+
+@mcp.tool()
+def product_get_job_map(product_id: int) -> dict:
+    """Get the current JTBD job map including target customer profile and all jobs.
+
+    Args:
+        product_id: The product to get the job map for.
+    """
+    from app.models.competitor_intelligence import CIProduct, ProductJob
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
+        product = db.query(CIProduct).get(product_id)
+        if not product:
+            return {"error": f"Product {product_id} not found"}
+
+        jobs = db.query(ProductJob).filter(
+            ProductJob.product_id == product_id,
+            ProductJob.status == "active",
+        ).all()
+
+        return {
+            "product_id": product_id,
+            "target_customer_profile": product.target_customer_profile,
+            "job_map": product.job_map,
+            "job_map_version": product.job_map_version,
+            "job_map_last_updated": product.job_map_last_updated.isoformat() if product.job_map_last_updated else None,
+            "jobs": [
+                {
+                    "id": j.id,
+                    "job_id_key": j.job_id_key,
+                    "job_type": j.job_type.value,
+                    "statement": j.statement,
+                    "desired_outcomes": j.desired_outcomes or [],
+                    "importance": j.importance.value,
+                    "has_embedding": j.statement_embedding is not None,
+                }
+                for j in jobs
+            ],
+        }
+
+
+@mcp.tool()
+def product_set_job_map(product_id: int, job_map_json: str) -> dict:
+    """Set or replace the full JTBD job map from a JSON string. Deletes existing jobs and creates new ones.
+
+    Args:
+        product_id: The product to set the job map for.
+        job_map_json: JSON string with the job map structure. Must have keys: main_job, functional_jobs, emotional_jobs, social_jobs. Each job needs: job_id, job_type, statement, desired_outcomes (list), importance.
+    """
+    from datetime import datetime
+    from app.models.competitor_intelligence import CIProduct, ProductJob, JobType as JTBDJobType, JobImportance
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        try:
+            job_map_data = json.loads(job_map_json)
+        except json.JSONDecodeError:
+            return {"error": "Invalid JSON. Provide a valid job map JSON object."}
+
+        if not isinstance(job_map_data, dict):
+            return {"error": "Job map must be a JSON object."}
+
+        product = db.query(CIProduct).get(product_id)
+        if not product:
+            return {"error": f"Product {product_id} not found"}
+
+        # Delete existing jobs
+        db.query(ProductJob).filter(ProductJob.product_id == product_id).delete()
+
+        # Collect all job entries from the map
+        all_jobs = []
+        for category in ["functional_jobs", "emotional_jobs", "social_jobs"]:
+            for entry in job_map_data.get(category, []):
+                all_jobs.append(entry)
+
+        # Generate embeddings for all statements
+        statements = [j["statement"] for j in all_jobs]
+        embeddings = []
+        if statements:
+            from app.services.embedding_service import generate_embeddings_batch
+            embeddings = generate_embeddings_batch(statements, input_type="document")
+
+        # Create ProductJob records
+        created_count = 0
+        for i, entry in enumerate(all_jobs):
+            job_type_val = entry.get("job_type", "functional")
+            importance_val = entry.get("importance", "medium")
+            pj = ProductJob(
+                product_id=product_id,
+                job_id_key=entry["job_id"],
+                job_type=JTBDJobType(job_type_val),
+                statement=entry["statement"],
+                desired_outcomes=entry.get("desired_outcomes", []),
+                importance=JobImportance(importance_val),
+                statement_embedding=embeddings[i] if i < len(embeddings) else None,
+            )
+            db.add(pj)
+            created_count += 1
+
+        # Update product
+        product.job_map = job_map_data
+        product.job_map_version = (product.job_map_version or 0) + 1
+        product.job_map_last_updated = datetime.utcnow()
+        db.flush()
+
+        return {
+            "product_id": product_id,
+            "job_map_version": product.job_map_version,
+            "jobs_created": created_count,
+            "message": f"Job map set with {created_count} jobs. Version {product.job_map_version}.",
+        }
+
+
+@mcp.tool()
+def product_set_target_customer(
+    product_id: int,
+    persona_name: str,
+    company_characteristics: str = "",
+    key_traits_json: str = "[]",
+    hiring_criteria: str = "",
+) -> dict:
+    """Set the target customer profile for a product.
+
+    Args:
+        product_id: The product to set the target customer for.
+        persona_name: Name for the persona, e.g. 'Mid-market Operations Director'.
+        company_characteristics: Company size, industry, stage (optional).
+        key_traits_json: JSON array of key behavioral traits (optional). Example: '["Budget-conscious", "Risk-averse"]'
+        hiring_criteria: What would make them 'hire' this product (optional).
+    """
+    from app.models.competitor_intelligence import CIProduct
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        product = db.query(CIProduct).get(product_id)
+        if not product:
+            return {"error": f"Product {product_id} not found"}
+
+        try:
+            key_traits = json.loads(key_traits_json) if key_traits_json else []
+        except json.JSONDecodeError:
+            return {"error": "Invalid JSON for key_traits_json. Provide a JSON array."}
+
+        if not isinstance(key_traits, list):
+            return {"error": "key_traits_json must be a JSON array."}
+
+        profile = {
+            "persona_name": persona_name,
+            "company_characteristics": company_characteristics or None,
+            "key_traits": key_traits,
+            "hiring_criteria": hiring_criteria or None,
+        }
+        product.target_customer_profile = profile
+        db.flush()
+
+        return {
+            "product_id": product_id,
+            "target_customer_profile": profile,
+            "message": f"Target customer profile set: {persona_name}",
+        }
+
+
+@mcp.tool()
+def product_add_job(
+    product_id: int,
+    job_id: str,
+    job_type: str,
+    statement: str,
+    desired_outcomes_json: str = "[]",
+    importance: str = "medium",
+) -> dict:
+    """Add a single job to the product's JTBD job map.
+
+    Args:
+        product_id: The product to add the job to.
+        job_id: Unique key for this job within the product (e.g. 'j1', 'je1', 'js1').
+        job_type: One of: functional, emotional, social.
+        statement: Job statement, ideally: 'When [situation], I want to [action], so I can [outcome]'.
+        desired_outcomes_json: JSON array of desired outcome strings (optional).
+        importance: One of: critical, high, medium, low (default medium).
+    """
+    from datetime import datetime
+    from app.models.competitor_intelligence import CIProduct, ProductJob, JobType as JTBDJobType, JobImportance
+
+    valid_types = {"functional", "emotional", "social"}
+    valid_importance = {"critical", "high", "medium", "low"}
+
+    if job_type not in valid_types:
+        return {"error": f"Invalid job_type '{job_type}'. Must be one of: {sorted(valid_types)}"}
+    if importance not in valid_importance:
+        return {"error": f"Invalid importance '{importance}'. Must be one of: {sorted(valid_importance)}"}
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        product = db.query(CIProduct).get(product_id)
+        if not product:
+            return {"error": f"Product {product_id} not found"}
+
+        # Check uniqueness
+        existing = db.query(ProductJob).filter(
+            ProductJob.product_id == product_id,
+            ProductJob.job_id_key == job_id,
+        ).first()
+        if existing:
+            return {"error": f"Job '{job_id}' already exists for this product. Use product_edit_job to modify it."}
+
+        try:
+            desired_outcomes = json.loads(desired_outcomes_json) if desired_outcomes_json else []
+        except json.JSONDecodeError:
+            return {"error": "Invalid JSON for desired_outcomes_json. Provide a JSON array."}
+
+        # Generate embedding
+        from app.services.embedding_service import generate_embedding
+        embedding = generate_embedding(statement, input_type="document")
+
+        pj = ProductJob(
+            product_id=product_id,
+            job_id_key=job_id,
+            job_type=JTBDJobType(job_type),
+            statement=statement,
+            desired_outcomes=desired_outcomes,
+            importance=JobImportance(importance),
+            statement_embedding=embedding,
+        )
+        db.add(pj)
+        db.flush()
+
+        # Rebuild job_map JSON and increment version
+        _rebuild_job_map_json(db, product)
+        product.job_map_version = (product.job_map_version or 0) + 1
+        product.job_map_last_updated = datetime.utcnow()
+        db.flush()
+
+        return {
+            "product_id": product_id,
+            "job_id": pj.id,
+            "job_id_key": pj.job_id_key,
+            "job_type": pj.job_type.value,
+            "statement": pj.statement,
+            "importance": pj.importance.value,
+            "job_map_version": product.job_map_version,
+            "message": f"Job '{job_id}' added to the map.",
+        }
+
+
+@mcp.tool()
+def product_edit_job(
+    product_id: int,
+    job_id: str,
+    statement: str = "",
+    desired_outcomes_json: str = "",
+    importance: str = "",
+) -> dict:
+    """Edit a single job in the product's JTBD job map (partial update — only provided fields are changed).
+
+    Args:
+        product_id: The product the job belongs to.
+        job_id: The job_id_key of the job to edit.
+        statement: New job statement (leave empty to keep current).
+        desired_outcomes_json: New desired outcomes JSON array (leave empty to keep current).
+        importance: New importance level: critical, high, medium, low (leave empty to keep current).
+    """
+    from datetime import datetime
+    from app.models.competitor_intelligence import CIProduct, ProductJob, JobImportance
+
+    valid_importance = {"critical", "high", "medium", "low"}
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        product = db.query(CIProduct).get(product_id)
+        if not product:
+            return {"error": f"Product {product_id} not found"}
+
+        pj = db.query(ProductJob).filter(
+            ProductJob.product_id == product_id,
+            ProductJob.job_id_key == job_id,
+        ).first()
+        if not pj:
+            return {"error": f"Job '{job_id}' not found for product {product_id}."}
+
+        if statement:
+            pj.statement = statement
+            # Regenerate embedding
+            from app.services.embedding_service import generate_embedding
+            pj.statement_embedding = generate_embedding(statement, input_type="document")
+
+        if desired_outcomes_json:
+            try:
+                pj.desired_outcomes = json.loads(desired_outcomes_json)
+            except json.JSONDecodeError:
+                return {"error": "Invalid JSON for desired_outcomes_json."}
+
+        if importance:
+            if importance not in valid_importance:
+                return {"error": f"Invalid importance '{importance}'. Must be one of: {sorted(valid_importance)}"}
+            pj.importance = JobImportance(importance)
+
+        db.flush()
+
+        # Rebuild job_map JSON and increment version
+        _rebuild_job_map_json(db, product)
+        product.job_map_version = (product.job_map_version or 0) + 1
+        product.job_map_last_updated = datetime.utcnow()
+        db.flush()
+
+        return {
+            "product_id": product_id,
+            "job_id_key": pj.job_id_key,
+            "job_type": pj.job_type.value,
+            "statement": pj.statement,
+            "desired_outcomes": pj.desired_outcomes or [],
+            "importance": pj.importance.value,
+            "job_map_version": product.job_map_version,
+            "message": f"Job '{job_id}' updated.",
+        }
+
+
+@mcp.tool()
+def product_remove_job(product_id: int, job_id: str) -> dict:
+    """Remove a job from the product's JTBD job map.
+
+    Args:
+        product_id: The product the job belongs to.
+        job_id: The job_id_key of the job to remove.
+    """
+    from datetime import datetime
+    from app.models.competitor_intelligence import CIProduct, ProductJob
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        product = db.query(CIProduct).get(product_id)
+        if not product:
+            return {"error": f"Product {product_id} not found"}
+
+        pj = db.query(ProductJob).filter(
+            ProductJob.product_id == product_id,
+            ProductJob.job_id_key == job_id,
+        ).first()
+        if not pj:
+            return {"error": f"Job '{job_id}' not found for product {product_id}."}
+
+        db.delete(pj)
+        db.flush()
+
+        # Rebuild job_map JSON and increment version
+        _rebuild_job_map_json(db, product)
+        product.job_map_version = (product.job_map_version or 0) + 1
+        product.job_map_last_updated = datetime.utcnow()
+        db.flush()
+
+        return {
+            "product_id": product_id,
+            "removed_job_id": job_id,
+            "job_map_version": product.job_map_version,
+            "message": f"Job '{job_id}' removed from the map.",
         }

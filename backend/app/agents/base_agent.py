@@ -24,12 +24,12 @@ STAGE_TO_OPERATION_TYPE = {
     "competitor_discovery": OperationType.COMPETITOR_DISCOVERY,
     "feature_extraction": OperationType.COMPETITOR_FEATURE_EXTRACTION,
     "gap_analysis": OperationType.GAP_ANALYSIS,
-    "opportunity_synthesis": OperationType.OPPORTUNITY_SYNTHESIS,
     "functional_audit": OperationType.FUNCTIONAL_AUDIT,
-    "landscape_synthesis": OperationType.LANDSCAPE_SYNTHESIS,
+    "unified_synthesis": OperationType.OPPORTUNITY_SYNTHESIS,
     "activity_insight": OperationType.ACTIVITY_INSIGHT,
     "internal_discovery": OperationType.INTERNAL_DISCOVERY,
     "idea_generation": OperationType.IDEA_STRUCTURING,
+    "job_map_extraction": OperationType.PRODUCT_ANALYSIS,
 }
 
 

@@ -69,8 +69,14 @@ class JobType(str, enum.Enum):
     INTERNAL_DISCOVERY = "internal_discovery"  # Process uploaded internal feedback
     OPPORTUNITY_SYNTHESIS = "opportunity_synthesis"  # Three-source synthesis
 
+    # Unified synthesis (Phase 3 — replaces landscape + opportunity synthesis)
+    UNIFIED_SYNTHESIS = "unified_synthesis"  # JTBD-centric multi-source synthesis
+
     # Activity Analysis job types (CRM activity stream analysis)
     ACTIVITY_INSIGHT = "activity_insight"  # Analyze CRM activity streams for product insights
+
+    # JTBD Job Map extraction
+    JOB_MAP_EXTRACTION = "job_map_extraction"  # Extract JTBD job map from product info
 
     # DEPRECATED: These job types are no longer used in the new two-step analysis system
     # Kept for backwards compatibility with existing job records

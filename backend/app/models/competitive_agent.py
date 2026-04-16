@@ -5,8 +5,9 @@ This module defines database models for:
 1. CompetitiveAgentConfig - Unified configuration for competitive analysis agent
 
 The Competitive Analysis Agent uses these models to store configuration.
-Analysis results are stored in CompetitorFunctionalReport and
-LandscapeOpportunityReport (see competitive_reports.py).
+Analysis results are stored in CompetitorFunctionalReport
+(see competitive_reports.py) and the unified SynthesisReport
+(see synthesis.py).
 """
 
 from sqlalchemy import (
