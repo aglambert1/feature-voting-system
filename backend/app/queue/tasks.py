@@ -1413,6 +1413,7 @@ def functional_audit_task(self, job_id: int):
             raise ValueError(f"Job {job_id} not found")
 
         queue_service.mark_running(job_id)
+        queue_service.update_progress(job_id, 5.0, "Loading competitor data...")
 
         # Extract job parameters
         input_data = job.input_data or {}
@@ -1433,6 +1434,7 @@ def functional_audit_task(self, job_id: int):
 
         # Get product context
         product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+        queue_service.update_progress(job_id, 15.0, "Loading product context and job map...")
         product_context = {
             'product_name': product.product_name if product else 'Unknown',
             'product_category': product.product_category if product else None,
@@ -1475,6 +1477,8 @@ def functional_audit_task(self, job_id: int):
                 'source_description': ev.source_description,
             })
 
+        queue_service.update_progress(job_id, 30.0, f"Running JTBD audit on {competitor.competitor_name}...")
+
         # Initialize LLM service and agent
         llm_service = LLMService()
         agent = CompetitorFunctionalAuditAgent(
@@ -1500,6 +1504,8 @@ def functional_audit_task(self, job_id: int):
 
         # Use higher max_tokens for detailed audit output
         result = agent.execute(agent_input, max_tokens=8000)
+
+        queue_service.update_progress(job_id, 80.0, "Generating report...")
 
         # Generate markdown report (convert dict to Pydantic for the report generator)
         result_model = FunctionalAuditOutput(**result)

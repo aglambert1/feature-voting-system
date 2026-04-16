@@ -170,20 +170,34 @@ You MUST respond with a valid JSON object matching this exact structure:
   "job_assessments": [
     {{{{
       "job_id": "j1",
-      "job_statement": "When I need to...",
+      "job_statement": "When I need to..., I want to..., so I can...",
+      "importance": "critical",
       "our_score": 7,
       "competitor_score": 8,
-      "score_rationale": "Explanation of score difference",
-      "our_strengths": ["Feature A", "Feature B"],
-      "competitor_strengths": ["Feature X", "Feature Y"],
+      "score_rationale": "Explanation of what drives the score difference",
+      "features": [
+        {{{{
+          "feature_name": "Feature A",
+          "description": "What it does functionally",
+          "whose": "ours",
+          "position": "advantage",
+          "evidence_ids": [5]
+        }}}},
+        {{{{
+          "feature_name": "Feature X",
+          "description": "What it does functionally",
+          "whose": "theirs",
+          "position": "gap",
+          "evidence_ids": [12]
+        }}}}
+      ],
       "outcome_coverage": [
         {{{{
-          "outcome": "Desired outcome text",
+          "desired_outcome": "Minimize time to complete X",
           "our_coverage": "full",
           "competitor_coverage": "partial"
         }}}}
-      ],
-      "evidence_ids": [5, 12]
+      ]
     }}}}
   ],
   "gaps_deep_dive": [
@@ -196,8 +210,8 @@ You MUST respond with a valid JSON object matching this exact structure:
   "evidence_citations": [
     {{{{
       "evidence_id": 5,
-      "job_id": "j1",
-      "citation_context": "How this evidence informed the assessment"
+      "finding_type": "job_score",
+      "finding_description": "How this evidence informed the assessment"
     }}}}
   ],
   "technical_constraints": {{{{
@@ -252,7 +266,14 @@ You MUST respond with a valid JSON object matching this exact structure:
         job_map = input_data.get('job_map')
         target_customer_profile = input_data.get('target_customer_profile')
 
-        has_job_map = bool(job_map and job_map.get('jobs'))
+        has_job_map = bool(
+            job_map and (
+                job_map.get('jobs')
+                or job_map.get('functional_jobs')
+                or job_map.get('emotional_jobs')
+                or job_map.get('social_jobs')
+            )
+        )
 
         # Format product context (includes target customer if available)
         product_info = self._format_product_context(
@@ -380,11 +401,24 @@ Include `gaps_deep_dive` in your response."""
     def _format_job_map(self, job_map: Dict[str, Any]) -> str:
         """Format the JTBD job map for the prompt.
 
-        Args:
-            job_map: Dict with 'jobs' list, each containing:
-                - job_id, job_type, statement, importance, desired_outcomes
+        Supports two structures:
+        1. Flat: {'jobs': [...]}
+        2. Hierarchical: {'main_job', 'functional_jobs': [...], 'emotional_jobs': [...], 'social_jobs': [...]}
         """
-        if not job_map or not job_map.get('jobs'):
+        if not job_map:
+            return ""
+
+        # Collect all jobs from either structure
+        all_jobs = []
+        if job_map.get('jobs'):
+            all_jobs = list(job_map['jobs'])
+        else:
+            # Hierarchical structure
+            all_jobs.extend(job_map.get('functional_jobs', []) or [])
+            all_jobs.extend(job_map.get('emotional_jobs', []) or [])
+            all_jobs.extend(job_map.get('social_jobs', []) or [])
+
+        if not all_jobs:
             return ""
 
         parts = [
@@ -393,17 +427,18 @@ Include `gaps_deep_dive` in your response."""
             "",
         ]
 
-        # Add target customer context if embedded in job map
+        if job_map.get('main_job'):
+            parts.append(f"**Main Job:** {job_map['main_job']}")
+            parts.append("")
+
         if job_map.get('target_customer'):
-            parts.append(
-                f"**Target Customer:** {job_map['target_customer']}"
-            )
+            parts.append(f"**Target Customer:** {job_map['target_customer']}")
             parts.append("")
 
         parts.append("### Jobs to Evaluate")
         parts.append("")
 
-        for job in job_map['jobs']:
+        for job in all_jobs:
             job_id = job.get('job_id', 'unknown')
             job_type = job.get('job_type', '')
             statement = job.get('statement', '')
@@ -470,7 +505,14 @@ Include `gaps_deep_dive` in your response."""
         if not evidence_list:
             return ""
 
-        has_jobs = bool(job_map and job_map.get('jobs'))
+        has_jobs = bool(
+            job_map and (
+                job_map.get('jobs')
+                or job_map.get('functional_jobs')
+                or job_map.get('emotional_jobs')
+                or job_map.get('social_jobs')
+            )
+        )
 
         if has_jobs:
             return self._format_evidence_by_job(evidence_list, job_map)
@@ -515,7 +557,14 @@ Include `gaps_deep_dive` in your response."""
         then check overlap with evidence title + content. Assign to best
         matching job, or 'unassigned' if no overlap.
         """
-        jobs = job_map.get('jobs', [])
+        # Support both flat ('jobs') and hierarchical (functional/emotional/social) structures
+        jobs = []
+        if job_map.get('jobs'):
+            jobs = list(job_map['jobs'])
+        else:
+            jobs.extend(job_map.get('functional_jobs', []) or [])
+            jobs.extend(job_map.get('emotional_jobs', []) or [])
+            jobs.extend(job_map.get('social_jobs', []) or [])
 
         # Build keyword sets for each job
         job_keywords = {}
