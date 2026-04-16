@@ -23,7 +23,10 @@ from app.models.competitor_intelligence import (
     AgentExecutionLog,
     ProductPermission,
     ProductPermissionLevel,
-    ProductAnalysisHistory
+    ProductAnalysisHistory,
+    ProductJob,
+    JobType as JTBDJobType,
+    JobImportance,
 )
 from app.models.queue import QueueJob, JobType, JobStatus, JobPriority
 from app.models.pm_review import (
@@ -76,6 +79,7 @@ __all__ = [
     "CIProduct", "CompetitorAnalysisSession", "ProductCompetitor", "SessionCompetitor",
     "ProductCompetitorFeature", "CompetitorFeature", "CompetitorGeneratedIdea", "AgentExecutionLog",
     "ProductPermission", "ProductPermissionLevel", "ProductAnalysisHistory",
+    "ProductJob", "JTBDJobType", "JobImportance",
     "QueueJob", "JobType", "JobStatus", "JobPriority",
     "PMReviewQueue", "CompetitorSnapshot", "MonitoringConfig",
     "ReviewQueueType", "ReviewQueueStatus", "ReviewQueuePriority", "AlertType",

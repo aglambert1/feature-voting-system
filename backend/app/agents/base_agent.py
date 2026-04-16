@@ -30,6 +30,7 @@ STAGE_TO_OPERATION_TYPE = {
     "activity_insight": OperationType.ACTIVITY_INSIGHT,
     "internal_discovery": OperationType.INTERNAL_DISCOVERY,
     "idea_generation": OperationType.IDEA_STRUCTURING,
+    "job_map_extraction": OperationType.PRODUCT_ANALYSIS,
 }
 
 

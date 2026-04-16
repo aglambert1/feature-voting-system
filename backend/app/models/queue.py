@@ -72,6 +72,9 @@ class JobType(str, enum.Enum):
     # Activity Analysis job types (CRM activity stream analysis)
     ACTIVITY_INSIGHT = "activity_insight"  # Analyze CRM activity streams for product insights
 
+    # JTBD Job Map extraction
+    JOB_MAP_EXTRACTION = "job_map_extraction"  # Extract JTBD job map from product info
+
     # DEPRECATED: These job types are no longer used in the new two-step analysis system
     # Kept for backwards compatibility with existing job records
     STRATEGIC_ANALYSIS_ONLY = "strategic_analysis_only"  # DEPRECATED

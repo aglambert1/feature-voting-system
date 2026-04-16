@@ -6,6 +6,7 @@ the helper), and that the evidence_add bug fix (removed undefined variables)
 works end-to-end with mocked embedding/LLM services.
 """
 
+import json
 import uuid
 from contextlib import contextmanager
 from unittest.mock import patch, MagicMock
@@ -1652,3 +1653,230 @@ class TestProductListMembers:
             result = product_list_members(product_a.id)
             assert "error" in result
             assert "OWNER" in result["error"]
+
+
+# ===========================================================================
+# Phase 1c: JTBD Job Map tools
+# ===========================================================================
+
+
+class TestProductGetJobMapEmpty:
+    def test_returns_empty_when_no_job_map(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_get_job_map
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_get_job_map(product_a.id)
+            assert "error" not in result
+            assert result["job_map"] is None
+            assert result["target_customer_profile"] is None
+            assert result["job_map_version"] == 0
+            assert result["jobs"] == []
+
+
+class TestProductSetJobMap:
+    def test_sets_job_map_and_creates_records(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_set_job_map
+        from app.models.competitor_intelligence import ProductJob
+
+        mock_embeddings = [[0.001 * i for i in range(1024)] for _ in range(2)]
+        mock_svc = MagicMock()
+        mock_svc.generate_embeddings_batch.return_value = mock_embeddings
+
+        job_map = json.dumps({
+            "main_job": "Manage competitive intelligence",
+            "functional_jobs": [
+                {
+                    "job_id": "j1",
+                    "job_type": "functional",
+                    "statement": "When researching competitors, I want to track features",
+                    "desired_outcomes": ["Complete picture"],
+                    "importance": "high",
+                },
+            ],
+            "emotional_jobs": [
+                {
+                    "job_id": "je1",
+                    "job_type": "emotional",
+                    "statement": "When presenting to leadership, I want to feel confident",
+                    "desired_outcomes": [],
+                    "importance": "medium",
+                },
+            ],
+            "social_jobs": [],
+        })
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embeddings_batch", mock_svc.generate_embeddings_batch):
+            result = product_set_job_map(product_a.id, job_map)
+            assert "error" not in result
+            assert result["jobs_created"] == 2
+            assert result["job_map_version"] == 1
+
+            # Verify ProductJob records were created
+            jobs = db_session.query(ProductJob).filter(
+                ProductJob.product_id == product_a.id
+            ).all()
+            assert len(jobs) == 2
+            job_ids = {j.job_id_key for j in jobs}
+            assert "j1" in job_ids
+            assert "je1" in job_ids
+
+
+class TestProductAddJob:
+    def test_adds_job_to_map(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_add_job
+        from app.models.competitor_intelligence import ProductJob
+
+        mock_embedding = [0.001 * i for i in range(1024)]
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embedding", return_value=mock_embedding):
+            result = product_add_job(
+                product_a.id,
+                job_id="j1",
+                job_type="functional",
+                statement="When tracking competitors, I want to see feature gaps",
+                importance="high",
+            )
+            assert "error" not in result
+            assert result["job_id_key"] == "j1"
+            assert result["job_type"] == "functional"
+            assert result["importance"] == "high"
+            assert result["job_map_version"] == 1
+
+            # Verify DB record
+            pj = db_session.query(ProductJob).filter(
+                ProductJob.product_id == product_a.id,
+                ProductJob.job_id_key == "j1",
+            ).first()
+            assert pj is not None
+            assert pj.statement_embedding is not None
+
+    def test_rejects_duplicate_job_id(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_add_job
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embedding", return_value=[0.0] * 1024):
+            # Add first job
+            product_add_job(
+                product_a.id, job_id="j1", job_type="functional",
+                statement="First job statement",
+            )
+            # Try to add duplicate
+            result = product_add_job(
+                product_a.id, job_id="j1", job_type="functional",
+                statement="Duplicate job statement",
+            )
+            assert "error" in result
+            assert "already exists" in result["error"]
+
+
+class TestProductEditJob:
+    def test_edits_job_statement_and_importance(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_add_job, product_edit_job
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embedding", return_value=[0.0] * 1024):
+            # Add a job first
+            product_add_job(
+                product_a.id, job_id="j1", job_type="functional",
+                statement="Original statement", importance="medium",
+            )
+
+            # Edit it
+            result = product_edit_job(
+                product_a.id, job_id="j1",
+                statement="Updated statement",
+                importance="critical",
+            )
+            assert "error" not in result
+            assert result["statement"] == "Updated statement"
+            assert result["importance"] == "critical"
+            assert result["job_map_version"] == 2  # incremented from add (1) to edit (2)
+
+    def test_returns_error_for_nonexistent_job(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_edit_job
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_edit_job(product_a.id, job_id="nonexistent", statement="x")
+            assert "error" in result
+            assert "not found" in result["error"]
+
+
+class TestProductRemoveJob:
+    def test_removes_job_from_map(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_add_job, product_remove_job
+        from app.models.competitor_intelligence import ProductJob
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embedding", return_value=[0.0] * 1024):
+            product_add_job(
+                product_a.id, job_id="j1", job_type="functional",
+                statement="Job to remove",
+            )
+
+            result = product_remove_job(product_a.id, job_id="j1")
+            assert "error" not in result
+            assert result["removed_job_id"] == "j1"
+            assert result["job_map_version"] == 2
+
+            # Verify DB record deleted
+            pj = db_session.query(ProductJob).filter(
+                ProductJob.product_id == product_a.id,
+                ProductJob.job_id_key == "j1",
+            ).first()
+            assert pj is None
+
+
+class TestProductSetTargetCustomer:
+    def test_sets_profile(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_set_target_customer
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_set_target_customer(
+                product_a.id,
+                persona_name="Mid-market PM",
+                company_characteristics="50-500 employees, B2B SaaS",
+                key_traits_json='["Data-driven", "Resource-constrained"]',
+                hiring_criteria="Needs competitive visibility",
+            )
+            assert "error" not in result
+            assert result["target_customer_profile"]["persona_name"] == "Mid-market PM"
+            assert len(result["target_customer_profile"]["key_traits"]) == 2
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.product import product_set_target_customer
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = product_set_target_customer(product_a.id, persona_name="Test")
+            assert "error" in result
+            assert "EDIT" in result["error"]
+
+
+class TestProductGetContextIncludesJobMap:
+    def test_includes_job_map_info(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_get_context, product_set_target_customer, product_add_job
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("app.services.embedding_service.generate_embedding", return_value=[0.0] * 1024):
+            # Set up target customer and a job
+            product_set_target_customer(product_a.id, persona_name="Test PM")
+            product_add_job(
+                product_a.id, job_id="j1", job_type="functional",
+                statement="Test job",
+            )
+
+            result = product_get_context(product_a.id)
+            assert "error" not in result
+            assert result["target_customer_profile"]["persona_name"] == "Test PM"
+            assert result["job_map_version"] == 1
+            assert "1 jobs defined" in result["job_map_summary"]
+
+    def test_shows_no_job_map_when_empty(self, db_session, product_a, owner):
+        from mcp_server.tools.product import product_get_context
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = product_get_context(product_a.id)
+            assert result["target_customer_profile"] is None
+            assert result["job_map_version"] == 0
+            assert result["job_map_summary"] == "No job map defined"
