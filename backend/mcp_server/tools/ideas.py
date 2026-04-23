@@ -1,11 +1,15 @@
 """Ideas tools for MCP server."""
 
+import logging
+
 from mcp_server import mcp
 from mcp_server.db import get_session
 from mcp_server.permissions import require_product_access, resolve_user_id_for_job
 from mcp_server.user_context import get_mcp_user_id
 
 from app.models.competitor_intelligence import ProductPermissionLevel
+
+logger = logging.getLogger(__name__)
 
 
 @mcp.tool()
@@ -366,16 +370,19 @@ def _create_from_gaps(db, product_id: int, competitor_name: str) -> dict:
             product_id=product_id,
             user_id=user_id,
         )
-        created.append({"idea_id": idea.id, "title": idea.title, "job_uuid": job.job_uuid})
+        created.append({"idea_id": idea.id, "title": idea.title, "job_id": job.id, "job_uuid": job.job_uuid})
 
     db.commit()
 
     # Dispatch triage tasks after commit
     for item in created:
         try:
-            dispatch_task(triage_idea_task, item["job_uuid"])
-        except Exception:
-            pass  # Best-effort; job will be picked up by worker
+            dispatch_task(triage_idea_task, item["job_id"])
+        except Exception as e:
+            logger.warning(
+                "Failed to dispatch triage for idea %s (job_uuid=%s): %s",
+                item["idea_id"], item["job_uuid"], e,
+            )
 
     return {
         "competitor_name": competitor.competitor_name,

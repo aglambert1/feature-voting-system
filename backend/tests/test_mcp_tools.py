@@ -722,11 +722,20 @@ class TestIdeasCreate:
         db_session.commit()
 
         with _mock_session(db_session), _patch_user(owner.id), \
-             patch("mcp_server.db.dispatch_task"):
+             patch("mcp_server.db.dispatch_task") as mock_dispatch:
             result = ideas_create(product_a.id, source="competitor_gaps", competitor_name="Rival")
             assert "error" not in result
             assert result["ideas_created"] == 2
             assert result["ideas_skipped"] == 0
+
+            # Regression: triage dispatch must receive the integer job.id,
+            # not the job_uuid string. triage_idea_task expects `job_id: int`.
+            assert mock_dispatch.call_count == 2
+            for call in mock_dispatch.call_args_list:
+                _, dispatched_arg = call.args
+                assert isinstance(dispatched_arg, int), (
+                    f"dispatch_task called with {type(dispatched_arg).__name__}, expected int job_id"
+                )
 
     def test_landscape_source_removed(self, db_session, product_a, owner):
         """The 'landscape' source was removed in Phase 4b; confirm it returns an error."""
