@@ -442,7 +442,7 @@ Example format:
         user_prompt: str,
         tools: List[Dict[str, Any]],
         tool_executor: Callable[[str, Dict[str, Any]], Any],
-        max_iterations: int = 5,
+        max_iterations: int = 8,
         **kwargs
     ) -> Dict[str, Any]:
         """
