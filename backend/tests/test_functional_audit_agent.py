@@ -179,6 +179,18 @@ def test_stage2_agent_uses_stage2_schema(db_session, mock_llm_service):
     assert agent.get_output_schema() is FunctionalAuditStage2Output
 
 
+def test_get_stage_disambiguates_split_stages(db_session, mock_llm_service):
+    """AgentExecutionLog.stage must reflect which staged call produced each row,
+    so per-stage token usage and latency can be attributed correctly."""
+    full = CompetitorFunctionalAuditAgent(db=db_session, llm_service=mock_llm_service)
+    stage1 = CompetitorFunctionalAuditAgent(db=db_session, llm_service=mock_llm_service, stage="stage1")
+    stage2 = CompetitorFunctionalAuditAgent(db=db_session, llm_service=mock_llm_service, stage="stage2")
+
+    assert full.get_stage() == "functional_audit"
+    assert stage1.get_stage() == "functional_audit_stage1"
+    assert stage2.get_stage() == "functional_audit_stage2"
+
+
 def test_stage1_system_prompt_excludes_job_assessments(db_session, mock_llm_service):
     """Stage 1 system prompt must not ask for Stage 2 fields."""
     agent = CompetitorFunctionalAuditAgent(

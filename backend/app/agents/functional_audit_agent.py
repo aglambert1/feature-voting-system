@@ -134,7 +134,15 @@ class CompetitorFunctionalAuditAgent(BaseAgent):
             raise ValueError(f"Unknown tool: {tool_name}")
 
     def get_stage(self) -> str:
-        """Return the pipeline stage for this agent."""
+        """Return the pipeline stage for this agent.
+
+        When running staged (stage1/stage2), disambiguate the log entries so
+        each LLM call's token usage and latency can be attributed correctly.
+        """
+        if self.stage == "stage1":
+            return "functional_audit_stage1"
+        if self.stage == "stage2":
+            return "functional_audit_stage2"
         return "functional_audit"
 
     def get_output_schema(self) -> Type[BaseModel]:

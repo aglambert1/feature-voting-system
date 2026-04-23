@@ -278,6 +278,31 @@ class TestStagedAuditTask:
         # Stage 2's input MUST include stage_1_output (conditioning context)
         assert calls["stage_2_arg"].get("stage_1_output") == STAGE_1_RESULT
 
+    def test_updates_competitive_agent_config_last_run(
+        self, db_session, product, competitor, queued_audit_job
+    ):
+        """Manual audits must update CompetitiveAgentConfig.deep_analysis_last_run
+        so the product-level 'last run' UI indicator reflects manual runs, not
+        just scheduled-mode runs. Regression for the 'never run' bug."""
+        from app.models.competitive_agent import CompetitiveAgentConfig
+
+        config = CompetitiveAgentConfig(
+            product_id=product.id,
+            enabled=False,
+            deep_analysis_last_run=None,
+        )
+        db_session.add(config)
+        db_session.commit()
+        config_id = config.id
+
+        _run_task_with_patches(db_session, queued_audit_job.id)
+
+        db_session.expire_all()
+        refreshed = db_session.query(CompetitiveAgentConfig).filter(
+            CompetitiveAgentConfig.id == config_id
+        ).one()
+        assert refreshed.deep_analysis_last_run is not None
+
     def test_progress_milestones_hit_expected_percentages(
         self, db_session, product, competitor, queued_audit_job
     ):

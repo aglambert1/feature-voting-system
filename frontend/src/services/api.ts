@@ -1088,9 +1088,7 @@ export const createIdeasFromFeatures = async (
 import type {
   FunctionalReportSummary,
   FunctionalReportDetail,
-  LandscapeReportDetail,
   BatchIdeaStatusesResponse,
-  FeatureOpportunitiesExport,
 } from '../types';
 
 /**
@@ -1187,80 +1185,11 @@ export const exportGapsJson = async (
 };
 
 /**
- * Get landscape report for a product
- */
-export const getLandscapeReport = async (productId: number): Promise<LandscapeReportDetail | null> => {
-  const response = await api.get<LandscapeReportDetail | null>(
-    `/product-intelligence/agents/${productId}/landscape-report`
-  );
-  return response.data;
-};
-
-/**
- * Trigger landscape synthesis
- */
-export const triggerLandscapeSynthesis = async (productId: number): Promise<AgentJobResponse> => {
-  const response = await api.post<AgentJobResponse>(
-    `/product-intelligence/agents/${productId}/run-landscape-synthesis`
-  );
-  return response.data;
-};
-
-/**
  * Trigger full V2 competitive analysis
  */
 export const triggerCompetitiveAnalysisV2 = async (productId: number): Promise<AgentJobResponse> => {
   const response = await api.post<AgentJobResponse>(
     `/product-intelligence/agents/${productId}/run-competitive-analysis-v2`
-  );
-  return response.data;
-};
-
-/**
- * Export landscape report as markdown
- */
-export const exportLandscapeReportMd = async (productId: number): Promise<string> => {
-  const response = await api.get<string>(
-    `/product-intelligence/agents/${productId}/landscape-report/export`,
-    { headers: { Accept: 'text/markdown' } }
-  );
-  return response.data;
-};
-
-/**
- * Get idea statuses for all opportunities
- */
-export const getOpportunityIdeaStatuses = async (productId: number): Promise<BatchIdeaStatusesResponse> => {
-  const response = await api.get<BatchIdeaStatusesResponse>(
-    `/product-intelligence/agents/${productId}/landscape-report/idea-statuses`
-  );
-  return response.data;
-};
-
-/**
- * Create ideas from selected opportunities
- */
-export const createIdeasFromOpportunities = async (
-  productId: number,
-  opportunityIndices: number[]
-): Promise<AgentJobResponse[]> => {
-  const response = await api.post<AgentJobResponse[]>(
-    `/product-intelligence/agents/${productId}/landscape-report/create-ideas`,
-    { opportunity_indices: opportunityIndices }
-  );
-  return response.data;
-};
-
-/**
- * Export selected opportunities as JSON
- */
-export const exportOpportunitiesJson = async (
-  productId: number,
-  opportunityIndices: number[]
-): Promise<FeatureOpportunitiesExport> => {
-  const response = await api.post<FeatureOpportunitiesExport>(
-    `/product-intelligence/agents/${productId}/landscape-report/export-json`,
-    { opportunity_indices: opportunityIndices }
   );
   return response.data;
 };

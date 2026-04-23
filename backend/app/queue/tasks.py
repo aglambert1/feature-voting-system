@@ -1774,10 +1774,20 @@ def functional_audit_task(self, job_id: int):
 
         # Mark the competitor as successfully audited (drives synthesis eligibility
         # and the "has been audited" summary in MCP tools)
+        now = datetime.utcnow()
         competitor.audit_status = "completed"
-        competitor.audit_last_run = datetime.utcnow()
+        competitor.audit_last_run = now
         competitor.deep_analysis_status = "completed"  # legacy field, keep in sync
-        competitor.deep_analysis_last_run = datetime.utcnow()  # legacy field
+        competitor.deep_analysis_last_run = now  # legacy field
+
+        # Update the product-level CompetitiveAgentConfig so the UI "last run"
+        # indicator reflects manual audits, not just scheduler runs.
+        agent_config = db.query(CompetitiveAgentConfig).filter(
+            CompetitiveAgentConfig.product_id == product_id
+        ).first()
+        if agent_config:
+            agent_config.deep_analysis_last_run = now
+
         db.commit()
 
         # Compute structured diff from previous version
