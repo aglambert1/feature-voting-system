@@ -21,7 +21,7 @@ import {
   triggerUnifiedSynthesis,
 } from "../../services/api";
 import api from "../../services/api";
-import type { LatestUnifiedReportResponse } from "../../types";
+import type { LatestUnifiedReportResponse, SynthesisOpportunityDetail } from "../../types";
 import { JobStatus } from "../../types";
 
 interface ProductInfo {
@@ -112,6 +112,20 @@ export default function SynthesisHubPage() {
       }
     };
   }, [runningJobUuid, fetchReport]);
+
+  const handleDownloadMd = () => {
+    if (!report || report.exists !== true || !report.report_content_md) return;
+    const blob = new Blob([report.report_content_md], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const safeName = (product?.product_name ?? `product_${numProductId}`).replace(/\s+/g, "_");
+    a.download = `${safeName}_synthesis_v${report.report_version}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const handleRun = async () => {
     if (!Number.isFinite(numProductId)) return;
@@ -237,13 +251,23 @@ export default function SynthesisHubPage() {
 
         {/* Results */}
         <div className="bg-white rounded-lg shadow">
-          <div className="px-6 py-4 border-b border-gray-100 flex items-baseline justify-between">
+          <div className="px-6 py-4 border-b border-gray-100 flex items-baseline justify-between gap-4">
             <h2 className="text-base font-semibold text-gray-900">Latest synthesis report</h2>
-            {hasReport && report.generated_at && (
-              <span className="text-xs text-gray-500">
-                v{report.report_version} · {format(new Date(report.generated_at), "MMM d, yyyy h:mm a")}
-              </span>
-            )}
+            <div className="flex items-center gap-3">
+              {hasReport && report.generated_at && (
+                <span className="text-xs text-gray-500">
+                  v{report.report_version} · {format(new Date(report.generated_at), "MMM d, yyyy h:mm a")}
+                </span>
+              )}
+              {hasReport && report.report_content_md && (
+                <button
+                  onClick={handleDownloadMd}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                >
+                  Download .md
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="px-6 py-5">
@@ -298,9 +322,18 @@ export default function SynthesisHubPage() {
                   </div>
                 )}
 
+                {report.opportunities_detail && report.opportunities_detail.length > 0 && (
+                  <div className="mb-5">
+                    <h3 className="text-sm font-medium text-gray-700 mb-2">
+                      Opportunities ({report.opportunities_detail.length})
+                    </h3>
+                    <OpportunitiesTable opportunities={report.opportunities_detail} />
+                  </div>
+                )}
+
                 {report.report_content_md ? (
                   <div>
-                    <h3 className="text-sm font-medium text-gray-700 mb-1">Report</h3>
+                    <h3 className="text-sm font-medium text-gray-700 mb-1">Report (markdown)</h3>
                     <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-gray-800 bg-gray-50 border border-gray-200 rounded p-3 max-h-[600px] overflow-auto">
                       {report.report_content_md}
                     </pre>
@@ -315,6 +348,73 @@ export default function SynthesisHubPage() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function OpportunitiesTable({ opportunities }: { opportunities: SynthesisOpportunityDetail[] }) {
+  return (
+    <div className="overflow-x-auto border border-gray-200 rounded">
+      <table className="min-w-full text-sm">
+        <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+          <tr>
+            <th className="text-left px-3 py-2 font-medium">Opportunity</th>
+            <th className="text-left px-3 py-2 font-medium">Score</th>
+            <th className="text-left px-3 py-2 font-medium">Tier</th>
+            <th className="text-left px-3 py-2 font-medium">Sources</th>
+            <th className="text-left px-3 py-2 font-medium">Job</th>
+            <th className="text-left px-3 py-2 font-medium">Idea</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100 bg-white">
+          {opportunities.map((o) => (
+            <tr key={o.id} className="align-top">
+              <td className="px-3 py-2">
+                <div className="font-medium text-gray-900">{o.opportunity_name}</div>
+                {o.opportunity_summary && (
+                  <div className="text-xs text-gray-600 mt-0.5">{o.opportunity_summary}</div>
+                )}
+              </td>
+              <td className="px-3 py-2 text-gray-800 whitespace-nowrap">
+                {o.priority_score.toFixed(0)}
+              </td>
+              <td className="px-3 py-2 whitespace-nowrap">
+                {o.investment_tier ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
+                    {o.investment_tier.replace(/_/g, " ")}
+                  </span>
+                ) : (
+                  <span className="text-gray-400">—</span>
+                )}
+              </td>
+              <td className="px-3 py-2">
+                <div className="flex flex-wrap gap-1">
+                  {o.sources.length > 0 ? o.sources.map((s) => (
+                    <span key={s} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-indigo-50 text-indigo-700">
+                      {s}
+                    </span>
+                  )) : <span className="text-gray-400 text-xs">—</span>}
+                </div>
+              </td>
+              <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">
+                {o.job_id_key ?? <span className="text-gray-400">—</span>}
+              </td>
+              <td className="px-3 py-2 whitespace-nowrap">
+                {o.linked_idea_id ? (
+                  <span
+                    className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-green-100 text-green-800"
+                    title={o.linked_idea_title ?? undefined}
+                  >
+                    ✓ Idea #{o.linked_idea_id}
+                  </span>
+                ) : (
+                  <span className="text-gray-400 text-xs">—</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

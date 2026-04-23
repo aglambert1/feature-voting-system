@@ -3038,6 +3038,9 @@ def unified_synthesis_task(self, job_id: int):
                     f"{emb_err}"
                 )
 
+        # Keyed by opportunity_name so the auto-idea-gen loop below can backfill
+        # linked_idea_id when an idea is created from a given opportunity.
+        opp_rows_by_name: Dict[str, SynthesizedOpportunity] = {}
         for opp in opportunities_out:
             db_opp = SynthesizedOpportunity(
                 synthesis_run_id=backing_run.id,
@@ -3061,6 +3064,7 @@ def unified_synthesis_task(self, job_id: int):
                 job_satisfaction_delta=opp.get("job_satisfaction_delta"),
             )
             db.add(db_opp)
+            opp_rows_by_name[db_opp.opportunity_name] = db_opp
 
         db.commit()
         db.refresh(synthesis_report)
@@ -3151,6 +3155,12 @@ def unified_synthesis_task(self, job_id: int):
                 db.add(new_idea)
                 db.flush()
                 ideas_generated += 1
+
+                # Backfill linked_idea_id on the matching opportunity row so
+                # downstream views can render a "created as Idea #N" badge.
+                matching_opp = opp_rows_by_name.get(feature_name)
+                if matching_opp is not None:
+                    matching_opp.linked_idea_id = new_idea.id
 
                 triage_job = queue_service.create_job(
                     job_type=JobType.IDEA_TRIAGE,
