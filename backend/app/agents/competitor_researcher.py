@@ -102,29 +102,30 @@ class CompetitorResearcherAgent(BaseAgent):
         if has_search:
             return """You are a Competitor Research agent specializing in market intelligence.
 
-Your role is to identify competing products using a HYBRID APPROACH:
-1. Start with your existing training knowledge for well-known competitors
-2. Use the web_search tool to find current/emerging competitors and verify information
+Your role is to identify competing products efficiently using BROAD CATEGORY SEARCHES combined with your training knowledge.
 
-SEARCH STRATEGY:
-- Use targeted searches like "[product category] competitors", "[product type] alternatives"
-- Search for specific features or use cases to find similar products
-- Verify URLs and company information through search results
-- Combine knowledge from multiple searches for comprehensive results
+SEARCH STRATEGY — IMPORTANT:
+- Run 3-4 BROAD category searches in ONE parallel turn. Examples: "[category] competitors", "[category] alternatives", "best [category] software", "[category] platforms 2024"
+- Extract candidate competitors directly from the titles, URLs, and snippets in those broad search results — they already contain the names, URLs, and brief descriptions you need
+- Do NOT run a separate verification search per candidate. The broad searches are your evidence
+- Do NOT run feature-specific or vendor-specific searches (e.g., "Expensify features"). They don't add new competitors and waste your budget
+- After one round of broad searches, write your final JSON answer
+
+TRUSTING URLs:
+- A URL is "verified" if it appeared in your broad search results OR it is a well-known canonical URL from your training (e.g., expensify.com, zoho.com)
+- If a candidate came only from training knowledge and you can't find a matching URL in the search results, include it only if you are highly confident about the canonical URL
 
 RESPONSE REQUIREMENTS:
 1. Return at most 15 competitors, ranked by relevance (direct competitors preferred)
-2. All URLs must be real, verified from search results or training knowledge
-3. Prioritize direct competitors (serve the same market/needs) over adjacent products
-4. Score relevance objectively (1.0 = direct competitor, 0.5 = adjacent market)
-5. Provide clear, accurate summaries based on search results
-6. If searches return no relevant results, rely on training knowledge
-7. If neither search nor knowledge helps, return empty list with explanation
+2. Prioritize direct competitors (serve the same market/needs) over adjacent products
+3. Score relevance objectively (1.0 = direct competitor, 0.5 = adjacent market)
+4. Summaries should draw from the snippet text in search results when available
+5. If broad searches return nothing useful, fall back to training knowledge
+6. If neither helps, return empty list with honest explanation
 
 IMPORTANT:
 - Never invent or hallucinate companies, URLs, or information
-- Only include competitors you can verify through search or training knowledge
-- Return ONLY valid JSON - no markdown, no extra text
+- Return ONLY valid JSON — no markdown, no extra text
 
 Always respond with valid JSON matching the schema."""
         else:
@@ -175,7 +176,7 @@ Always respond with ONLY valid JSON - no explanations, just JSON."""
         has_search = self.search_service.is_available()
 
         if has_search:
-            # Hybrid prompt - encourage search use
+            # Hybrid prompt — broad searches only, no per-candidate verification
             prompt = f"""Find competing products for this target product:
 
 **Target Product:** {product_name}
@@ -184,24 +185,25 @@ Always respond with ONLY valid JSON - no explanations, just JSON."""
 **Target Users:** {target_users}
 **Suggested Keywords:** {', '.join(search_keywords) if search_keywords else 'Not provided'}{existing_section}
 
-YOUR TASK:
-1. **Start with knowledge**: Think of well-known competitors you know from training
-2. **Use web search**: Search for "{product_category} competitors", "{product_category} alternatives", or similar queries
-3. **Verify & compile**: Combine knowledge + search results into a comprehensive list
-4. **Return at most 15**: Rank by relevance and include only the top 15 most relevant competitors
+YOUR TASK — EFFICIENT TWO-STEP FLOW:
+1. **One turn of broad parallel searches (3-4 queries):** Issue these queries IN PARALLEL in a single turn:
+   - "{product_category} competitors"
+   - "{product_category} alternatives"
+   - "best {product_category} software"
+   - One more broad query of your choosing (e.g., "{product_category} platforms 2024")
+2. **Write your final answer:** Using the search result titles, URLs, and snippets combined with your training knowledge, compile your top-15 list and return JSON.
 
-SEARCH SUGGESTIONS:
-- "{product_category} competitors"
-- "{product_category} alternatives to {product_name}"
-- "best {product_category} tools"
-- Feature-specific searches if relevant (e.g., "{', '.join(core_features[:2]) if core_features else 'features'}")
+DO NOT:
+- Run a separate search per candidate to "verify" them. The broad-search snippets ARE the verification.
+- Run feature-specific or single-vendor searches. They don't reveal new competitors.
+- Make more than one turn of searches unless the broad results came back empty.
 
 REQUIREMENTS:
-- All URLs must be real and verifiable (from search results or training knowledge)
-- Prioritize DIRECT competitors (same market, same needs) - score 0.8-1.0
-- Include adjacent products only if highly relevant - score 0.5-0.7
-- Provide clear, accurate summaries based on what you learn
-- If searches return nothing useful, rely on training knowledge
+- URLs: use ones visible in the broad search results OR canonical URLs you are highly confident about from training
+- Prioritize DIRECT competitors (same market, same needs) — score 0.8-1.0
+- Include adjacent products only if highly relevant — score 0.5-0.7
+- Summaries: draw from the snippet text when available, augment with training knowledge
+- If broad searches return nothing useful, fall back to training knowledge only
 - If neither helps, return empty list with honest explanation
 - When re-including already known competitors, use the EXACT SAME name shown above
 
