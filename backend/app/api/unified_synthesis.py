@@ -19,6 +19,7 @@ from app.models.competitor_intelligence import (
     ProductPermissionLevel,
 )
 from app.models.queue import JobType
+from app.models.idea import Idea
 from app.models.synthesis import (
     SynthesisConfig,
     SynthesisReport,
@@ -292,6 +293,41 @@ async def get_latest_unified_report(
             "exists": False,
             "message": "No unified synthesis report yet. Run /synthesis/run first.",
         }
+
+    # Structured opportunity rows for the web UI. Joins each opportunity to
+    # the idea that spawned from it (if any) so the client can show a
+    # "created as Idea #N" badge without a second round-trip.
+    opp_rows = (
+        db.query(SynthesizedOpportunity)
+        .filter(SynthesizedOpportunity.synthesis_report_id == report.id)
+        .order_by(desc(SynthesizedOpportunity.priority_score))
+        .all()
+    )
+    linked_ids = [o.linked_idea_id for o in opp_rows if o.linked_idea_id]
+    idea_title_by_id: Dict[int, str] = {}
+    if linked_ids:
+        idea_title_by_id = {
+            i.id: i.title
+            for i in db.query(Idea.id, Idea.title).filter(Idea.id.in_(linked_ids)).all()
+        }
+    opportunities_detail = [
+        {
+            "id": o.id,
+            "opportunity_name": o.opportunity_name,
+            "opportunity_summary": o.opportunity_summary,
+            "priority_score": o.priority_score,
+            "source_count": o.source_count,
+            "sources": o.sources or [],
+            "recommended_action": o.recommended_action,
+            "job_id_key": o.job_id_key,
+            "investment_tier": o.investment_tier,
+            "jtbd_statement": o.jtbd_statement,
+            "linked_idea_id": o.linked_idea_id,
+            "linked_idea_title": idea_title_by_id.get(o.linked_idea_id) if o.linked_idea_id else None,
+        }
+        for o in opp_rows
+    ]
+
     return {
         "product_id": product_id,
         "exists": True,
@@ -305,6 +341,7 @@ async def get_latest_unified_report(
         "job_scorecard": report.job_scorecard,
         "feature_cluster_matrix": report.feature_cluster_matrix,
         "opportunities": report.opportunities,
+        "opportunities_detail": opportunities_detail,
         "high_impact_items": report.high_impact_items,
         "innovation_whitespace": report.innovation_whitespace,
         "analysis_summary": report.analysis_summary,

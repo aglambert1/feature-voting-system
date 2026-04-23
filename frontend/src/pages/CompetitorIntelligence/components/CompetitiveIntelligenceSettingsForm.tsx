@@ -8,8 +8,11 @@
  * - Schedule mode (manual/scheduled) and frequency
  * - Advanced: separate schedules for discovery vs analysis
  * - Feature similarity threshold for clustering
- * - Auto-generate ideas toggle and threshold
  * - Alerts for competitor changes
+ *
+ * Idea generation is configured on SynthesisConfig in the Synthesis Hub,
+ * not here. The legacy `intensity_idea_threshold` field on CompetitiveAgentConfig
+ * is orphaned.
  */
 
 import { useState, useEffect } from 'react';
@@ -21,7 +24,6 @@ export interface SettingsFormData {
   deep_analysis_mode?: 'manual' | 'scheduled';
   deep_analysis_schedule?: ScheduleFrequency;
   intensity_similarity_threshold?: number;
-  intensity_idea_threshold?: number;
   alert_on_new_competitors?: boolean;
   alert_on_disappeared_competitors?: boolean;
 }
@@ -84,13 +86,6 @@ export default function CompetitiveIntelligenceSettingsForm({ config, onChange, 
     setFormData(newFormData);
     onChange(newFormData);
   };
-
-  // Derived values for UI
-  // V2: Priority score threshold (0.0-1.0) instead of competitor count
-  const priorityThreshold = getValue('intensity_idea_threshold') ?? 0;
-  const autoGenerateIdeas = priorityThreshold > 0;
-  // Display threshold as percentage for clarity
-  const priorityThresholdDisplay = Math.round(priorityThreshold * 100);
 
   // Check if using separate schedules
   const useSeparateSchedules = getValue('competitor_discovery_schedule') !== getValue('deep_analysis_schedule') &&
@@ -257,79 +252,6 @@ export default function CompetitiveIntelligenceSettingsForm({ config, onChange, 
         )}
       </section>
 
-      {/* Idea Generation Settings Section */}
-      <section className="bg-gray-50 rounded-lg p-5">
-        <h3 className="text-md font-medium text-gray-900 mb-4">Idea Generation</h3>
-
-        {/* Auto-generate Ideas Toggle */}
-        <div className="space-y-3">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={autoGenerateIdeas}
-              onChange={(e) => {
-                if (e.target.checked) {
-                  handleChange('intensity_idea_threshold', 0.7);  // Default to High priority
-                } else {
-                  handleChange('intensity_idea_threshold', 0);
-                }
-              }}
-              className="h-4 w-4 text-blue-600 rounded"
-            />
-            <span className="text-sm text-gray-700">Auto-generate ideas from competitive analysis</span>
-          </label>
-
-          {/* Idea Generation Threshold - only shown when auto-generate is enabled */}
-          {autoGenerateIdeas && (
-            <div className="ml-7 space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Minimum Priority Score: {priorityThresholdDisplay}%
-                </label>
-                <input
-                  type="range"
-                  min="50"
-                  max="90"
-                  step="5"
-                  value={priorityThresholdDisplay}
-                  onChange={(e) => handleChange('intensity_idea_threshold', parseInt(e.target.value) / 100)}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                />
-                <div className="flex justify-between text-xs text-gray-500 mt-1">
-                  <span>50% (More ideas)</span>
-                  <span>90% (Critical only)</span>
-                </div>
-              </div>
-
-              {/* Priority level indicator */}
-              <div className="bg-gray-100 rounded-lg p-3 text-xs">
-                <div className="font-medium text-gray-700 mb-1">Current threshold will generate:</div>
-                <div className="text-gray-600">
-                  {priorityThreshold >= 0.85 ? (
-                    <span className="text-red-600 font-medium">🔴 Critical priority only</span>
-                  ) : priorityThreshold >= 0.7 ? (
-                    <span className="text-orange-600 font-medium">🟠 High priority and above</span>
-                  ) : (
-                    <span className="text-yellow-600 font-medium">🟡 Medium priority and above</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Help text explaining priority score */}
-              <div className="text-xs text-gray-500 space-y-1">
-                <p className="font-medium">Priority score is calculated based on:</p>
-                <ul className="list-disc list-inside space-y-0.5 ml-1">
-                  <li>Market prevalence — how many competitors have this feature</li>
-                  <li>User value — severity of the pain point being addressed</li>
-                  <li>Evidence quality — supporting quotes from competitor analysis</li>
-                  <li>Table Stakes vs Innovation — industry expectation level</li>
-                </ul>
-              </div>
-            </div>
-          )}
-        </div>
-      </section>
-
       {/* Alerts Section */}
       <section className="bg-gray-50 rounded-lg p-5">
         <h3 className="text-md font-medium text-gray-900 mb-4">Alerts</h3>
@@ -361,10 +283,11 @@ export default function CompetitiveIntelligenceSettingsForm({ config, onChange, 
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <h4 className="font-medium text-blue-800 mb-2">How Competitive Analysis Works</h4>
         <ul className="text-sm text-blue-700 space-y-1 list-disc list-inside">
-          <li>Functional audits analyze each competitor's features against your product</li>
-          <li>Landscape synthesis identifies feature opportunities across all competitors</li>
-          <li>Each opportunity receives a priority score based on market prevalence and user value</li>
-          <li>High-priority opportunities can automatically generate product ideas for voting</li>
+          <li>Audits pull public competitor data (features, pricing, integrations, reviews) via web research</li>
+          <li>Produce a 15–25 row comparison table flagging each feature as Parity, Advantage, Gap, or Differentiator, plus positioning and technical constraints</li>
+          <li>When a job map exists, each competitor is scored 1–10 per job against your product, with desired-outcome coverage and a unified view of which features — ours and theirs — drive the score</li>
+          <li>Evidence you attach to a competitor is routed to the relevant job and cited directly in findings; citation counts update automatically</li>
+          <li>Audits feed Opportunity Synthesis, where cross-competitor opportunities are scored and high-priority ones can auto-generate ideas. Configure that in the Synthesis Hub (linked from the product dashboard).</li>
         </ul>
       </div>
     </div>

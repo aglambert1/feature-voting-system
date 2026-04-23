@@ -1163,6 +1163,21 @@ export interface UnifiedSynthesisRunResponse {
   message: string;
 }
 
+export interface SynthesisOpportunityDetail {
+  id: number;
+  opportunity_name: string;
+  opportunity_summary: string | null;
+  priority_score: number;
+  source_count: number;
+  sources: string[];
+  recommended_action: string | null;
+  job_id_key: string | null;
+  investment_tier: string | null;
+  jtbd_statement: string | null;
+  linked_idea_id: number | null;
+  linked_idea_title: string | null;
+}
+
 interface UnifiedReportExists {
   product_id: number;
   exists: true;
@@ -1176,6 +1191,7 @@ interface UnifiedReportExists {
   job_scorecard: unknown[] | null;
   feature_cluster_matrix: unknown[] | null;
   opportunities: unknown[] | null;
+  opportunities_detail: SynthesisOpportunityDetail[];
   high_impact_items: unknown[] | null;
   innovation_whitespace: string | null;
   analysis_summary: string | null;

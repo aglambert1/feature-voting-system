@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, ChangeEvent, FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 import { AxiosError } from 'axios';
@@ -35,6 +36,7 @@ interface APIKeyCreateResponse extends APIKey {
 
 export default function ProfilePage() {
   const { user, setUser } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<ActiveTab>('profile');
 
   const isPO = user?.role === UserRole.PRODUCT_OWNER;
@@ -219,12 +221,12 @@ export default function ProfilePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-bold text-gray-900">My Profile</h1>
-            <a
-              href="/ideas"
+            <button
+              onClick={() => navigate(-1)}
               className="text-blue-600 hover:text-blue-800 transition-colors"
             >
-              &larr; Back to Ideas
-            </a>
+              &larr; Back
+            </button>
           </div>
         </div>
       </header>

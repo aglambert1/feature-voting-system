@@ -47,10 +47,9 @@ import CompetitorEvidencePanel from './CompetitorEvidencePanel';
 interface Props {
   productId: number;
   refreshKey?: number;
-  onAnalysisComplete?: () => void;
 }
 
-export default function CompetitorReportsTab({ productId, refreshKey, onAnalysisComplete }: Props) {
+export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
   // Competitor data
   const [competitors, setCompetitors] = useState<AgentCompetitor[]>([]);
   const [reports, setReports] = useState<FunctionalReportSummary[]>([]);
@@ -323,22 +322,8 @@ export default function CompetitorReportsTab({ productId, refreshKey, onAnalysis
     try {
       setActionLoading('batch-audit');
       await triggerCompetitiveAnalysisV2(productId);
-      setSuccessMessage(`Competitive analysis started for ${selectedForAnalysis.length} competitors (audits + landscape synthesis)`);
+      setSuccessMessage(`Audits started for ${selectedForAnalysis.length} competitors. Run synthesis separately from the Synthesis Hub when audits finish.`);
       checkAuditJobs();
-      // Switch to landscape tab when analysis completes
-      if (onAnalysisComplete) {
-        // Poll for completion and switch tab
-        const pollForCompletion = setInterval(async () => {
-          const jobs = await getProductJobs(productId, 10, [JobType.SCHEDULED_DEEP_ANALYSIS]);
-          const active = jobs.filter(
-            j => j.status === JobStatus.PENDING || j.status === JobStatus.QUEUED || j.status === JobStatus.RUNNING
-          );
-          if (active.length === 0) {
-            clearInterval(pollForCompletion);
-            onAnalysisComplete();
-          }
-        }, 5000);
-      }
     } catch (err: any) {
       setError(err.message || 'Failed to start analysis');
     } finally {
@@ -834,7 +819,7 @@ export default function CompetitorReportsTab({ productId, refreshKey, onAnalysis
                 ? 'Starting...'
                 : activeAuditCount > 0
                 ? `Audits Running (${activeAuditCount})`
-                : `Run Audits and Synthesize Selected (${selectedForAnalysis})`}
+                : `Run Audits on Selected (${selectedForAnalysis})`}
             </button>
           </div>
         </div>
