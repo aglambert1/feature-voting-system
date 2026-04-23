@@ -290,6 +290,49 @@ def _create_manual(db, product_id: int, title: str, description: str) -> dict:
     }
 
 
+def _collect_gaps_from_report(report) -> list:
+    """Extract distinct gap features from a functional report.
+
+    Primary source is the unified JTBD model: job_assessments[].features[]
+    where position == "gap". Falls back to the legacy gaps_deep_dive
+    structure only when no job map was present during the audit.
+
+    Returns a list of dicts with stable keys: feature_name, description,
+    evidence_ids. Dedupes by feature_name (the same feature can appear
+    under multiple jobs in the unified model).
+    """
+    gaps_by_name = {}
+
+    for job in (report.job_assessments or []):
+        for feat in (job.get('features') or []):
+            if feat.get('position') != 'gap':
+                continue
+            name = feat.get('feature_name')
+            if not name or name in gaps_by_name:
+                continue
+            gaps_by_name[name] = {
+                'feature_name': name,
+                'description': feat.get('description', ''),
+                'evidence_ids': list(feat.get('evidence_ids') or []),
+            }
+
+    if gaps_by_name:
+        return list(gaps_by_name.values())
+
+    # Legacy fallback: audits that ran without a job map populate
+    # gaps_deep_dive (feature_name + user_problem + evidence strings).
+    for gap in (report.gaps_deep_dive or []):
+        name = gap.get('feature_name')
+        if not name or name in gaps_by_name:
+            continue
+        gaps_by_name[name] = {
+            'feature_name': name,
+            'description': gap.get('user_problem', ''),
+            'evidence_ids': [],
+        }
+    return list(gaps_by_name.values())
+
+
 def _create_from_gaps(db, product_id: int, competitor_name: str) -> dict:
     """Create ideas from all gaps in a competitor's functional report."""
     if not competitor_name:
@@ -313,50 +356,54 @@ def _create_from_gaps(db, product_id: int, competitor_name: str) -> dict:
     report = db.query(CompetitorFunctionalReport).filter(
         CompetitorFunctionalReport.product_competitor_id == competitor.id,
         CompetitorFunctionalReport.product_id == product_id,
-    ).first()
-    if not report or not report.gaps_deep_dive:
-        return {"error": f"No functional report with gaps found for {competitor.competitor_name}. Run ci_run_competitor_audit first."}
+    ).order_by(CompetitorFunctionalReport.report_version.desc()).first()
+    if not report:
+        return {"error": f"No functional report found for {competitor.competitor_name}. Run ci_run_competitor_audit first."}
 
-    # Check which gaps already have ideas
+    gaps = _collect_gaps_from_report(report)
+    if not gaps:
+        return {"error": f"No gaps found in the latest report for {competitor.competitor_name}."}
+
+    # Dedupe against prior ideas from this competitor, keyed on feature_name.
     existing_ideas = db.query(Idea).filter(
         Idea.product_id == product_id,
         Idea.source_type == SourceType.COMPETITOR_AUTOMATED,
     ).all()
-    existing_gap_indices = set()
+    existing_feature_names = set()
     for idea in existing_ideas:
         metadata = idea.source_metadata or {}
         if (metadata.get('source') == 'competitor_gap' and
                 str(metadata.get('competitor_id')) == str(competitor.id)):
-            gap_idx = metadata.get('gap_index')
-            if gap_idx is not None:
-                existing_gap_indices.add(gap_idx)
+            fname = metadata.get('feature_name')
+            if fname:
+                existing_feature_names.add(fname)
 
-    # Create ideas from all gaps
     created = []
     skipped = 0
     queue_service = QueueService(db)
     user_id = resolve_user_id_for_job(db, product_id)
 
-    for idx, gap in enumerate(report.gaps_deep_dive):
-        if idx in existing_gap_indices:
+    for gap in gaps:
+        feature_name = gap['feature_name']
+        if feature_name in existing_feature_names:
             skipped += 1
             continue
 
-        feature_name = gap.get('feature_name', 'Unknown Feature')
+        description = gap.get('description') or ''
         idea = Idea(
             product_id=product_id,
-            title=f"Add: {feature_name}",
-            what_description=f"Implement {feature_name} similar to {competitor.competitor_name}'s offering.",
-            why_description=gap.get('user_problem', ''),
-            use_case_description=f"Based on competitive analysis of {competitor.competitor_name}: {gap.get('evidence', '')}",
+            title=feature_name,
+            what_description=description,
+            why_description='',
+            use_case_description='',
             status=IdeaStatus.PENDING,
             source_type=SourceType.COMPETITOR_AUTOMATED,
             source_metadata={
                 'source': 'competitor_gap',
                 'competitor_id': competitor.id,
                 'competitor_name': competitor.competitor_name,
-                'gap_index': idx,
                 'feature_name': feature_name,
+                'evidence_ids': gap.get('evidence_ids', []),
                 'functional_report_id': report.id,
             },
             submitter_id=user_id,

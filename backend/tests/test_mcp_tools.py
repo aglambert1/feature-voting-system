@@ -706,9 +706,9 @@ class TestIdeasCreate:
             assert "No functional report" in result["error"]
 
     def test_competitor_gaps_creates_ideas(self, db_session, product_a, competitor, owner):
+        """Legacy fallback: audits that ran without a job map populate gaps_deep_dive."""
         from mcp_server.tools.ideas import ideas_create
 
-        # Create a functional report with gaps
         report = CompetitorFunctionalReport(
             product_competitor_id=competitor.id,
             product_id=product_a.id,
@@ -736,6 +736,92 @@ class TestIdeasCreate:
                 assert isinstance(dispatched_arg, int), (
                     f"dispatch_task called with {type(dispatched_arg).__name__}, expected int job_id"
                 )
+
+    def test_competitor_gaps_reads_job_assessments(self, db_session, product_a, competitor, owner):
+        """Primary path: unified JTBD model stores gaps in job_assessments[].features[]
+        where position == 'gap'. Legacy gaps_deep_dive is typically empty."""
+        from mcp_server.tools.ideas import ideas_create
+        from app.models.idea import Idea
+
+        # Unified model: gaps live inside job_assessments, gaps_deep_dive is empty
+        report = CompetitorFunctionalReport(
+            product_competitor_id=competitor.id,
+            product_id=product_a.id,
+            report_version=1,
+            gaps_deep_dive=[],
+            job_assessments=[
+                {
+                    "job_id": "j1",
+                    "job_statement": "File expenses quickly",
+                    "features": [
+                        {
+                            "feature_name": "Slack integration",
+                            "description": "Submit receipts via Slack",
+                            "position": "gap",
+                            "whose": "theirs",
+                            "evidence_ids": [42, 43],
+                        },
+                        {
+                            "feature_name": "Auto-categorization",
+                            "description": "We already have this",
+                            "position": "parity",
+                            "whose": "both",
+                            "evidence_ids": [],
+                        },
+                    ],
+                },
+                {
+                    "job_id": "j2",
+                    "job_statement": "Book travel",
+                    "features": [
+                        # Same feature surfaced under two jobs — must dedupe
+                        {
+                            "feature_name": "Slack integration",
+                            "description": "Submit receipts via Slack",
+                            "position": "gap",
+                            "whose": "theirs",
+                            "evidence_ids": [42],
+                        },
+                        {
+                            "feature_name": "Travel booking",
+                            "description": "In-product flight booking",
+                            "position": "gap",
+                            "whose": "theirs",
+                            "evidence_ids": [],
+                        },
+                    ],
+                },
+            ],
+        )
+        db_session.add(report)
+        db_session.commit()
+
+        competitor_name = competitor.competitor_name
+        with _mock_session(db_session), _patch_user(owner.id), \
+             patch("mcp_server.db.dispatch_task"):
+            result = ideas_create(product_a.id, source="competitor_gaps", competitor_name="Rival")
+            assert "error" not in result
+            # 2 distinct gaps (Slack integration deduped, Travel booking), parity feature ignored
+            assert result["ideas_created"] == 2
+
+            ideas = db_session.query(Idea).filter(Idea.product_id == product_a.id).all()
+            titles = sorted(i.title for i in ideas)
+            assert titles == ["Slack integration", "Travel booking"]
+
+            # User-visible fields must not name the competitor or leak JTBD lingo
+            for idea in ideas:
+                for visible in (idea.title, idea.what_description or '',
+                                idea.why_description or '', idea.use_case_description or ''):
+                    assert competitor_name not in visible
+                    assert "job" not in visible.lower()
+                    assert "jtbd" not in visible.lower()
+
+                # Metadata preserves competitor + evidence traceability
+                meta = idea.source_metadata
+                assert meta["competitor_id"] == competitor.id
+                assert meta["competitor_name"] == competitor_name
+                assert meta["feature_name"] == idea.title
+                assert "evidence_ids" in meta
 
     def test_landscape_source_removed(self, db_session, product_a, owner):
         """The 'landscape' source was removed in Phase 4b; confirm it returns an error."""

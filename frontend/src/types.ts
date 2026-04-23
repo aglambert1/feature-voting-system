@@ -957,64 +957,6 @@ export interface FunctionalReportDetail {
 }
 
 /**
- * Feature cluster entry from landscape synthesis.
- */
-export interface FeatureClusterEntry {
-  feature_category: string;
-  prevalence: 'Table Stakes' | 'Common' | 'Emerging' | 'Frontier';
-  our_status: 'Have' | 'Gap' | 'Partial';
-  competitors_with_feature: string[];
-  notes?: string | null;
-}
-
-/**
- * Feature opportunity from landscape synthesis.
- */
-export interface FeatureOpportunity {
-  feature_name: string;
-  summary: string;
-  user_value: string;
-  market_context: string;
-  priority_score: number;
-  competitors_with_feature: string[];
-  source_evidence: string[];
-  high_impact?: boolean;
-  user_sentiment?: string;
-  priority_rationale?: string;
-}
-
-/**
- * High-impact gap from landscape synthesis.
- */
-export interface HighImpactGap {
-  rank: number;
-  feature_name: string;
-  market_gravity: string;
-  competitors_with_feature: string[];
-  user_demand_evidence: string;
-}
-
-/**
- * Landscape report detail.
- */
-export interface LandscapeReportDetail {
-  id: number;
-  product_id: number;
-  report_version: number;
-  report_content_md: string | null;
-  feature_cluster_matrix: FeatureClusterEntry[];
-  feature_opportunities: FeatureOpportunity[];
-  high_impact_gaps: HighImpactGap[];
-  innovation_whitespace: string | null;
-  analysis_summary: string | null;
-  source_competitor_report_ids: number[];
-  source_competitor_names: string[] | null;
-  competitor_count: number;
-  generated_at: string;
-  job_status: string | null;
-}
-
-/**
  * Idea status for a gap or opportunity.
  */
 export interface IdeaStatusResponse {
@@ -1028,33 +970,6 @@ export interface IdeaStatusResponse {
 export interface BatchIdeaStatusesResponse {
   statuses: Record<number, IdeaStatusResponse>;
   total_ideas_created: number;
-}
-
-/**
- * Response from creating ideas (gaps or opportunities).
- */
-export interface CreateIdeasResponse {
-  job_id: number;
-  job_uuid: string;
-  job_type: string;
-  status: string;
-  message: string;
-  warning?: string;
-}
-
-/**
- * Feature opportunities export format.
- */
-export interface FeatureOpportunitiesExport {
-  version: string;
-  generated_at: string;
-  product_id: number;
-  product_name: string;
-  feature_ideas: FeatureOpportunity[];
-  metadata: {
-    total_competitors_analyzed: number;
-    report_ids: number[];
-  };
 }
 
 // ============================================================================
