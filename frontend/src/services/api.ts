@@ -232,22 +232,6 @@ export const getIdeas = async (params: GetIdeasParams = {}): Promise<IdeaListRes
 };
 
 /**
- * Get single idea by ID
- */
-export const getIdea = async (ideaId: number): Promise<IdeaResponse> => {
-  const response = await api.get<IdeaResponse>(`/ideas/${ideaId}`);
-  return response.data;
-};
-
-/**
- * Create new idea (direct creation - not through submission flow)
- */
-export const createIdea = async (ideaData: IdeaCreate): Promise<IdeaResponse> => {
-  const response = await api.post<IdeaResponse>('/ideas', ideaData);
-  return response.data;
-};
-
-/**
  * Find similar ideas using semantic search
  *
  * @param query - Text to search for similar ideas
@@ -313,71 +297,9 @@ export const submitIdea = async (submissionData: SubmissionData): Promise<IdeaRe
 // PRODUCTS API METHODS
 // ============================================================================
 
-/**
- * Get all products
- */
-export const getProducts = async (): Promise<Product[]> => {
-  const response = await api.get<Product[]>('/products');
-  return response.data;
-};
-
-/**
- * Get single product by ID
- */
-export const getProduct = async (productId: number): Promise<Product> => {
-  const response = await api.get<Product>(`/products/${productId}`);
-  return response.data;
-};
-
-/**
- * Create new product
- */
-export const createProduct = async (productData: ProductCreate): Promise<Product> => {
-  const response = await api.post<Product>('/products', productData);
-  return response.data;
-};
-
-/**
- * Update product
- */
-export const updateProduct = async (productId: number, productData: ProductCreate): Promise<Product> => {
-  const response = await api.put<Product>(`/products/${productId}`, productData);
-  return response.data;
-};
-
-/**
- * Delete product
- */
-export const deleteProduct = async (productId: number): Promise<void> => {
-  await api.delete(`/products/${productId}`);
-};
-
 // ============================================================================
 // COMPETITORS API METHODS
 // ============================================================================
-
-/**
- * Get competitors for a product
- */
-export const getCompetitors = async (productId: number): Promise<Competitor[]> => {
-  const response = await api.get<Competitor[]>(`/products/${productId}/competitors`);
-  return response.data;
-};
-
-/**
- * Create competitor
- */
-export const createCompetitor = async (productId: number, competitorData: CompetitorCreate): Promise<Competitor> => {
-  const response = await api.post<Competitor>(`/products/${productId}/competitors`, competitorData);
-  return response.data;
-};
-
-/**
- * Delete competitor
- */
-export const deleteCompetitor = async (productId: number, competitorId: number): Promise<void> => {
-  await api.delete(`/products/${productId}/competitors/${competitorId}`);
-};
 
 /**
  * Deactivate competitor (soft delete - hides from list, preserves reports)
@@ -390,91 +312,13 @@ export const deactivateCompetitor = async (productId: number, competitorId: numb
 // FEATURES API METHODS
 // ============================================================================
 
-/**
- * Get features for a product
- */
-export const getFeatures = async (productId: number): Promise<Feature[]> => {
-  const response = await api.get<Feature[]>(`/products/${productId}/features`);
-  return response.data;
-};
-
-/**
- * Create feature
- */
-export const createFeature = async (productId: number, featureData: FeatureCreate): Promise<Feature> => {
-  const response = await api.post<Feature>(`/products/${productId}/features`, featureData);
-  return response.data;
-};
-
-/**
- * Delete feature
- */
-export const deleteFeature = async (productId: number, featureId: number): Promise<void> => {
-  await api.delete(`/products/${productId}/features/${featureId}`);
-};
-
 // ============================================================================
 // ANALYSIS SESSIONS API METHODS
 // ============================================================================
 
-/**
- * Get or create analysis session for a product
- */
-export const getOrCreateSession = async (productId: number): Promise<AnalysisSession> => {
-  const response = await api.get<AnalysisSession>(`/products/${productId}/session`);
-  return response.data;
-};
-
-/**
- * Update analysis session
- */
-export const updateSession = async (
-  productId: number,
-  stage: number,
-  sessionData: Record<string, any>
-): Promise<AnalysisSession> => {
-  const response = await api.put<AnalysisSession>(`/products/${productId}/session`, {
-    stage,
-    session_data: sessionData,
-  });
-  return response.data;
-};
-
 // ============================================================================
 // USERS API METHODS (Admin only)
 // ============================================================================
-
-/**
- * Get all users (Admin only)
- */
-export const getUsers = async (): Promise<User[]> => {
-  const response = await api.get<User[]>('/users');
-  return response.data;
-};
-
-/**
- * Create user (Admin only)
- */
-export const createUser = async (userData: RegisterData): Promise<User> => {
-  const response = await api.post<User>('/users', userData);
-  return response.data;
-};
-
-/**
- * Update user role (Admin only)
- */
-export const updateUserRole = async (userId: number, role: string): Promise<User> => {
-  const response = await api.put<User>(`/users/${userId}/role`, { role });
-  return response.data;
-};
-
-/**
- * Toggle user active status (Admin only)
- */
-export const toggleUserActive = async (userId: number): Promise<User> => {
-  const response = await api.put<User>(`/users/${userId}/toggle-active`);
-  return response.data;
-};
 
 // ============================================================================
 // QUEUE JOBS API METHODS (Phase 1-4)
@@ -530,14 +374,6 @@ export const getProductJobs = async (
   return response.data;
 };
 
-/**
- * Cancel a job
- */
-export const cancelJob = async (jobUuid: string): Promise<QueueJob> => {
-  const response = await api.post<QueueJob>(`/product-intelligence/jobs/${jobUuid}/cancel`);
-  return response.data;
-};
-
 // ============================================================================
 // PM REVIEW QUEUE API METHODS (Phase 4)
 // ============================================================================
@@ -552,36 +388,10 @@ interface GetQueueParams {
 }
 
 /**
- * Get PM review queue items
- */
-export const getReviewQueue = async (params: GetQueueParams = {}): Promise<PMReviewQueueResponse> => {
-  const response = await api.get<PMReviewQueueResponse>('/pm-review/queue', { params });
-  return response.data;
-};
-
-/**
- * Get single queue item by ID
- */
-export const getReviewQueueItem = async (itemId: number): Promise<PMReviewQueueItem> => {
-  const response = await api.get<PMReviewQueueItem>(`/pm-review/queue/${itemId}`);
-  return response.data;
-};
-
-/**
  * Get queue stats for a product
  */
 export const getReviewQueueStats = async (productId: number): Promise<PMReviewQueueStats> => {
   const response = await api.get<PMReviewQueueStats>(`/pm-review/stats/${productId}`);
-  return response.data;
-};
-
-/**
- * Assign queue item to user
- */
-export const assignQueueItem = async (itemId: number, userId: number | null): Promise<PMReviewQueueItem> => {
-  const response = await api.post<PMReviewQueueItem>(`/pm-review/queue/${itemId}/assign`, {
-    user_id: userId,
-  });
   return response.data;
 };
 
@@ -623,28 +433,6 @@ export const deferQueueItem = async (itemId: number, notes?: string): Promise<PM
   return response.data;
 };
 
-/**
- * Batch approve queue items
- */
-export const batchApproveQueueItems = async (itemIds: number[], notes?: string): Promise<{ updated: number }> => {
-  const response = await api.post<{ updated: number }>('/pm-review/queue/batch/approve', {
-    item_ids: itemIds,
-    notes,
-  });
-  return response.data;
-};
-
-/**
- * Batch reject queue items
- */
-export const batchRejectQueueItems = async (itemIds: number[], notes?: string): Promise<{ updated: number }> => {
-  const response = await api.post<{ updated: number }>('/pm-review/queue/batch/reject', {
-    item_ids: itemIds,
-    notes,
-  });
-  return response.data;
-};
-
 // ============================================================================
 // MONITORING API METHODS (Phase 4)
 // ============================================================================
@@ -654,46 +442,6 @@ export const batchRejectQueueItems = async (itemIds: number[], notes?: string): 
  */
 export const getMonitoringConfig = async (productId: number): Promise<MonitoringConfig> => {
   const response = await api.get<MonitoringConfig>(`/monitoring/config/${productId}`);
-  return response.data;
-};
-
-/**
- * Update monitoring config
- */
-export const updateMonitoringConfig = async (
-  productId: number,
-  config: MonitoringConfigUpdate
-): Promise<MonitoringConfig> => {
-  const response = await api.put<MonitoringConfig>(`/monitoring/config/${productId}`, config);
-  return response.data;
-};
-
-/**
- * Enable monitoring for a product
- */
-export const enableMonitoring = async (productId: number): Promise<MonitoringConfig> => {
-  const response = await api.post<MonitoringConfig>(`/monitoring/config/${productId}/enable`);
-  return response.data;
-};
-
-/**
- * Disable monitoring for a product
- */
-export const disableMonitoring = async (productId: number): Promise<MonitoringConfig> => {
-  const response = await api.post<MonitoringConfig>(`/monitoring/config/${productId}/disable`);
-  return response.data;
-};
-
-/**
- * Get competitor snapshots for a product
- */
-export const getCompetitorSnapshots = async (
-  productId: number,
-  params: { competitor_id?: number; has_changes?: boolean; limit?: number } = {}
-): Promise<CompetitorSnapshotsResponse> => {
-  const response = await api.get<CompetitorSnapshotsResponse>(`/monitoring/snapshots/${productId}`, {
-    params,
-  });
   return response.data;
 };
 
@@ -742,14 +490,6 @@ export const addIdeaComment = async (ideaId: number, commentText: string): Promi
   const response = await api.post<IdeaComment>(`/ideas/${ideaId}/comments`, {
     comment_text: commentText,
   });
-  return response.data;
-};
-
-/**
- * Get comments for an idea
- */
-export const getIdeaComments = async (ideaId: number): Promise<IdeaComment[]> => {
-  const response = await api.get<IdeaComment[]>(`/ideas/${ideaId}/comments`);
   return response.data;
 };
 
@@ -881,16 +621,6 @@ export const triggerCompetitorDiscovery = async (productId: number): Promise<Age
   return response.data;
 };
 
-/**
- * Trigger product reanalysis
- */
-export const triggerProductReanalysis = async (productId: number): Promise<AgentJobResponse> => {
-  const response = await api.post<AgentJobResponse>(
-    `/product-intelligence/agents/${productId}/reanalyze-product`
-  );
-  return response.data;
-};
-
 // --- Competitor Management ---
 
 /**
@@ -903,32 +633,6 @@ export const getAgentCompetitors = async (
   const response = await api.get<AgentCompetitor[]>(
     `/product-intelligence/agents/${productId}/competitors`,
     { params: deepAnalysisEnabled !== undefined ? { deep_analysis_enabled: deepAnalysisEnabled } : {} }
-  );
-  return response.data;
-};
-
-/**
- * Enable deep analysis for a competitor
- */
-export const enableDeepAnalysis = async (
-  productId: number,
-  competitorId: number
-): Promise<{ message: string }> => {
-  const response = await api.post<{ message: string }>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/enable-deep-analysis`
-  );
-  return response.data;
-};
-
-/**
- * Disable deep analysis for a competitor
- */
-export const disableDeepAnalysis = async (
-  productId: number,
-  competitorId: number
-): Promise<{ message: string }> => {
-  const response = await api.post<{ message: string }>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/disable-deep-analysis`
   );
   return response.data;
 };
@@ -1037,48 +741,6 @@ export const markAllAlertsRead = async (
 };
 
 // --- Per-Competitor Feature Review ---
-
-/**
- * List features for a competitor
- */
-export const getCompetitorFeatures = async (
-  productId: number,
-  competitorId: number
-): Promise<CompetitorFeature[]> => {
-  const response = await api.get<CompetitorFeature[]>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/features`
-  );
-  return response.data;
-};
-
-/**
- * Create an idea from a single feature
- */
-export const createIdeaFromFeature = async (
-  productId: number,
-  competitorId: number,
-  featureId: number
-): Promise<AgentJobResponse> => {
-  const response = await api.post<AgentJobResponse>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/features/${featureId}/create-idea`
-  );
-  return response.data;
-};
-
-/**
- * Create ideas from multiple features
- */
-export const createIdeasFromFeatures = async (
-  productId: number,
-  competitorId: number,
-  request: CreateIdeasRequest
-): Promise<AgentJobResponse[]> => {
-  const response = await api.post<AgentJobResponse[]>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/features/create-ideas`,
-    request
-  );
-  return response.data;
-};
 
 // ============================================================================
 // V2 COMPETITIVE ANALYSIS API METHODS
@@ -1239,19 +901,6 @@ export const getInternalFeedbackImports = async (
     `/internal-feedback/${productId}/imports`
   );
   return response.data.imports;
-};
-
-/**
- * Get a single import by ID
- */
-export const getInternalFeedbackImport = async (
-  productId: number,
-  importId: number
-): Promise<InternalFeedbackImport> => {
-  const response = await api.get<InternalFeedbackImport>(
-    `/internal-feedback/${productId}/imports/${importId}`
-  );
-  return response.data;
 };
 
 /**
@@ -1524,16 +1173,6 @@ export const getEvidence = async (
   const response = await api.get<EvidenceListResponse>(
     `/product-intelligence/products/${productId}/evidence`,
     { params }
-  );
-  return response.data;
-};
-
-export const getEvidenceDetail = async (
-  productId: number,
-  evidenceId: number
-): Promise<EvidenceDetail> => {
-  const response = await api.get<EvidenceDetail>(
-    `/product-intelligence/products/${productId}/evidence/${evidenceId}`
   );
   return response.data;
 };
