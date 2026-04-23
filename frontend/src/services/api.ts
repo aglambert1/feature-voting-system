@@ -14,26 +14,15 @@ import type {
   RegisterData,
   IdeaListResponse,
   IdeaResponse,
-  IdeaCreate,
   VoteResponse,
   StructureResponse,
   SubmissionData,
   ApiError,
-  Product,
-  ProductCreate,
-  Competitor,
-  CompetitorCreate,
-  Feature,
-  FeatureCreate,
-  AnalysisSession,
   SimilarIdea,
   QueueJob,
   PMReviewQueueItem,
-  PMReviewQueueResponse,
   PMReviewQueueStats,
   MonitoringConfig,
-  MonitoringConfigUpdate,
-  CompetitorSnapshotsResponse,
   IdeaDetail,
   IdeaComment,
   IdeaRespondRequest,
@@ -47,9 +36,7 @@ import type {
   CompetitiveAgentConfig,
   CompetitiveAgentConfigUpdate,
   AgentCompetitor,
-  CompetitorFeature,
   AgentJobResponse,
-  CreateIdeasRequest,
   FeatureQueryResponse,
 } from '../types';
 
@@ -378,15 +365,6 @@ export const getProductJobs = async (
 // PM REVIEW QUEUE API METHODS (Phase 4)
 // ============================================================================
 
-interface GetQueueParams {
-  product_id?: number;
-  queue_type?: string;
-  status?: string;
-  priority?: string;
-  offset?: number;
-  limit?: number;
-}
-
 /**
  * Get queue stats for a product
  */
@@ -645,11 +623,11 @@ export const updateCompetitorSelection = async (
   competitorId: number,
   enabled: boolean
 ): Promise<{ message: string }> => {
-  if (enabled) {
-    return enableDeepAnalysis(productId, competitorId);
-  } else {
-    return disableDeepAnalysis(productId, competitorId);
-  }
+  const action = enabled ? 'enable-deep-analysis' : 'disable-deep-analysis';
+  const response = await api.post<{ message: string }>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/${action}`
+  );
+  return response.data;
 };
 
 /**
