@@ -27,7 +27,6 @@ from app.services.llm_service import LLMService
 from app.agents.product_analyzer import ProductAnalyzerAgent
 from app.agents.competitor_researcher import CompetitorResearcherAgent
 from app.utils.url import normalize_url, extract_domain
-# DEPRECATED: FeatureExtractorAgent import removed - using V2 functional audit workflow
 
 
 def get_db():
@@ -544,123 +543,8 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
 
 
 # ============================================================================
-# Phase 3: Idea Normalization and Triage Tasks
+# Phase 3: Idea Triage Task
 # ============================================================================
-
-@shared_task(bind=True, name='app.queue.tasks.normalize_idea_task', soft_time_limit=300)
-def normalize_idea_task(self, job_id: int) -> Dict[str, Any]:
-    """
-    Background task to normalize an idea from any source.
-
-    This task:
-    1. Retrieves the job and input data
-    2. Determines source type
-    3. Uses appropriate adapter to normalize
-    4. Creates Idea record
-    5. Optionally chains to triage task
-
-    Args:
-        job_id: QueueJob ID
-
-    Returns:
-        Dictionary with idea_id and normalization details
-    """
-    from app.services.idea_normalizer_service import IdeaNormalizerService
-    from app.models.idea import SourceType, IdeaStatus
-
-    db = None
-    try:
-        db = get_db()
-        queue_service = QueueService(db)
-        llm_service = LLMService()
-
-        # Mark job as running
-        job = queue_service.mark_running(job_id)
-        if not job:
-            raise ValueError(f"Job {job_id} not found")
-
-        # Get input data
-        input_data = job.input_data or {}
-        raw_input = input_data.get('raw_input', {})
-        source_type_str = input_data.get('source_type')
-        chain_triage = input_data.get('chain_triage', True)
-
-        # Parse source type if provided
-        source_type = None
-        if source_type_str:
-            source_type = SourceType(source_type_str)
-
-        # Update progress
-        queue_service.update_progress(job_id, 20.0, "Normalizing idea...")
-
-        # Normalize the idea
-        normalizer = IdeaNormalizerService(db, llm_service)
-        normalized = normalizer.normalize(raw_input, source_type)
-
-        # Update progress
-        queue_service.update_progress(job_id, 60.0, "Creating idea record...")
-
-        # Create the idea
-        idea = normalizer.create_idea_from_normalized(
-            normalized,
-            status=IdeaStatus.PENDING
-        )
-        db.add(idea)
-        db.commit()
-        db.refresh(idea)
-
-        # Output data
-        output_data = {
-            'idea_id': idea.id,
-            'title': idea.title,
-            'source_type': idea.source_type.value,
-            'category': idea.category,
-            'auto_categorized': idea.auto_categorized,
-        }
-
-        # Chain to triage if requested
-        if chain_triage:
-            queue_service.update_progress(job_id, 80.0, "Queueing triage task...")
-
-            # Create triage job
-            triage_job = queue_service.create_job(
-                job_type=JobType.IDEA_TRIAGE,
-                input_data={'idea_id': idea.id},
-                product_id=idea.product_id,
-                user_id=job.user_id,
-                parent_job_id=job.parent_job_id or job.id,
-            )
-            db.commit()
-
-            # Queue the triage task
-            triage_idea_task.delay(triage_job.id)
-
-            output_data['triage_job_id'] = triage_job.id
-            output_data['triage_job_uuid'] = triage_job.job_uuid
-
-        # Mark success
-        queue_service.mark_success(job_id, output_data)
-
-        return output_data
-
-    except Exception as e:
-        error_msg = str(e)
-        error_tb = traceback.format_exc()
-        print(f"[normalize_idea_task] Error: {error_msg}")
-
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
-
-        raise
-
-    finally:
-        if db:
-            db.close()
-
 
 @shared_task(bind=True, name='app.queue.tasks.triage_idea_task', soft_time_limit=300)
 def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
