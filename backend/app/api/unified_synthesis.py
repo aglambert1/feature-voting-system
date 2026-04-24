@@ -19,7 +19,7 @@ from app.models.competitor_intelligence import (
     ProductPermissionLevel,
 )
 from app.models.queue import JobType
-from app.models.idea import Idea
+from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.synthesis import (
     SynthesisConfig,
     SynthesisReport,
@@ -97,6 +97,20 @@ class SynthesisCompetitorsResponse(BaseModel):
 
 class SynthesisInclusionPatch(BaseModel):
     included: bool
+
+
+class OpportunityCreateIdeaRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    what_description: str = Field(..., min_length=1)
+    why_description: str = Field(default="", max_length=1000)
+    use_case_description: str = Field(default="")
+
+
+class OpportunityCreateIdeaResponse(BaseModel):
+    idea_id: int
+    triage_job_id: int
+    triage_job_uuid: str
+    message: str
 
 
 # ---------------------------------------------------------------------------
@@ -536,3 +550,98 @@ async def patch_competitor_synthesis_inclusion(
         "synthesis_included": bool(competitor.synthesis_included),
         "message": f"{verb} {competitor.competitor_name} {preposition} synthesis.",
     }
+
+
+@router.post(
+    "/{product_id}/synthesis/opportunities/{opportunity_id}/create-idea",
+    response_model=OpportunityCreateIdeaResponse,
+)
+async def create_idea_from_opportunity(
+    product_id: int,
+    opportunity_id: int,
+    payload: OpportunityCreateIdeaRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Manually create an Idea from a SynthesizedOpportunity (EDIT required).
+
+    Mirrors the auto-idea-generation path in `unified_synthesis_task` but with
+    user-edited fields and no priority threshold check. Sets
+    `SynthesizedOpportunity.linked_idea_id` so the UI renders a "View idea"
+    badge, then dispatches triage to classify the new idea.
+    """
+    _verify_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
+
+    opportunity = db.query(SynthesizedOpportunity).filter(
+        SynthesizedOpportunity.id == opportunity_id,
+        SynthesizedOpportunity.product_id == product_id,
+    ).first()
+    if not opportunity:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Opportunity {opportunity_id} not found for product {product_id}",
+        )
+    if opportunity.linked_idea_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Opportunity already has linked idea {opportunity.linked_idea_id}",
+        )
+
+    source_metadata = {
+        "synthesis_report_id": opportunity.synthesis_report_id,
+        "opportunity_id": opportunity.id,
+        "feature_name": opportunity.opportunity_name,
+        "priority_score": opportunity.priority_score,
+        "sources": opportunity.sources or [],
+        "job_id_key": opportunity.job_id_key,
+        "investment_tier": opportunity.investment_tier,
+        "manual_creation": True,
+    }
+
+    idea = Idea(
+        title=payload.title[:255],
+        what_description=payload.what_description,
+        why_description=payload.why_description[:1000],
+        use_case_description=payload.use_case_description,
+        product_id=product_id,
+        source_type=SourceType.COMPETITOR_AUTOMATED,
+        source_metadata=source_metadata,
+        status=IdeaStatus.PENDING,
+        is_active=False,
+        auto_categorized=False,
+        submitter_id=current_user.id,
+    )
+    db.add(idea)
+    db.flush()
+
+    db.query(SynthesizedOpportunity).filter(
+        SynthesizedOpportunity.id == opportunity.id
+    ).update(
+        {SynthesizedOpportunity.linked_idea_id: idea.id},
+        synchronize_session=False,
+    )
+
+    queue_service = QueueService(db)
+    triage_job = queue_service.create_job(
+        job_type=JobType.IDEA_TRIAGE,
+        input_data={"idea_id": idea.id},
+        product_id=product_id,
+        user_id=current_user.id,
+    )
+    db.commit()
+
+    try:
+        result = send_task("triage_idea_task", triage_job.id)
+        triage_job.celery_task_id = result.id
+        db.commit()
+    except Exception as dispatch_err:
+        # Idea is created and linked even if dispatch fails; triage can be
+        # retried separately. Surface the error but keep the 2xx path.
+        print(f"[create_idea_from_opportunity] triage dispatch failed: {dispatch_err}")
+
+    return OpportunityCreateIdeaResponse(
+        idea_id=idea.id,
+        triage_job_id=triage_job.id,
+        triage_job_uuid=triage_job.job_uuid,
+        message=f"Idea #{idea.id} created; triage queued.",
+    )

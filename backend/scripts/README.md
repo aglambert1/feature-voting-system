@@ -17,6 +17,25 @@ cd backend
 | `--dry-run` | Show what would be deleted without making changes |
 | `--yes`, `-y` | Skip confirmation prompt |
 
+### backfill_synthesis_linked_ideas.py
+One-off repair for SynthesizedOpportunity.linked_idea_id on historical reports.
+Before the tasks.py fix, auto-idea-generation silently failed to persist
+linked_idea_id; this script matches opportunities to their existing Ideas by
+title + synthesis_report_id and writes the link.
+
+```bash
+cd backend
+./venv/bin/python scripts/backfill_synthesis_linked_ideas.py --dry-run
+./venv/bin/python scripts/backfill_synthesis_linked_ideas.py --yes
+./venv/bin/python scripts/backfill_synthesis_linked_ideas.py --product-id 1 --yes
+```
+
+| Option | Description |
+|---|---|
+| `--product-id` | Restrict to one product |
+| `--dry-run` | Preview matches without writing |
+| `--yes`, `-y` | Skip confirmation prompt |
+
 ### seed_demo_data.py
 Create realistic demo data (product, users, ideas, votes, comments). Idempotent.
 

@@ -351,20 +351,23 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
                       Competitive Context
                     </h4>
                     <div className="flex flex-wrap gap-2 text-xs">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-medium ${
-                        ideaDetail.competitive_context.priority_level === 'critical' ? 'bg-red-100 text-red-800' :
-                        ideaDetail.competitive_context.priority_level === 'high' ? 'bg-orange-100 text-orange-800' :
-                        ideaDetail.competitive_context.priority_level === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-medium capitalize ${
+                        ideaDetail.competitive_context.competitive_urgency === 'critical' ? 'bg-red-100 text-red-800' :
+                        ideaDetail.competitive_context.competitive_urgency === 'high' ? 'bg-orange-100 text-orange-800' :
+                        ideaDetail.competitive_context.competitive_urgency === 'medium' ? 'bg-yellow-100 text-yellow-800' :
                         'bg-gray-100 text-gray-800'
                       }`}>
-                        {ideaDetail.competitive_context.priority_level === 'critical' ? '🔴' :
-                         ideaDetail.competitive_context.priority_level === 'high' ? '🟠' :
-                         ideaDetail.competitive_context.priority_level === 'medium' ? '🟡' : '⚪'}
-                        {' '}{Math.round(ideaDetail.competitive_context.priority_score * 100)}% priority
+                        {ideaDetail.competitive_context.competitive_urgency === 'critical' ? '🔴' :
+                         ideaDetail.competitive_context.competitive_urgency === 'high' ? '🟠' :
+                         ideaDetail.competitive_context.competitive_urgency === 'medium' ? '🟡' : '⚪'}
+                        {' '}{ideaDetail.competitive_context.competitive_urgency} urgency
                       </span>
-                      <span className="text-indigo-700">
-                        {ideaDetail.competitive_context.competitors_with_feature.length}/{ideaDetail.competitive_context.total_competitors_analyzed} competitors
-                      </span>
+                      {typeof ideaDetail.competitive_context.total_competitors_analyzed === 'number' &&
+                        ideaDetail.competitive_context.total_competitors_analyzed > 0 && (
+                        <span className="text-indigo-700">
+                          {ideaDetail.competitive_context.competitors_with_feature.length}/{ideaDetail.competitive_context.total_competitors_analyzed} competitors
+                        </span>
+                      )}
                     </div>
                     {ideaDetail.competitive_context.competitors_with_feature.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">

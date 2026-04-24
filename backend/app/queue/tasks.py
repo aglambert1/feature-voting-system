@@ -3158,9 +3158,17 @@ def unified_synthesis_task(self, job_id: int):
 
                 # Backfill linked_idea_id on the matching opportunity row so
                 # downstream views can render a "created as Idea #N" badge.
+                # Use a direct UPDATE rather than attribute assignment because
+                # the intervening queue_service.create_job() commit was silently
+                # dropping in-session attribute changes in this code path.
                 matching_opp = opp_rows_by_name.get(feature_name)
                 if matching_opp is not None:
-                    matching_opp.linked_idea_id = new_idea.id
+                    db.query(SynthesizedOpportunity).filter(
+                        SynthesizedOpportunity.id == matching_opp.id
+                    ).update(
+                        {SynthesizedOpportunity.linked_idea_id: new_idea.id},
+                        synchronize_session=False,
+                    )
 
                 triage_job = queue_service.create_job(
                     job_type=JobType.IDEA_TRIAGE,
