@@ -1022,6 +1022,8 @@ export const reprocessActivityImport = async (
 import type {
   UnifiedSynthesisRunResponse,
   LatestUnifiedReportResponse,
+  OpportunityCreateIdeaRequest,
+  OpportunityCreateIdeaResponse,
 } from '../types';
 
 export const triggerUnifiedSynthesis = async (
@@ -1038,6 +1040,18 @@ export const getLatestUnifiedReport = async (
 ): Promise<LatestUnifiedReportResponse> => {
   const response = await api.get<LatestUnifiedReportResponse>(
     `/products/${productId}/synthesis/latest`
+  );
+  return response.data;
+};
+
+export const createIdeaFromOpportunity = async (
+  productId: number,
+  opportunityId: number,
+  payload: OpportunityCreateIdeaRequest
+): Promise<OpportunityCreateIdeaResponse> => {
+  const response = await api.post<OpportunityCreateIdeaResponse>(
+    `/products/${productId}/synthesis/opportunities/${opportunityId}/create-idea`,
+    payload
   );
   return response.data;
 };

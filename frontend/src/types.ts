@@ -571,13 +571,13 @@ export interface IdeaComment {
  * Only visible to PO/Admin users.
  */
 export interface CompetitiveContext {
-  priority_score: number;
-  priority_level: 'critical' | 'high' | 'medium' | 'low';
   competitors_with_feature: string[];
-  total_competitors_analyzed: number;
-  market_context: string;
-  source_evidence_count: number;
-  landscape_report_id?: number;
+  competitive_urgency: 'low' | 'medium' | 'high' | 'critical';
+  competitor_count?: number;
+  total_competitors_analyzed?: number;
+  urgency_reasoning?: string;
+  market_timing_notes?: string | null;
+  existing_feature?: ExistingFeatureMatch | string;
 }
 
 export interface IdeaDetail {
@@ -1176,6 +1176,20 @@ export interface SynthesisOpportunityDetail {
   jtbd_statement: string | null;
   linked_idea_id: number | null;
   linked_idea_title: string | null;
+}
+
+export interface OpportunityCreateIdeaRequest {
+  title: string;
+  what_description: string;
+  why_description?: string;
+  use_case_description?: string;
+}
+
+export interface OpportunityCreateIdeaResponse {
+  idea_id: number;
+  triage_job_id: number;
+  triage_job_uuid: string;
+  message: string;
 }
 
 interface UnifiedReportExists {

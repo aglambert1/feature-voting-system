@@ -16,6 +16,7 @@ import Navigation from "../../components/Navigation";
 import SynthesisConfigPanel from "./components/SynthesisConfigPanel";
 import SynthesisCompetitorList from "./components/SynthesisCompetitorList";
 import {
+  createIdeaFromOpportunity,
   getJob,
   getLatestUnifiedReport,
   triggerUnifiedSynthesis,
@@ -44,7 +45,27 @@ export default function SynthesisHubPage() {
   const [runningJobUuid, setRunningJobUuid] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
 
-  const [configExpanded, setConfigExpanded] = useState(true);
+  // Persist panel expansion across navigation (e.g., clicking into an idea
+  // then hitting back) so the user's collapse choice survives. Matches the
+  // sessionStorage pattern established in ProductContext.
+  const [configExpanded, setConfigExpanded] = useState<boolean>(() => {
+    const stored = sessionStorage.getItem("synthesisHub:configExpanded");
+    return stored === null ? true : stored === "true";
+  });
+  const [competitorsExpanded, setCompetitorsExpanded] = useState<boolean>(() => {
+    const stored = sessionStorage.getItem("synthesisHub:competitorsExpanded");
+    return stored === null ? false : stored === "true";
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem("synthesisHub:configExpanded", String(configExpanded));
+  }, [configExpanded]);
+  useEffect(() => {
+    sessionStorage.setItem("synthesisHub:competitorsExpanded", String(competitorsExpanded));
+  }, [competitorsExpanded]);
+
+  const [modalOpp, setModalOpp] = useState<SynthesisOpportunityDetail | null>(null);
+  const [createNotice, setCreateNotice] = useState<{ ideaId: number } | null>(null);
 
   const pollTimer = useRef<number | null>(null);
 
@@ -138,6 +159,12 @@ export default function SynthesisHubPage() {
     }
   };
 
+  const handleIdeaCreated = async (ideaId: number) => {
+    setModalOpp(null);
+    setCreateNotice({ ideaId });
+    await fetchReport();
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -229,7 +256,7 @@ export default function SynthesisHubPage() {
             <div>
               <h2 className="text-base font-semibold text-gray-900">Configuration</h2>
               <p className="text-xs text-gray-500">
-                Source types, idea threshold, and competitor inclusion.
+                Source types and idea threshold.
               </p>
             </div>
             <svg
@@ -244,6 +271,35 @@ export default function SynthesisHubPage() {
           {configExpanded && Number.isFinite(numProductId) && (
             <div className="mt-3">
               <SynthesisConfigPanel productId={numProductId} />
+            </div>
+          )}
+        </div>
+
+        {/* Competitor inclusion (collapsible, closed by default — takes a lot of room) */}
+        <div className="mb-6">
+          <button
+            type="button"
+            onClick={() => setCompetitorsExpanded((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-white rounded-lg shadow text-left hover:bg-gray-50"
+            aria-expanded={competitorsExpanded}
+          >
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">Competitor inclusion</h2>
+              <p className="text-xs text-gray-500">
+                Pick which competitors to include in the next synthesis run.
+              </p>
+            </div>
+            <svg
+              className={`w-5 h-5 text-gray-400 transition-transform ${competitorsExpanded ? "rotate-180" : ""}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {competitorsExpanded && Number.isFinite(numProductId) && (
+            <div className="mt-3">
               <SynthesisCompetitorList productId={numProductId} />
             </div>
           )}
@@ -258,14 +314,6 @@ export default function SynthesisHubPage() {
                 <span className="text-xs text-gray-500">
                   v{report.report_version} · {format(new Date(report.generated_at), "MMM d, yyyy h:mm a")}
                 </span>
-              )}
-              {hasReport && report.report_content_md && (
-                <button
-                  onClick={handleDownloadMd}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-                >
-                  Download .md
-                </button>
               )}
             </div>
           </div>
@@ -322,18 +370,51 @@ export default function SynthesisHubPage() {
                   </div>
                 )}
 
+                {createNotice && (
+                  <div className="mb-4 p-3 rounded border border-green-200 bg-green-50 text-sm text-green-800 flex items-center justify-between">
+                    <span>Idea #{createNotice.ideaId} created; triage queued.</span>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => navigate(`/ideas/${createNotice.ideaId}`)}
+                        className="text-green-700 hover:text-green-900 font-medium underline"
+                      >
+                        View idea
+                      </button>
+                      <button
+                        onClick={() => setCreateNotice(null)}
+                        className="text-green-600 hover:text-green-800"
+                        aria-label="Dismiss"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {report.opportunities_detail && report.opportunities_detail.length > 0 && (
                   <div className="mb-5">
                     <h3 className="text-sm font-medium text-gray-700 mb-2">
                       Opportunities ({report.opportunities_detail.length})
                     </h3>
-                    <OpportunitiesTable opportunities={report.opportunities_detail} />
+                    <OpportunitiesTable
+                      opportunities={report.opportunities_detail}
+                      onCreateClick={(o) => setModalOpp(o)}
+                      onViewIdea={(ideaId) => navigate(`/ideas/${ideaId}`)}
+                    />
                   </div>
                 )}
 
                 {report.report_content_md ? (
                   <div>
-                    <h3 className="text-sm font-medium text-gray-700 mb-1">Report (markdown)</h3>
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="text-sm font-medium text-gray-700">Report (markdown)</h3>
+                      <button
+                        onClick={handleDownloadMd}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                      >
+                        Download .md
+                      </button>
+                    </div>
                     <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-gray-800 bg-gray-50 border border-gray-200 rounded p-3 max-h-[600px] overflow-auto">
                       {report.report_content_md}
                     </pre>
@@ -348,11 +429,28 @@ export default function SynthesisHubPage() {
           </div>
         </div>
       </div>
+
+      {modalOpp && (
+        <CreateIdeaModal
+          opportunity={modalOpp}
+          productId={numProductId}
+          onClose={() => setModalOpp(null)}
+          onCreated={handleIdeaCreated}
+        />
+      )}
     </div>
   );
 }
 
-function OpportunitiesTable({ opportunities }: { opportunities: SynthesisOpportunityDetail[] }) {
+function OpportunitiesTable({
+  opportunities,
+  onCreateClick,
+  onViewIdea,
+}: {
+  opportunities: SynthesisOpportunityDetail[];
+  onCreateClick: (o: SynthesisOpportunityDetail) => void;
+  onViewIdea: (ideaId: number) => void;
+}) {
   return (
     <div className="overflow-x-auto border border-gray-200 rounded">
       <table className="min-w-full text-sm">
@@ -401,20 +499,164 @@ function OpportunitiesTable({ opportunities }: { opportunities: SynthesisOpportu
               </td>
               <td className="px-3 py-2 whitespace-nowrap">
                 {o.linked_idea_id ? (
-                  <span
-                    className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-green-100 text-green-800"
+                  <button
+                    type="button"
+                    onClick={() => onViewIdea(o.linked_idea_id!)}
+                    className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-green-100 text-green-800 hover:bg-green-200"
                     title={o.linked_idea_title ?? undefined}
                   >
-                    ✓ Idea #{o.linked_idea_id}
-                  </span>
+                    View Idea #{o.linked_idea_id}
+                  </button>
                 ) : (
-                  <span className="text-gray-400 text-xs">—</span>
+                  <button
+                    type="button"
+                    onClick={() => onCreateClick(o)}
+                    className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200"
+                  >
+                    + Create idea
+                  </button>
                 )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function CreateIdeaModal({
+  opportunity,
+  productId,
+  onClose,
+  onCreated,
+}: {
+  opportunity: SynthesisOpportunityDetail;
+  productId: number;
+  onClose: () => void;
+  onCreated: (ideaId: number) => void;
+}) {
+  const defaultUseCase = opportunity.sources.length
+    ? ["Synthesized from multiple sources:", ...opportunity.sources.map((s) => `- ${s}`)].join("\n")
+    : "";
+
+  const [title, setTitle] = useState(opportunity.opportunity_name);
+  const [whatDesc, setWhatDesc] = useState(opportunity.opportunity_summary ?? opportunity.opportunity_name);
+  const [whyDesc, setWhyDesc] = useState(opportunity.recommended_action ?? "");
+  const [useCase, setUseCase] = useState(defaultUseCase);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim() || !whatDesc.trim()) {
+      setError("Title and 'What' are required.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const resp = await createIdeaFromOpportunity(productId, opportunity.id, {
+        title: title.trim(),
+        what_description: whatDesc.trim(),
+        why_description: whyDesc.trim(),
+        use_case_description: useCase.trim(),
+      });
+      onCreated(resp.idea_id);
+    } catch (err: any) {
+      setError(err?.response?.data?.detail ?? err?.message ?? "Failed to create idea.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <form onSubmit={handleSubmit}>
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-900">Create idea from opportunity</h3>
+            <p className="text-xs text-gray-500 mt-1">
+              Edit the pre-filled fields as needed. Triage will run automatically.
+            </p>
+          </div>
+
+          <div className="px-6 py-4 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={255}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">What</label>
+              <textarea
+                value={whatDesc}
+                onChange={(e) => setWhatDesc(e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Why</label>
+              <textarea
+                value={whyDesc}
+                onChange={(e) => setWhyDesc(e.target.value)}
+                rows={2}
+                maxLength={1000}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Use case</label>
+              <textarea
+                value={useCase}
+                onChange={(e) => setUseCase(e.target.value)}
+                rows={4}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            {error && (
+              <div className="p-3 rounded border border-red-200 bg-red-50 text-sm text-red-800">
+                {error}
+              </div>
+            )}
+          </div>
+
+          <div className="px-6 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitting ? "Creating…" : "Create idea"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

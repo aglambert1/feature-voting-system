@@ -173,16 +173,18 @@ export default function IdeaDetailPage() {
     <div className="min-h-screen bg-gray-50">
       <Navigation />
       <div className="max-w-4xl mx-auto px-4 py-8">
-        {/* Back link */}
-        <Link
-          to="/ideas"
+        {/* Back link — uses navigate(-1) so returning from the Synthesis Hub
+            (or any other entry) lands the user back where they came from. */}
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
           className="inline-flex items-center text-gray-600 hover:text-gray-900 mb-6"
         >
           <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
           </svg>
-          Back to Ideas
-        </Link>
+          Back
+        </button>
 
         {/* Main idea card */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
@@ -319,49 +321,81 @@ export default function IdeaDetailPage() {
                 Competitive Context
               </h3>
               <div className="space-y-3">
-                {/* Priority Score */}
+                {/* Urgency */}
                 <div className="flex items-center gap-3">
-                  <span className="text-sm text-indigo-700">Priority Score:</span>
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    idea.competitive_context.priority_level === 'critical' ? 'bg-red-100 text-red-800' :
-                    idea.competitive_context.priority_level === 'high' ? 'bg-orange-100 text-orange-800' :
-                    idea.competitive_context.priority_level === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                  <span className="text-sm text-indigo-700">Competitive urgency:</span>
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${
+                    idea.competitive_context.competitive_urgency === 'critical' ? 'bg-red-100 text-red-800' :
+                    idea.competitive_context.competitive_urgency === 'high' ? 'bg-orange-100 text-orange-800' :
+                    idea.competitive_context.competitive_urgency === 'medium' ? 'bg-yellow-100 text-yellow-800' :
                     'bg-gray-100 text-gray-800'
                   }`}>
-                    {idea.competitive_context.priority_level === 'critical' ? '🔴' :
-                     idea.competitive_context.priority_level === 'high' ? '🟠' :
-                     idea.competitive_context.priority_level === 'medium' ? '🟡' : '⚪'}
-                    {' '}{Math.round(idea.competitive_context.priority_score * 100)}% ({idea.competitive_context.priority_level})
+                    {idea.competitive_context.competitive_urgency === 'critical' ? '🔴' :
+                     idea.competitive_context.competitive_urgency === 'high' ? '🟠' :
+                     idea.competitive_context.competitive_urgency === 'medium' ? '🟡' : '⚪'}
+                    {' '}{idea.competitive_context.competitive_urgency}
                   </span>
                 </div>
 
                 {/* Competitors */}
                 <div>
                   <span className="text-sm text-indigo-700">Competitors with feature:</span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {idea.competitive_context.competitors_with_feature.map((competitor, idx) => (
-                      <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-indigo-100 text-indigo-800">
-                        {competitor}
-                      </span>
-                    ))}
-                  </div>
-                  <span className="text-xs text-indigo-500 mt-1 block">
-                    {idea.competitive_context.competitors_with_feature.length} of {idea.competitive_context.total_competitors_analyzed} competitors analyzed
-                  </span>
+                  {idea.competitive_context.competitors_with_feature.length > 0 ? (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {idea.competitive_context.competitors_with_feature.map((competitor, idx) => (
+                        <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-indigo-100 text-indigo-800">
+                          {competitor}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-sm text-indigo-900 ml-2">None</span>
+                  )}
+                  {typeof idea.competitive_context.total_competitors_analyzed === 'number' &&
+                    idea.competitive_context.total_competitors_analyzed > 0 && (
+                    <span className="text-xs text-indigo-500 mt-1 block">
+                      {idea.competitive_context.competitors_with_feature.length} of {idea.competitive_context.total_competitors_analyzed} competitors analyzed
+                    </span>
+                  )}
                 </div>
 
-                {/* Market Context */}
-                {idea.competitive_context.market_context && (
+                {/* Existing feature note */}
+                {idea.competitive_context.existing_feature && (
                   <div>
-                    <span className="text-sm text-indigo-700">Market Context:</span>
-                    <p className="text-sm text-indigo-900 mt-1">{idea.competitive_context.market_context}</p>
+                    <span className="text-sm text-indigo-700">Existing feature:</span>
+                    {typeof idea.competitive_context.existing_feature === 'string' ? (
+                      <p className="text-sm text-indigo-900 mt-1">{idea.competitive_context.existing_feature}</p>
+                    ) : (
+                      <div className="text-sm text-indigo-900 mt-1">
+                        <p className="font-medium">{idea.competitive_context.existing_feature.feature_name}</p>
+                        {idea.competitive_context.existing_feature.feature_description && (
+                          <p className="text-xs text-indigo-700 mt-0.5">
+                            {idea.competitive_context.existing_feature.feature_description}
+                          </p>
+                        )}
+                        {typeof idea.competitive_context.existing_feature.similarity_score === 'number' && (
+                          <p className="text-xs text-indigo-500 mt-0.5">
+                            Similarity: {Math.round(idea.competitive_context.existing_feature.similarity_score * 100)}%
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* Evidence count */}
-                {idea.competitive_context.source_evidence_count > 0 && (
-                  <div className="text-xs text-indigo-500">
-                    Based on {idea.competitive_context.source_evidence_count} source evidence quote{idea.competitive_context.source_evidence_count > 1 ? 's' : ''} from competitor analysis
+                {/* Urgency reasoning */}
+                {idea.competitive_context.urgency_reasoning && (
+                  <div>
+                    <span className="text-sm text-indigo-700">Urgency reasoning:</span>
+                    <p className="text-sm text-indigo-900 mt-1">{idea.competitive_context.urgency_reasoning}</p>
+                  </div>
+                )}
+
+                {/* Market timing notes */}
+                {idea.competitive_context.market_timing_notes && (
+                  <div>
+                    <span className="text-sm text-indigo-700">Market timing:</span>
+                    <p className="text-sm text-indigo-900 mt-1">{idea.competitive_context.market_timing_notes}</p>
                   </div>
                 )}
               </div>
