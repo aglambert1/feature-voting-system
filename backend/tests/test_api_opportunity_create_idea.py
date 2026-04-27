@@ -37,6 +37,7 @@ def _make_opp(db_session, product_id: int, **overrides) -> SynthesizedOpportunit
         sources=["source A"],
         recommended_action="do the thing",
         investment_tier="now",
+        competitive_evidence=overrides.get("competitive_evidence"),
     )
     db_session.add(opp)
     db_session.commit()
@@ -137,3 +138,66 @@ class TestCreateIdeaFromOpportunity:
             headers=auth_headers(voter_user),
         )
         assert resp.status_code == 403
+
+    def test_propagates_competitor_names_from_competitive_evidence(
+        self, client, po_user, test_product, db_session
+    ):
+        """Bug 1: source_metadata.competitors_with_feature must be populated
+        from opportunity.competitive_evidence.competitors so triage gets
+        the competitor list and assigns proper urgency."""
+        opp = _make_opp(
+            db_session,
+            test_product.id,
+            competitive_evidence={
+                "feature_name": "Bulk import",
+                "prevalence": "Table Stakes",
+                "competitors": ["Acme", "Globex", "Initech"],
+                "competitor_count": 3,
+                "our_status": "Gap",
+            },
+        )
+
+        with patch(
+            "app.api.unified_synthesis.send_task",
+            return_value=MagicMock(id="celery-id-1"),
+        ):
+            resp = client.post(
+                f"/products/{test_product.id}/synthesis/opportunities/{opp.id}/create-idea",
+                json={
+                    "title": "Edited Title",
+                    "what_description": "Edited what",
+                    "why_description": "Edited why",
+                    "use_case_description": "Edited use case",
+                },
+                headers=auth_headers(po_user),
+            )
+        assert resp.status_code == 200, resp.text
+        idea = db_session.query(Idea).filter(Idea.id == resp.json()["idea_id"]).first()
+        assert idea.source_metadata["competitors_with_feature"] == ["Acme", "Globex", "Initech"]
+        assert idea.source_metadata["competitor_names"] == ["Acme", "Globex", "Initech"]
+
+    def test_handles_null_competitive_evidence(
+        self, client, po_user, test_product, db_session
+    ):
+        """Customer-only opportunities have null competitive_evidence —
+        must produce empty competitor list, not error."""
+        opp = _make_opp(db_session, test_product.id, competitive_evidence=None)
+
+        with patch(
+            "app.api.unified_synthesis.send_task",
+            return_value=MagicMock(id="celery-id-2"),
+        ):
+            resp = client.post(
+                f"/products/{test_product.id}/synthesis/opportunities/{opp.id}/create-idea",
+                json={
+                    "title": "Edited",
+                    "what_description": "what",
+                    "why_description": "why",
+                    "use_case_description": "use",
+                },
+                headers=auth_headers(po_user),
+            )
+        assert resp.status_code == 200, resp.text
+        idea = db_session.query(Idea).filter(Idea.id == resp.json()["idea_id"]).first()
+        assert idea.source_metadata["competitors_with_feature"] == []
+        assert idea.source_metadata["competitor_names"] == []

@@ -1644,16 +1644,31 @@ def get_triage_recommendation(
             detail="Only the product owner or admin can view triage recommendations"
         )
 
-    # Map triage_recommendation string to the new status values
+    # Map triage recommendation to a status using the same classifier the
+    # auto-execute path uses. This ensures a `reject` action with an existing
+    # feature match surfaces as `feature_exists` to the PM regardless of
+    # whether auto-respond was enabled when triage ran.
     recommended_status = None
     if idea.triage_recommendation:
-        recommendation_map = {
-            'approve': 'approved',
-            'reject': 'not_appropriate',
-            'merge': 'duplicate',
-            'review': None,  # No specific recommendation
+        from app.agents.idea_triage import classify_recommendation
+        existing_feature = (idea.competitive_context or {}).get('existing_feature')
+        mock_result = {
+            'recommendation': {
+                'action': idea.triage_recommendation,
+                'reasoning': idea.triage_reasoning or '',
+                'confidence': float(idea.triage_confidence or 0.5),
+            },
+            'existing_feature_info': existing_feature,
         }
-        recommended_status = recommendation_map.get(idea.triage_recommendation)
+        recommended_status_enum = classify_recommendation(mock_result)
+        status_to_response = {
+            IdeaStatus.ACCEPTED: 'approved',
+            IdeaStatus.DUPLICATE: 'duplicate',
+            IdeaStatus.FEATURE_EXISTS: 'feature_exists',
+            IdeaStatus.NOT_APPROPRIATE: 'not_appropriate',
+            IdeaStatus.NEEDS_REVIEW: None,
+        }
+        recommended_status = status_to_response.get(recommended_status_enum)
 
     # Get similar ideas
     similar_ideas = []
