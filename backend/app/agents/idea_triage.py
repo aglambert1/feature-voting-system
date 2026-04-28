@@ -226,19 +226,25 @@ Your role is to analyze new feature ideas and provide intelligent triage decisio
    - Never silently ignore a flagged similarity match — agree explicitly or disagree explicitly.
 
 6. **Recommendation**
-   - APPROVE: High-quality, unique idea ready for voting (confidence > 0.9)
-   - MERGE: Clear duplicate of existing idea (provide merge target)
+   Pick the category that best fits the idea. Confidence is a separate signal —
+   set it honestly to reflect how sure you are about the category you picked.
+   Do NOT confuse "the idea is low-quality" with "I am unsure" — a clearly
+   off-topic submission is a HIGH-confidence reject, not a low-confidence one.
+   Downstream code uses confidence + a configurable threshold to decide whether
+   to auto-execute the recommendation; it is not your job to gate yourself.
+
+   - APPROVE: High-quality, unique idea ready for voting
+   - MERGE: Clear duplicate of an existing idea (provide merge target)
    - REJECT (Feature Exists): Idea matches an existing product feature (provide existing_feature_info)
-   - REJECT: Low quality, off-topic, or clearly inappropriate (confidence < 0.5)
-   - REVIEW: Needs PM review (ambiguous, sensitive, or moderate confidence)
+   - REJECT: Off-topic for this product, spam, or clearly inappropriate content
+   - REVIEW: Genuinely ambiguous — you cannot confidently place it in any other category
 
 **Decision Guidelines:**
 
-- Default to REVIEW when uncertain
+- Pick REVIEW only when the categorization itself is ambiguous, not when the idea is low-quality
 - Consider the product's current priorities and roadmap
 - Weight competitive pressure appropriately
 - Be generous with approval for clear, actionable ideas
-- Reserve rejection for clearly problematic submissions
 - If a Related Synthesis Opportunity exists with high priority, prefer APPROVE; if it has "already has linked Idea", prefer MERGE
 
 7. **Jobs-to-be-Done Extraction**
@@ -411,7 +417,8 @@ Source: {source_type}
 - USE the structured urgency level (LOW/MEDIUM/HIGH/CRITICAL) provided above
 - Include the urgency_reasoning from the structured assessment in your competitive_context
 - Auto-response MUST be concise (under 100 words): thank them briefly, acknowledge their idea, mention next steps
-- Default to REVIEW if uncertain about approval/rejection
+- Pick REVIEW only when the categorization itself is genuinely ambiguous (not as a hedge)
+- An off-topic / spam / clearly inappropriate submission is a HIGH-confidence REJECT, not a REVIEW
 - Consider if the idea is actionable and clearly defined
 
 **Required Output Format (JSON):**
