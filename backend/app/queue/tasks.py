@@ -160,6 +160,32 @@ def _extract_competitor_names(competitive_evidence) -> list:
     return [c for c in (competitive_evidence.get("competitors") or []) if c]
 
 
+def _sanitize_existing_feature_info(info):
+    """Return a copy of existing_feature_info with source_url stripped to None
+    unless it's a real http(s) URL.
+
+    The triage agent's output passes through json.loads + a Pydantic schema, but
+    the schema only enforces `Optional[str]` on source_url. The agent has been
+    observed to echo placeholder strings like "N/A" from the prompt context,
+    which then render in the UI as relative URLs (e.g., localhost:5173/N/A).
+    Strip those defensively at persistence time so the frontend always either
+    sees a usable URL or null.
+    """
+    if not isinstance(info, dict):
+        return info
+    sanitized = dict(info)
+    url = sanitized.get('source_url')
+    if isinstance(url, str):
+        url_stripped = url.strip()
+        if url_stripped.lower().startswith(('http://', 'https://')):
+            sanitized['source_url'] = url_stripped
+        else:
+            sanitized['source_url'] = None
+    elif url is not None:
+        sanitized['source_url'] = None
+    return sanitized
+
+
 @shared_task(bind=True, name='app.queue.tasks.analyze_product_task', soft_time_limit=300)
 def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
     """
@@ -836,24 +862,29 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             idea.duplicate_of_idea_id = similarity_result.best_match.idea_id
             idea.similarity_score = similarity_result.best_match.similarity_score
 
-        # Store competitive context
+        # Store competitive context.
+        # Two sources of competitors_with_feature exist:
+        # - Agent output (`triage_result.competitive_context.competitors_with_feature`):
+        #   reliable for customer-submitted ideas because the agent saw real
+        #   similarity_service matches in its prompt and echoed them back.
+        # - Deterministic source_metadata (set by synthesis writers in PR #45):
+        #   the authoritative competitor list for competitor-sourced ideas
+        #   (auto-gen + manual create-from-opp).
+        # For competitor-sourced ideas the agent's list is unreliable — synthesis
+        # prompts sometimes use anonymized labels ("Competitor 1") which the
+        # agent echoes alongside the real names, producing phantom duplicates.
+        # Trust the deterministic list and ignore the agent's prose for this field.
         comp_context = triage_result.get('competitive_context', {})
-        competitors_with_feature = comp_context.get('competitors_with_feature', [])
 
-        # For competitor-sourced ideas, ensure source competitors are included in the list
         if is_competitor_idea and idea.source_metadata:
-            # Support both singular 'competitor_name' and plural 'competitor_names' for cluster-based ideas
             source_competitor_names = idea.source_metadata.get('competitor_names', [])
             if not source_competitor_names:
-                # Fallback to singular for backwards compatibility
                 single_name = idea.source_metadata.get('competitor_name')
                 if single_name:
                     source_competitor_names = [single_name]
-
-            # Add source competitors that aren't already in the list
-            for name in source_competitor_names:
-                if name and name not in competitors_with_feature:
-                    competitors_with_feature.append(name)
+            competitors_with_feature = list(source_competitor_names)
+        else:
+            competitors_with_feature = list(comp_context.get('competitors_with_feature', []))
 
         if comp_context or competitors_with_feature:
             idea.competitive_context = {
@@ -861,12 +892,13 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
                 'competitive_urgency': comp_context.get('competitive_urgency', 'medium' if is_competitor_idea else 'low'),
             }
 
-        # Store existing feature info if detected (feature exists case)
-        # Note: Fallback was already applied before status determination above
+        # Store existing feature info if detected (feature exists case).
+        # Sanitize source_url to drop placeholder/non-URL values like "N/A"
+        # that the agent occasionally echoes from prompt context.
         existing_feature_info = triage_result.get('existing_feature_info')
         if existing_feature_info:
             idea.competitive_context = idea.competitive_context or {}
-            idea.competitive_context['existing_feature'] = existing_feature_info
+            idea.competitive_context['existing_feature'] = _sanitize_existing_feature_info(existing_feature_info)
 
         # Store auto-response text
         if not is_competitor_idea and triage_result.get('auto_response_text'):
@@ -1178,11 +1210,12 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
                 'competitive_urgency': comp_context.get('competitive_urgency', 'low'),
             }
 
-        # Store existing feature info if detected (feature exists case)
+        # Store existing feature info if detected (feature exists case).
+        # Sanitize source_url to drop placeholder/non-URL values.
         existing_feature_info = triage_result.get('existing_feature_info')
         if existing_feature_info:
             idea.competitive_context = idea.competitive_context or {}
-            idea.competitive_context['existing_feature'] = existing_feature_info
+            idea.competitive_context['existing_feature'] = _sanitize_existing_feature_info(existing_feature_info)
 
         # Store auto-response text (always store for PO to use, regardless of auto-respond setting)
         if triage_result.get('auto_response_text'):

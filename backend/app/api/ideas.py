@@ -1696,6 +1696,13 @@ def get_triage_recommendation(
     competitors_with_feature = competitive_context.get('competitors_with_feature', [])
     competitive_urgency = competitive_context.get('competitive_urgency', None)
     existing_feature = competitive_context.get('existing_feature', None)
+    # Sanitize source_url at read time too — historical rows persisted before
+    # the write-time guard may contain placeholder strings ("N/A") that would
+    # render as broken relative URLs in the frontend.
+    if isinstance(existing_feature, dict):
+        url = existing_feature.get('source_url')
+        if isinstance(url, str) and not url.strip().lower().startswith(('http://', 'https://')):
+            existing_feature = {**existing_feature, 'source_url': None}
 
     # Map status to user-facing status for current response
     current_status = None

@@ -337,16 +337,24 @@ Always respond with valid JSON matching the specified schema."""
         existing_feature_match = input_data.get('existing_feature_match', {})
         if existing_feature_match and existing_feature_match.get('has_match'):
             best_match = existing_feature_match.get('best_match', {})
+            best_url = best_match.get('source_url')
+            source_line = (
+                f"  - Source URL: {best_url}"
+                if best_url
+                else "  - Source URL: (no documentation URL available — leave existing_feature_info.source_url null in your output)"
+            )
             feature_exists_str = f"""
 **⚠️ POTENTIAL EXISTING FEATURE MATCH (similarity >= 0.85):**
   - Feature Name: {best_match.get('feature_name', 'Unknown')}
   - Description: {best_match.get('feature_description', '')}
   - Similarity Score: {best_match.get('similarity_score', 0):.2f}
-  - Source: {best_match.get('source_url') or 'N/A'}
+{source_line}
 
   This is an embedding similarity signal — high textual overlap, but YOUR JUDGMENT decides
   whether the idea actually duplicates this feature.
   - If you AGREE it duplicates: recommend REJECT and populate existing_feature_info.
+    Only set existing_feature_info.source_url to a real http(s) URL — never to a
+    placeholder, "N/A", or invented value. Leave it null if no real URL is available.
   - If you DISAGREE (similar wording, different need): state explicitly in reasoning
     why it's different and choose APPROVE / MERGE / REVIEW accordingly. Do NOT populate
     existing_feature_info.
