@@ -285,10 +285,12 @@ You MUST respond with ONLY a valid JSON object matching this exact structure:
 ## Important Rules
 
 1. DO NOT create duplicate opportunities — consolidate semantically similar signals.
-2. Set evidence blobs to null for sources that did not contribute to a given opportunity.
-3. Sort opportunities by priority_score descending.
-4. Limit to the top 15 opportunities.
-5. Only output valid JSON — no explanatory text outside the JSON object."""
+2. **DO NOT surface existing product features as opportunities.** If a candidate opportunity semantically matches one of the "Existing Core Features" listed in the product context (use SEMANTIC matching, not exact strings), drop it from the opportunities list — even if the underlying signals are strong. Strong signals on an existing feature mean the feature is valued or under-used; that is a marketing/enablement issue, not a product opportunity. Surface NEW capabilities only.
+   - If a feature exists but the signals point to a meaningful EXTENSION of it (e.g., existing feature is "CSV import" and signals call for "scheduled CSV import"), you may surface the extension as an opportunity — but the opportunity_summary must explicitly name the existing feature it extends and how it goes beyond it.
+3. Set evidence blobs to null for sources that did not contribute to a given opportunity.
+4. Sort opportunities by priority_score descending.
+5. Limit to the top 15 opportunities.
+6. Only output valid JSON — no explanatory text outside the JSON object."""
         )
 
     # ------------------------------------------------------------------
@@ -459,8 +461,23 @@ Respond with ONLY a valid JSON object matching the schema in the system prompt."
         if product_context.get("core_features"):
             features = product_context["core_features"]
             if isinstance(features, list) and features:
-                feat_list = "\n".join(f"  - {f}" for f in features[:15])
-                parts.append(f"**Core Features:**\n{feat_list}")
+                feat_lines = []
+                for f in features[:20]:
+                    if isinstance(f, dict):
+                        # Rich form: {feature_name, feature_description}
+                        name = f.get("feature_name") or "Unknown"
+                        desc = f.get("feature_description") or ""
+                        if desc:
+                            feat_lines.append(f"  - {name}: {desc}")
+                        else:
+                            feat_lines.append(f"  - {name}")
+                    else:
+                        # Legacy form: bare string name
+                        feat_lines.append(f"  - {f}")
+                parts.append(
+                    "**Existing Core Features (DO NOT surface these as opportunities):**\n"
+                    + "\n".join(feat_lines)
+                )
 
         return "\n".join(parts) if parts else "No product context provided."
 

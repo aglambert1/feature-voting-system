@@ -2868,12 +2868,22 @@ def unified_synthesis_task(self, job_id: int):
         if product.job_map:
             product_context["job_map"] = product.job_map
 
+        # Pass features as {feature_name, feature_description} so the synthesis
+        # agent can recognize semantic matches and avoid surfacing existing
+        # features as opportunities (see "DO NOT surface existing product
+        # features" rule in the agent system prompt).
         features = db.query(ProductFeature).filter(
             ProductFeature.product_id == product_id,
             ProductFeature.status == "active",
-        ).limit(15).all()
+        ).limit(20).all()
         if features:
-            product_context["core_features"] = [f.feature_name for f in features]
+            product_context["core_features"] = [
+                {
+                    "feature_name": f.feature_name,
+                    "feature_description": f.feature_description or "",
+                }
+                for f in features
+            ]
 
         queue_service.update_progress(job_id, 25.0, "Gathering competitive data...")
 
