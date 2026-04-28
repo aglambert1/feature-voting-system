@@ -798,33 +798,17 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             auto_respond_enabled = product.idea_triage_auto_enabled
             auto_respond_threshold = getattr(product, 'idea_triage_auto_threshold', 0.9)
 
-        # Apply existing feature fallback BEFORE status determination
-        # If agent didn't populate existing_feature_info but we detected a match, use the detected match
-        if not triage_result.get('existing_feature_info') and product_feature_result.has_match and product_feature_result.best_match:
-            triage_result['existing_feature_info'] = {
-                'feature_name': product_feature_result.best_match.feature_name,
-                'feature_description': product_feature_result.best_match.feature_description,
-                'similarity_score': product_feature_result.best_match.similarity_score,
-                'source_url': product_feature_result.best_match.source_url,
-            }
-
-        # Determine status (only auto-approves if auto-respond is enabled)
-        # Pass the deterministic existing-feature signal so classification can
-        # route to FEATURE_EXISTS even when the agent didn't populate the
-        # structured field — the deterministic check has its own 0.85
-        # similarity floor and is reliable.
-        deterministic_existing_feature_match = {
-            'has_match': product_feature_result.has_match,
-            'best_match': {
-                'feature_name': product_feature_result.best_match.feature_name,
-                'similarity_score': product_feature_result.best_match.similarity_score,
-            } if product_feature_result.best_match else None,
-        }
+        # Determine status (only auto-approves if auto-respond is enabled).
+        # The agent is the arbiter; the deterministic existing-feature
+        # similarity signal is passed into the agent's prompt (above) and the
+        # agent decides whether to populate existing_feature_info. We do NOT
+        # backfill existing_feature_info from the deterministic match — if the
+        # agent didn't populate it, the agent disagreed that the idea actually
+        # duplicates the matched feature, and we trust that judgment.
         new_status = agent.determine_triage_status(
             triage_result,
             auto_respond_enabled=auto_respond_enabled,
             auto_respond_threshold=auto_respond_threshold,
-            deterministic_existing_feature_match=deterministic_existing_feature_match,
         )
 
         # Get recommendation details
@@ -1155,29 +1139,15 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             auto_respond_enabled = product.idea_triage_auto_enabled
             auto_respond_threshold = getattr(product, 'idea_triage_auto_threshold', 0.9)
 
-        # Apply existing feature fallback BEFORE status determination
-        # If agent didn't populate existing_feature_info but we detected a match, use the detected match
-        if not triage_result.get('existing_feature_info') and product_feature_result.has_match and product_feature_result.best_match:
-            triage_result['existing_feature_info'] = {
-                'feature_name': product_feature_result.best_match.feature_name,
-                'feature_description': product_feature_result.best_match.feature_description,
-                'similarity_score': product_feature_result.best_match.similarity_score,
-                'source_url': product_feature_result.best_match.source_url,
-            }
-
-        # Determine status (only auto-approves if auto-respond is enabled)
-        deterministic_existing_feature_match = {
-            'has_match': product_feature_result.has_match,
-            'best_match': {
-                'feature_name': product_feature_result.best_match.feature_name,
-                'similarity_score': product_feature_result.best_match.similarity_score,
-            } if product_feature_result.best_match else None,
-        }
+        # Determine status (only auto-approves if auto-respond is enabled).
+        # Agent is the arbiter; deterministic similarity signal lives in the
+        # prompt. We do NOT backfill existing_feature_info — if the agent didn't
+        # populate it, the agent disagreed that the idea actually duplicates
+        # the matched feature.
         new_status = agent.determine_triage_status(
             triage_result,
             auto_respond_enabled=auto_respond_enabled,
             auto_respond_threshold=auto_respond_threshold,
-            deterministic_existing_feature_match=deterministic_existing_feature_match,
         )
 
         recommendation = triage_result.get('recommendation', {})

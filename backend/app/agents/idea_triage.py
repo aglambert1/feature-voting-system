@@ -19,16 +19,6 @@ if TYPE_CHECKING:
     from app.models.idea import IdeaStatus
 
 
-EXISTING_FEATURE_KEYWORDS = [
-    'already exists', 'existing feature', 'existing functionality',
-    'currently available', 'already available', 'already have',
-    'duplicate of existing', 'feature exists', 'functionality exists',
-]
-
-DUPLICATE_KEYWORDS = [
-    'duplicate of', 'same as idea', 'already submitted',
-]
-
 NOT_APPROPRIATE_KEYWORDS = [
     'off-topic', 'off topic', 'out of scope', 'not relevant',
     'unrelated to', 'inappropriate content', 'offensive',
@@ -36,42 +26,37 @@ NOT_APPROPRIATE_KEYWORDS = [
 ]
 
 
-def classify_recommendation(
-    result: Dict[str, Any],
-    deterministic_existing_feature_match: Optional[Dict[str, Any]] = None,
-) -> "IdeaStatus":
-    """Map an agent triage result + deterministic signals to a recommended IdeaStatus.
+def classify_recommendation(result: Dict[str, Any]) -> "IdeaStatus":
+    """Map an agent triage result to a recommended IdeaStatus.
 
-    Pure mapping logic — no thresholds, no auto-respond awareness. Runs both during
-    auto-execute (in determine_triage_status) and for the PM-facing recommendation
-    surface in the ideas API, so a `reject` action with `existing_feature_info` is
-    classified as FEATURE_EXISTS in both contexts.
+    The agent is the arbiter. Its action + structured fields decide the status;
+    deterministic similarity signals are inputs to the agent's prompt, not
+    overrides on its output. Runs both during auto-execute (in
+    determine_triage_status) and for the PM-facing recommendation API.
 
-    NOT_APPROPRIATE is rare by design: only triggered by explicit off-topic /
-    offensive language in the agent's reasoning. Ambiguous rejects default to
-    NEEDS_REVIEW so the PM can decide.
+    Action semantics:
+    - merge → DUPLICATE
+    - approve → ACCEPTED
+    - reject + existing_feature_info → FEATURE_EXISTS (agent affirmatively
+      identified an existing-feature overlap)
+    - reject + off-topic / offensive reasoning → NOT_APPROPRIATE (rare by design)
+    - reject without either → NEEDS_REVIEW (defer to PM; the agent rejected
+      but didn't identify the standard reasons)
+    - review or unknown → NEEDS_REVIEW
     """
     from app.models.idea import IdeaStatus
 
     recommendation = result.get('recommendation', {}) or {}
     action = recommendation.get('action', 'review')
     existing_feature = result.get('existing_feature_info')
-    det_has_match = bool(
-        deterministic_existing_feature_match
-        and deterministic_existing_feature_match.get('has_match')
-    )
     reasoning = (recommendation.get('reasoning') or '').lower()
 
     if action == 'merge':
         return IdeaStatus.DUPLICATE
 
     if action == 'reject':
-        if existing_feature or det_has_match:
+        if existing_feature:
             return IdeaStatus.FEATURE_EXISTS
-        if any(kw in reasoning for kw in EXISTING_FEATURE_KEYWORDS):
-            return IdeaStatus.FEATURE_EXISTS
-        if any(kw in reasoning for kw in DUPLICATE_KEYWORDS):
-            return IdeaStatus.DUPLICATE
         if any(kw in reasoning for kw in NOT_APPROPRIATE_KEYWORDS):
             return IdeaStatus.NOT_APPROPRIATE
         return IdeaStatus.NEEDS_REVIEW
@@ -235,9 +220,10 @@ Your role is to analyze new feature ideas and provide intelligent triage decisio
    - Maintain a professional but warm tone
 
 5. **Existing Feature Detection**
-   - Check if the idea matches an existing product feature
-   - If a matching feature is detected, recommend REJECT with existing_feature_info
-   - Provide the feature name, description, and source URL if available
+   - The user prompt may include a deterministic similarity signal flagging an existing product feature with a high cosine-similarity match. You MUST explicitly consider this signal in your reasoning.
+   - If you AGREE the idea overlaps with the existing feature, recommend REJECT and you MUST populate existing_feature_info (feature name, description, source URL if available). The classifier maps `reject + existing_feature_info` to FEATURE_EXISTS.
+   - If you DISAGREE (the idea looks similar in wording but addresses a meaningfully different need), state that explicitly in your reasoning ("similar to X but different because Y") and choose APPROVE / MERGE / REVIEW as appropriate. Do NOT populate existing_feature_info in this case.
+   - Never silently ignore a flagged similarity match — agree explicitly or disagree explicitly.
 
 6. **Recommendation**
    - APPROVE: High-quality, unique idea ready for voting (confidence > 0.9)
@@ -338,14 +324,19 @@ Always respond with valid JSON matching the specified schema."""
         if existing_feature_match and existing_feature_match.get('has_match'):
             best_match = existing_feature_match.get('best_match', {})
             feature_exists_str = f"""
-**⚠️ EXISTING PRODUCT FEATURE DETECTED (similarity >= 0.85):**
+**⚠️ POTENTIAL EXISTING FEATURE MATCH (similarity >= 0.85):**
   - Feature Name: {best_match.get('feature_name', 'Unknown')}
   - Description: {best_match.get('feature_description', '')}
   - Similarity Score: {best_match.get('similarity_score', 0):.2f}
   - Source: {best_match.get('source_url') or 'N/A'}
 
-  **IMPORTANT**: This idea appears to describe functionality that ALREADY EXISTS in the product.
-  You should recommend REJECT action and include the existing_feature_info in your response."""
+  This is an embedding similarity signal — high textual overlap, but YOUR JUDGMENT decides
+  whether the idea actually duplicates this feature.
+  - If you AGREE it duplicates: recommend REJECT and populate existing_feature_info.
+  - If you DISAGREE (similar wording, different need): state explicitly in reasoning
+    why it's different and choose APPROVE / MERGE / REVIEW accordingly. Do NOT populate
+    existing_feature_info.
+  - Never silently ignore this signal."""
         else:
             feature_exists_str = ""
 
@@ -579,13 +570,13 @@ IMPORTANT:
         result: Dict[str, Any],
         auto_respond_enabled: bool = False,
         auto_respond_threshold: float = 0.9,
-        deterministic_existing_feature_match: Optional[Dict[str, Any]] = None,
     ) -> "IdeaStatus":
         """Decide the idea.status to write, gating auto-execute behind threshold.
 
         Two-layer model:
-        - Layer 1 (classify_recommendation, module-level): map agent output +
-          deterministic signals to a recommended IdeaStatus. Pure mapping.
+        - Layer 1 (classify_recommendation, module-level): map agent output to
+          a recommended IdeaStatus. The agent is the arbiter — deterministic
+          signals are inputs to its prompt, not overrides on its output.
         - Layer 2 (this method): when auto-respond is enabled, execute the
           recommended status if confidence clears the threshold; otherwise
           hold for PM review. When auto-respond is disabled, always
@@ -599,7 +590,7 @@ IMPORTANT:
         """
         from app.models.idea import IdeaStatus
 
-        recommended = classify_recommendation(result, deterministic_existing_feature_match)
+        recommended = classify_recommendation(result)
 
         if not auto_respond_enabled:
             return IdeaStatus.NEEDS_REVIEW

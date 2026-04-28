@@ -420,19 +420,14 @@ export default function IdeaResponseModal({
                               </svg>
                               <span className="text-sm font-medium text-orange-800">Similar Existing Feature Detected</span>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs px-2 py-0.5 bg-orange-200 text-orange-800 rounded-full">
-                                {Math.round(recommendation.source_summary.existing_feature.similarity_score * 100)}% match
-                              </span>
-                              <svg
-                                className={`w-4 h-4 text-orange-400 transition-transform ${showExistingFeature ? 'rotate-180' : ''}`}
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                              >
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                              </svg>
-                            </div>
+                            <svg
+                              className={`w-4 h-4 text-orange-400 transition-transform ${showExistingFeature ? 'rotate-180' : ''}`}
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
                           </div>
                           <p className="mt-1 text-sm text-orange-700">
                             This idea may overlap with: <strong>{recommendation.source_summary.existing_feature.feature_name}</strong>
