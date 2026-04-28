@@ -134,3 +134,64 @@ class TestTriageRecommendationClassification:
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["recommended_status"] == "approved"
+
+    def test_existing_feature_with_na_source_url_returns_null(
+        self, client, po_user, test_product, db_session
+    ):
+        """Historical rows persisted before the write-time sanitizer may have
+        source_url='N/A' (the agent echoed the placeholder from the prompt).
+        The recommendation API must scrub this at read time so the frontend
+        doesn't render a relative URL like localhost:5173/N/A."""
+        idea = _make_idea(
+            db_session,
+            test_product.id,
+            triage_recommendation="reject",
+            triage_confidence=0.85,
+            triage_reasoning="overlaps existing functionality",
+            competitive_context={
+                "existing_feature": {
+                    "feature_name": "X",
+                    "feature_description": "...",
+                    "similarity_score": 0.91,
+                    "source_url": "N/A",
+                },
+            },
+        )
+        resp = client.get(
+            f"/ideas/{idea.id}/triage-recommendation",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        existing_feature = body.get("source_summary", {}).get("existing_feature")
+        assert existing_feature is not None
+        assert existing_feature["source_url"] is None
+        # Other fields preserved.
+        assert existing_feature["feature_name"] == "X"
+
+    def test_existing_feature_with_valid_url_passes_through(
+        self, client, po_user, test_product, db_session
+    ):
+        idea = _make_idea(
+            db_session,
+            test_product.id,
+            triage_recommendation="reject",
+            triage_confidence=0.95,
+            triage_reasoning="overlaps existing functionality",
+            competitive_context={
+                "existing_feature": {
+                    "feature_name": "Y",
+                    "feature_description": "...",
+                    "similarity_score": 0.92,
+                    "source_url": "https://docs.example.com/feature-y",
+                },
+            },
+        )
+        resp = client.get(
+            f"/ideas/{idea.id}/triage-recommendation",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        existing_feature = body["source_summary"]["existing_feature"]
+        assert existing_feature["source_url"] == "https://docs.example.com/feature-y"

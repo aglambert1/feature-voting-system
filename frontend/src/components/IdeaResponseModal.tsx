@@ -452,19 +452,26 @@ export default function IdeaResponseModal({
                                   </p>
                                 </div>
                               )}
-                              {recommendation.source_summary.existing_feature.source_url && (
-                                <div>
-                                  <p className="text-xs text-gray-500 mb-1">Documentation</p>
-                                  <a
-                                    href={recommendation.source_summary.existing_feature.source_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-sm text-blue-600 hover:text-blue-800 underline"
-                                  >
-                                    View documentation →
-                                  </a>
-                                </div>
-                              )}
+                              {(() => {
+                                const url = recommendation.source_summary.existing_feature.source_url;
+                                const isHttpUrl =
+                                  typeof url === 'string' &&
+                                  /^https?:\/\//i.test(url.trim());
+                                if (!isHttpUrl) return null;
+                                return (
+                                  <div>
+                                    <p className="text-xs text-gray-500 mb-1">Documentation</p>
+                                    <a
+                                      href={url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-sm text-blue-600 hover:text-blue-800 underline"
+                                    >
+                                      View documentation →
+                                    </a>
+                                  </div>
+                                );
+                              })()}
                               <div className="pt-2 border-t border-gray-100">
                                 <p className="text-xs text-orange-600">
                                   <strong>Note:</strong> If competitor features offer additional capabilities beyond what exists today,
