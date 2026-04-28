@@ -258,6 +258,14 @@ Provide a structured analysis including:
 - Auto-response for customer
 - Clear recommendation with reasoning
 
+**Reasoning Vocabulary:**
+
+Your `reasoning` field is shown to product managers in the UI. Describe the idea's classification in user-facing terms — describe the *category* the idea falls into, not the internal action you're picking. The PM marks the idea's status themselves; do not phrase reasoning as a directive to them.
+
+- DO write: "This duplicates an existing product feature" / "This is off-topic for the product" / "This is a duplicate of idea #42" / "This is a clear, unique enhancement worth voting on"
+- DO NOT write: "Recommend REJECT" / "Recommend APPROVE" / "Mark as FEATURE_EXISTS" / "Set status to ..."
+- Referencing the deterministic similarity score in your reasoning is fine when it informed your conclusion (e.g., "the 0.88 similarity match to existing feature X confirms..."). The internal `action` enum (approve/merge/review/reject) is implementation detail and should never appear in PM-facing prose.
+
 Always respond with valid JSON matching the specified schema."""
 
     def build_user_prompt(self, input_data: Dict[str, Any]) -> str:
