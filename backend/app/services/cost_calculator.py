@@ -17,6 +17,18 @@ MODEL_PRICING = {
         "input_per_1m": 3.00,
         "output_per_1m": 15.00,
     },
+    "claude-haiku-4-5-20251001": {
+        "input_per_1m": 1.00,
+        "output_per_1m": 5.00,
+    },
+    # Unpinned alias — used by callers that don't pin a specific revision so
+    # they get free upgrades when Anthropic ships patch versions. Cost
+    # tracking keys on whatever model string was sent or returned by the API,
+    # so we register both forms.
+    "claude-haiku-4-5": {
+        "input_per_1m": 1.00,
+        "output_per_1m": 5.00,
+    },
     # Claude 3.5 models
     "claude-3-5-sonnet-20241022": {
         "input_per_1m": 3.00,

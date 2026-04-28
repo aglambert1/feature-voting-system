@@ -147,6 +147,19 @@ def _link_idea_to_job(db, idea, similarity_threshold: float = 0.5) -> Optional[s
     return None
 
 
+def _extract_competitor_names(competitive_evidence) -> list:
+    """Extract the competitor list from a SynthesizedOpportunity.competitive_evidence blob.
+
+    Returns [] when the blob is null or missing competitors (e.g., customer-only opp).
+    Used by both the auto-gen path in unified_synthesis_task and the manual
+    create-from-opportunity endpoint so triage gets the same competitor data
+    in both flows.
+    """
+    if not isinstance(competitive_evidence, dict):
+        return []
+    return [c for c in (competitive_evidence.get("competitors") or []) if c]
+
+
 @shared_task(bind=True, name='app.queue.tasks.analyze_product_task', soft_time_limit=300)
 def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
     """
@@ -669,6 +682,30 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             limit=3
         )
 
+        # Find related synthesis opportunities so the agent knows whether this
+        # idea has already been identified as an opportunity for the product.
+        # Especially important for ideas created from a parent opportunity
+        # (manual create-from-opp endpoint or auto-gen path).
+        from app.models.synthesis import SynthesizedOpportunity
+        related_opps_list = []
+        seen_opp_ids = set()
+        opportunity_id = (idea.source_metadata or {}).get('opportunity_id')
+        if opportunity_id:
+            direct = db.query(SynthesizedOpportunity).filter_by(id=opportunity_id).first()
+            if direct:
+                related_opps_list.append(direct)
+                seen_opp_ids.add(direct.id)
+        title_fragment = (idea.title or '')[:40]
+        if title_fragment.strip():
+            fuzzy_q = db.query(SynthesizedOpportunity).filter(
+                SynthesizedOpportunity.product_id == idea.product_id,
+                SynthesizedOpportunity.opportunity_name.ilike(f"%{title_fragment}%"),
+            ).order_by(SynthesizedOpportunity.priority_score.desc()).limit(3).all()
+            for opp in fuzzy_q:
+                if opp.id not in seen_opp_ids:
+                    related_opps_list.append(opp)
+                    seen_opp_ids.add(opp.id)
+
         # Get product context
         product = db.query(CIProduct).filter(CIProduct.id == idea.product_id).first()
         product_context = {}
@@ -726,7 +763,19 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
                     }
                     for m in product_feature_result.matches
                 ]
-            }
+            },
+            'related_synthesis_opportunities': [
+                {
+                    'opportunity_id': o.id,
+                    'opportunity_name': o.opportunity_name,
+                    'priority_score': float(o.priority_score) if o.priority_score is not None else None,
+                    'investment_tier': o.investment_tier,
+                    'job_id_key': o.job_id_key,
+                    'has_linked_idea': o.linked_idea_id is not None,
+                    'sources': o.sources or [],
+                }
+                for o in related_opps_list[:3]
+            ],
         }
 
         # Run triage agent
@@ -749,22 +798,17 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             auto_respond_enabled = product.idea_triage_auto_enabled
             auto_respond_threshold = getattr(product, 'idea_triage_auto_threshold', 0.9)
 
-        # Apply existing feature fallback BEFORE status determination
-        # If agent didn't populate existing_feature_info but we detected a match, use the detected match
-        if not triage_result.get('existing_feature_info') and product_feature_result.has_match and product_feature_result.best_match:
-            triage_result['existing_feature_info'] = {
-                'feature_name': product_feature_result.best_match.feature_name,
-                'feature_description': product_feature_result.best_match.feature_description,
-                'similarity_score': product_feature_result.best_match.similarity_score,
-                'source_url': product_feature_result.best_match.source_url,
-            }
-
-        # Determine status (only auto-approves if auto-respond is enabled)
-        # Returns IdeaStatus enum directly
+        # Determine status (only auto-approves if auto-respond is enabled).
+        # The agent is the arbiter; the deterministic existing-feature
+        # similarity signal is passed into the agent's prompt (above) and the
+        # agent decides whether to populate existing_feature_info. We do NOT
+        # backfill existing_feature_info from the deterministic match — if the
+        # agent didn't populate it, the agent disagreed that the idea actually
+        # duplicates the matched feature, and we trust that judgment.
         new_status = agent.determine_triage_status(
             triage_result,
             auto_respond_enabled=auto_respond_enabled,
-            auto_respond_threshold=auto_respond_threshold
+            auto_respond_threshold=auto_respond_threshold,
         )
 
         # Get recommendation details
@@ -1095,22 +1139,15 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             auto_respond_enabled = product.idea_triage_auto_enabled
             auto_respond_threshold = getattr(product, 'idea_triage_auto_threshold', 0.9)
 
-        # Apply existing feature fallback BEFORE status determination
-        # If agent didn't populate existing_feature_info but we detected a match, use the detected match
-        if not triage_result.get('existing_feature_info') and product_feature_result.has_match and product_feature_result.best_match:
-            triage_result['existing_feature_info'] = {
-                'feature_name': product_feature_result.best_match.feature_name,
-                'feature_description': product_feature_result.best_match.feature_description,
-                'similarity_score': product_feature_result.best_match.similarity_score,
-                'source_url': product_feature_result.best_match.source_url,
-            }
-
-        # Determine status (only auto-approves if auto-respond is enabled)
-        # Returns IdeaStatus enum directly
+        # Determine status (only auto-approves if auto-respond is enabled).
+        # Agent is the arbiter; deterministic similarity signal lives in the
+        # prompt. We do NOT backfill existing_feature_info — if the agent didn't
+        # populate it, the agent disagreed that the idea actually duplicates
+        # the matched feature.
         new_status = agent.determine_triage_status(
             triage_result,
             auto_respond_enabled=auto_respond_enabled,
-            auto_respond_threshold=auto_respond_threshold
+            auto_respond_threshold=auto_respond_threshold,
         )
 
         recommendation = triage_result.get('recommendation', {})
@@ -3126,6 +3163,7 @@ def unified_synthesis_task(self, job_id: int):
                 if existing_idea:
                     continue
 
+                competitors_with = _extract_competitor_names(opp.get("competitive_evidence"))
                 source_metadata = {
                     "synthesis_report_id": synthesis_report.id,
                     "synthesis_report_version": synthesis_report.report_version,
@@ -3134,6 +3172,8 @@ def unified_synthesis_task(self, job_id: int):
                     "sources": opp.get("sources") or [],
                     "job_id_key": opp.get("job_id_key"),
                     "investment_tier": opp.get("investment_tier"),
+                    "competitors_with_feature": competitors_with,
+                    "competitor_names": competitors_with,
                 }
 
                 use_case_lines = ["Synthesized from multiple sources:"]

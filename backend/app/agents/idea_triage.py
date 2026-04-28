@@ -19,6 +19,54 @@ if TYPE_CHECKING:
     from app.models.idea import IdeaStatus
 
 
+NOT_APPROPRIATE_KEYWORDS = [
+    'off-topic', 'off topic', 'out of scope', 'not relevant',
+    'unrelated to', 'inappropriate content', 'offensive',
+    'spam', 'not applicable',
+]
+
+
+def classify_recommendation(result: Dict[str, Any]) -> "IdeaStatus":
+    """Map an agent triage result to a recommended IdeaStatus.
+
+    The agent is the arbiter. Its action + structured fields decide the status;
+    deterministic similarity signals are inputs to the agent's prompt, not
+    overrides on its output. Runs both during auto-execute (in
+    determine_triage_status) and for the PM-facing recommendation API.
+
+    Action semantics:
+    - merge → DUPLICATE
+    - approve → ACCEPTED
+    - reject + existing_feature_info → FEATURE_EXISTS (agent affirmatively
+      identified an existing-feature overlap)
+    - reject + off-topic / offensive reasoning → NOT_APPROPRIATE (rare by design)
+    - reject without either → NEEDS_REVIEW (defer to PM; the agent rejected
+      but didn't identify the standard reasons)
+    - review or unknown → NEEDS_REVIEW
+    """
+    from app.models.idea import IdeaStatus
+
+    recommendation = result.get('recommendation', {}) or {}
+    action = recommendation.get('action', 'review')
+    existing_feature = result.get('existing_feature_info')
+    reasoning = (recommendation.get('reasoning') or '').lower()
+
+    if action == 'merge':
+        return IdeaStatus.DUPLICATE
+
+    if action == 'reject':
+        if existing_feature:
+            return IdeaStatus.FEATURE_EXISTS
+        if any(kw in reasoning for kw in NOT_APPROPRIATE_KEYWORDS):
+            return IdeaStatus.NOT_APPROPRIATE
+        return IdeaStatus.NEEDS_REVIEW
+
+    if action == 'approve':
+        return IdeaStatus.ACCEPTED
+
+    return IdeaStatus.NEEDS_REVIEW
+
+
 class SimilarIdeaInfo(BaseModel):
     """Information about a similar idea found."""
     idea_id: int = Field(..., description="ID of the similar idea")
@@ -172,24 +220,32 @@ Your role is to analyze new feature ideas and provide intelligent triage decisio
    - Maintain a professional but warm tone
 
 5. **Existing Feature Detection**
-   - Check if the idea matches an existing product feature
-   - If a matching feature is detected, recommend REJECT with existing_feature_info
-   - Provide the feature name, description, and source URL if available
+   - The user prompt may include a deterministic similarity signal flagging an existing product feature with a high cosine-similarity match. You MUST explicitly consider this signal in your reasoning.
+   - If you AGREE the idea overlaps with the existing feature, recommend REJECT and you MUST populate existing_feature_info (feature name, description, source URL if available). The classifier maps `reject + existing_feature_info` to FEATURE_EXISTS.
+   - If you DISAGREE (the idea looks similar in wording but addresses a meaningfully different need), state that explicitly in your reasoning ("similar to X but different because Y") and choose APPROVE / MERGE / REVIEW as appropriate. Do NOT populate existing_feature_info in this case.
+   - Never silently ignore a flagged similarity match — agree explicitly or disagree explicitly.
 
 6. **Recommendation**
-   - APPROVE: High-quality, unique idea ready for voting (confidence > 0.9)
-   - MERGE: Clear duplicate of existing idea (provide merge target)
+   Pick the category that best fits the idea. Confidence is a separate signal —
+   set it honestly to reflect how sure you are about the category you picked.
+   Do NOT confuse "the idea is low-quality" with "I am unsure" — a clearly
+   off-topic submission is a HIGH-confidence reject, not a low-confidence one.
+   Downstream code uses confidence + a configurable threshold to decide whether
+   to auto-execute the recommendation; it is not your job to gate yourself.
+
+   - APPROVE: High-quality, unique idea ready for voting
+   - MERGE: Clear duplicate of an existing idea (provide merge target)
    - REJECT (Feature Exists): Idea matches an existing product feature (provide existing_feature_info)
-   - REJECT: Low quality, off-topic, or clearly inappropriate (confidence < 0.5)
-   - REVIEW: Needs PM review (ambiguous, sensitive, or moderate confidence)
+   - REJECT: Off-topic for this product, spam, or clearly inappropriate content
+   - REVIEW: Genuinely ambiguous — you cannot confidently place it in any other category
 
 **Decision Guidelines:**
 
-- Default to REVIEW when uncertain
+- Pick REVIEW only when the categorization itself is ambiguous, not when the idea is low-quality
 - Consider the product's current priorities and roadmap
 - Weight competitive pressure appropriately
 - Be generous with approval for clear, actionable ideas
-- Reserve rejection for clearly problematic submissions
+- If a Related Synthesis Opportunity exists with high priority, prefer APPROVE; if it has "already has linked Idea", prefer MERGE
 
 7. **Jobs-to-be-Done Extraction**
    - Extract the underlying job the customer is hiring this feature to do
@@ -207,6 +263,14 @@ Provide a structured analysis including:
 - Competitive context assessment
 - Auto-response for customer
 - Clear recommendation with reasoning
+
+**Reasoning Vocabulary:**
+
+Your `reasoning` field is shown to product managers in the UI. Describe the idea's classification in user-facing terms — describe the *category* the idea falls into, not the internal action you're picking. The PM marks the idea's status themselves; do not phrase reasoning as a directive to them.
+
+- DO write: "This duplicates an existing product feature" / "This is off-topic for the product" / "This is a duplicate of idea #42" / "This is a clear, unique enhancement worth voting on"
+- DO NOT write: "Recommend REJECT" / "Recommend APPROVE" / "Mark as FEATURE_EXISTS" / "Set status to ..."
+- Referencing the deterministic similarity score in your reasoning is fine when it informed your conclusion (e.g., "the 0.88 similarity match to existing feature X confirms..."). The internal `action` enum (approve/merge/review/reject) is implementation detail and should never appear in PM-facing prose.
 
 Always respond with valid JSON matching the specified schema."""
 
@@ -274,16 +338,39 @@ Always respond with valid JSON matching the specified schema."""
         if existing_feature_match and existing_feature_match.get('has_match'):
             best_match = existing_feature_match.get('best_match', {})
             feature_exists_str = f"""
-**⚠️ EXISTING PRODUCT FEATURE DETECTED (similarity >= 0.85):**
+**⚠️ POTENTIAL EXISTING FEATURE MATCH (similarity >= 0.85):**
   - Feature Name: {best_match.get('feature_name', 'Unknown')}
   - Description: {best_match.get('feature_description', '')}
   - Similarity Score: {best_match.get('similarity_score', 0):.2f}
   - Source: {best_match.get('source_url') or 'N/A'}
 
-  **IMPORTANT**: This idea appears to describe functionality that ALREADY EXISTS in the product.
-  You should recommend REJECT action and include the existing_feature_info in your response."""
+  This is an embedding similarity signal — high textual overlap, but YOUR JUDGMENT decides
+  whether the idea actually duplicates this feature.
+  - If you AGREE it duplicates: recommend REJECT and populate existing_feature_info.
+  - If you DISAGREE (similar wording, different need): state explicitly in reasoning
+    why it's different and choose APPROVE / MERGE / REVIEW accordingly. Do NOT populate
+    existing_feature_info.
+  - Never silently ignore this signal."""
         else:
             feature_exists_str = ""
+
+        # Format related synthesis opportunities — opportunities the team has
+        # already identified that overlap with this idea.
+        related_opps = input_data.get('related_synthesis_opportunities') or []
+        if related_opps:
+            opp_lines = []
+            for o in related_opps:
+                score = o.get('priority_score')
+                score_str = f"{score:.0f}" if isinstance(score, (int, float)) else "N/A"
+                linked = " (already has linked Idea)" if o.get('has_linked_idea') else ""
+                tier = o.get('investment_tier') or "?"
+                opp_lines.append(
+                    f"  - [Opp #{o.get('opportunity_id')}] {o.get('opportunity_name')} "
+                    f"(priority: {score_str}, tier: {tier}){linked}"
+                )
+            related_opps_str = "\n**Related Synthesis Opportunities (team-identified):**\n" + "\n".join(opp_lines)
+        else:
+            related_opps_str = ""
 
         prompt = f"""IDEA TRIAGE TASK
 
@@ -308,6 +395,7 @@ Source: {source_type}
 {competitors_str}
 {urgency_str}
 {feature_exists_str}
+{related_opps_str}
 
 **Existing Categories in System:**
 {categories_str}
@@ -329,7 +417,8 @@ Source: {source_type}
 - USE the structured urgency level (LOW/MEDIUM/HIGH/CRITICAL) provided above
 - Include the urgency_reasoning from the structured assessment in your competitive_context
 - Auto-response MUST be concise (under 100 words): thank them briefly, acknowledge their idea, mention next steps
-- Default to REVIEW if uncertain about approval/rejection
+- Pick REVIEW only when the categorization itself is genuinely ambiguous (not as a hedge)
+- An off-topic / spam / clearly inappropriate submission is a HIGH-confidence REJECT, not a REVIEW
 - Consider if the idea is actionable and clearly defined
 
 **Required Output Format (JSON):**
@@ -495,77 +584,39 @@ IMPORTANT:
         self,
         result: Dict[str, Any],
         auto_respond_enabled: bool = False,
-        auto_respond_threshold: float = 0.9
+        auto_respond_threshold: float = 0.9,
     ) -> "IdeaStatus":
-        """
-        Determine the idea status based on agent output.
+        """Decide the idea.status to write, gating auto-execute behind threshold.
 
-        Args:
-            result: The agent's triage result
-            auto_respond_enabled: Whether auto-respond is enabled for the product
-            auto_respond_threshold: Confidence threshold for auto-approval
+        Two-layer model:
+        - Layer 1 (classify_recommendation, module-level): map agent output to
+          a recommended IdeaStatus. The agent is the arbiter — deterministic
+          signals are inputs to its prompt, not overrides on its output.
+        - Layer 2 (this method): when auto-respond is enabled, execute the
+          recommended status if confidence clears the threshold; otherwise
+          hold for PM review. When auto-respond is disabled, always
+          NEEDS_REVIEW (the agent's classified recommendation is still
+          stored and surfaced via the recommendation API).
 
-        Returns:
-            IdeaStatus enum value:
-            - NEEDS_REVIEW: Awaiting PO review
-            - ACCEPTED: Approved for voting
-            - DUPLICATE: Matches existing idea
-            - FEATURE_EXISTS: Already exists in product
-            - NOT_APPROPRIATE: Rejected/off-topic
-
-        When auto_respond_enabled is False:
-            - Always returns NEEDS_REVIEW so PO can review the recommendation
-            - The agent's recommendation is stored but not acted upon
-
-        When auto_respond_enabled is True:
-            - Returns the appropriate status based on agent recommendation
-            - FEATURE_EXISTS if action=reject and existing_feature_info present and confidence >= threshold
-            - ACCEPTED if action=approve and confidence >= threshold
-            - DUPLICATE if action=merge
-            - NEEDS_REVIEW if action=reject but reasoning mentions existing functionality
-              (fallback when agent didn't populate existing_feature_info)
-            - NOT_APPROPRIATE if action=reject and confidence >= 0.7 (for truly inappropriate content)
-            - NEEDS_REVIEW otherwise
+        DUPLICATE is unconditional once auto-respond is on because the merge
+        target ID itself is a deterministic check. All other classified
+        statuses (ACCEPTED, FEATURE_EXISTS, NOT_APPROPRIATE) gate behind
+        auto_respond_threshold.
         """
         from app.models.idea import IdeaStatus
 
-        # When auto-respond is OFF, always return needs_review
-        # The PO will see the agent's recommendation and decide
+        recommended = classify_recommendation(result)
+
         if not auto_respond_enabled:
             return IdeaStatus.NEEDS_REVIEW
 
-        # Auto-respond is ON - apply the agent's recommendation
-        recommendation = result.get('recommendation', {})
-        action = recommendation.get('action', 'review')
-        confidence = recommendation.get('confidence', 0.5)
-        existing_feature = result.get('existing_feature_info')
-
-        # Check for feature exists (reject action with existing feature info)
-        # Uses product's auto_respond_threshold for confidence check
-        if action == 'reject' and existing_feature:
-            if confidence >= auto_respond_threshold:
-                return IdeaStatus.FEATURE_EXISTS  # Auto-mark as feature exists
-            else:
-                return IdeaStatus.NEEDS_REVIEW  # Potential match, needs PM review
-
-        if action == 'merge':
-            return IdeaStatus.DUPLICATE
-        elif action == 'reject' and confidence >= self.REJECT_THRESHOLD:
-            # Check if reasoning indicates this is about existing functionality
-            # (fallback for when agent doesn't populate existing_feature_info)
-            reasoning = recommendation.get('reasoning', '').lower()
-            existing_feature_keywords = [
-                'already exists', 'existing feature', 'existing functionality',
-                'currently available', 'already available', 'already have',
-                'duplicate of existing', 'feature exists', 'functionality exists'
-            ]
-            if any(keyword in reasoning for keyword in existing_feature_keywords):
-                # Agent identified existing feature in reasoning but didn't populate existing_feature_info
-                # Route to NEEDS_REVIEW so PM can verify and set FEATURE_EXISTS
-                return IdeaStatus.NEEDS_REVIEW
-            # Only auto-reject as NOT_APPROPRIATE if we're confident and it's not about existing features
-            return IdeaStatus.NOT_APPROPRIATE if confidence >= 0.7 else IdeaStatus.NEEDS_REVIEW
-        elif action == 'approve' and confidence >= auto_respond_threshold:
-            return IdeaStatus.ACCEPTED
-        else:
+        if recommended == IdeaStatus.NEEDS_REVIEW:
             return IdeaStatus.NEEDS_REVIEW
+
+        if recommended == IdeaStatus.DUPLICATE:
+            return IdeaStatus.DUPLICATE
+
+        confidence = (result.get('recommendation') or {}).get('confidence', 0.5)
+        if confidence >= auto_respond_threshold:
+            return recommended
+        return IdeaStatus.NEEDS_REVIEW

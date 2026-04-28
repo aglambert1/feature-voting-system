@@ -98,8 +98,13 @@ class LLMService:
     def __init__(self):
         """Initialize the Anthropic client."""
         self.client = Anthropic(api_key=settings.anthropic_api_key)
-        # Use Claude 3 Haiku (fast and cost-effective for structuring tasks)
-        self.model = "claude-3-haiku-20240307"
+        # Haiku is appropriate for short text-structuring tasks (fast, cheap).
+        # Use the unpinned alias so we don't need to update this every time
+        # Anthropic ships a patch revision. Pinned dates (e.g.,
+        # claude-3-haiku-20240307) get retired and silently break callers.
+        # Other agents route through llm_service.call_agent() which uses
+        # settings.claude_model; this self.model is only used by structure_idea.
+        self.model = "claude-haiku-4-5"
 
     def structure_idea(self, freeform_text: str, product_context: Dict[str, any] = None) -> Dict[str, any]:
         """
