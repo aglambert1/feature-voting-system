@@ -24,6 +24,7 @@ from app.models.competitive_reports import CompetitorAlert
 from app.models.competitive_agent import CompetitiveAgentConfig
 from app.services.queue_service import QueueService
 from app.services.llm_service import LLMService
+from app.services.competitive_report_metrics import count_gaps
 from app.agents.product_analyzer import ProductAnalyzerAgent
 from app.agents.competitor_researcher import CompetitorResearcherAgent
 from app.utils.url import normalize_url, extract_domain
@@ -1770,7 +1771,12 @@ def functional_audit_task(self, job_id: int):
             'competitor_name': competitor.competitor_name,
             'report_version': report.report_version,
             'features_compared': len(result['functional_comparison']),
-            'gaps_identified': len(result['gaps_deep_dive']),
+            # Use the unified helper that prefers functional_comparison, falls
+            # back to job_assessments. Pre-PR-#33 the gap count came from
+            # gaps_deep_dive but the JTBD redesign moved gaps into the per-job
+            # features array; reading the legacy field always returned 0 once
+            # job maps existed.
+            'gaps_identified': count_gaps(result),
             'stages_completed': ['stage_1', 'stage_2'],
             'stage_1_output': stage_1,
             'stage_2_output': stage_2,

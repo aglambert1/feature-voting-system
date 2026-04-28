@@ -29,6 +29,7 @@ from app.models.competitive_reports import (
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.services.queue_service import QueueService
 from app.services.permission_service import PermissionService
+from app.services.competitive_report_metrics import count_gaps
 from app.models.competitor_intelligence import ProductPermissionLevel
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
 from app.utils.url import extract_domain
@@ -1442,7 +1443,7 @@ def list_functional_reports(
         ).first()
 
         features_compared = len(report.functional_comparison) if report.functional_comparison else 0
-        gaps_identified = len(report.gaps_deep_dive) if report.gaps_deep_dive else 0
+        gaps_identified = count_gaps(report)
 
         result.append(FunctionalReportSummary(
             id=report.id,
