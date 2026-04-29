@@ -794,6 +794,11 @@ class IdeaDetailResponse(BaseModel):
     updated_at: datetime
     comments: List[IdeaCommentResponse] = []
     status_history: List[StatusHistoryEntryResponse] = []
+    # Vote tally for the idea — same shape as IdeaResponse.vote_counts.
+    # Required so the detail page can show a live count without a parallel
+    # call to /ideas/{id}.
+    vote_counts: VoteCount
+    user_vote: Optional[int] = None
     # Competitive context - only populated for PO/Admin users
     competitive_context: Optional[dict] = None
 
@@ -1318,6 +1323,9 @@ def get_idea_detail(
                 reviewed_at = record.created_at
             break
 
+    vote_counts = get_vote_counts(db, idea.id)
+    user_vote_value, _ = get_user_vote(db, idea.id, current_user.id)
+
     return IdeaDetailResponse(
         id=idea.id,
         title=idea.title,
@@ -1346,6 +1354,8 @@ def get_idea_detail(
         updated_at=idea.updated_at,
         comments=comments,
         status_history=status_history,
+        vote_counts=vote_counts,
+        user_vote=user_vote_value,
         competitive_context=competitive_context,
     )
 

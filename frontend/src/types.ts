@@ -608,6 +608,9 @@ export interface IdeaDetail {
   updated_at: string;
   comments: IdeaComment[];
   status_history: StatusHistoryEntry[];
+  // Vote tally — same shape as IdeaResponse.vote_counts.
+  vote_counts: VoteCount;
+  user_vote: number | null;
   // Competitive context - only populated for PO/Admin users
   competitive_context: CompetitiveContext | null;
 }

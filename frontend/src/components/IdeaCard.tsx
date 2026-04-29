@@ -175,6 +175,7 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
             <div className="flex items-start justify-between gap-4 mb-2">
               <h3 className={getTitleClassName()}>
                 {idea.title}
+                <span className="ml-2 text-sm font-normal text-gray-400">#{idea.id}</span>
               </h3>
 
               {/* PO Respond Button */}

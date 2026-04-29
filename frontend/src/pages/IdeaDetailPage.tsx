@@ -50,7 +50,7 @@ export default function IdeaDetailPage() {
     try {
       const data = await getIdeaDetail(parseInt(ideaId));
       setIdea(data);
-      setUserVote((data as any).user_vote ?? null);
+      setUserVote(data.user_vote ?? null);
 
       // Check if user can respond (PO/admin)
       try {
@@ -193,7 +193,7 @@ export default function IdeaDetailPage() {
             {/* Vote section (for approved ideas) */}
             {canVote && (
               <div className="flex flex-col items-center">
-                <div className="text-2xl font-bold text-gray-900">{(idea as any).upvotes ?? 0}</div>
+                <div className="text-2xl font-bold text-gray-900">{idea.vote_counts?.total_votes ?? 0}</div>
                 <div className="text-xs text-gray-500 mb-2">votes</div>
                 <VoteButtons
                   ideaId={idea.id}
@@ -207,7 +207,10 @@ export default function IdeaDetailPage() {
             <div className="flex-1">
               <div className="flex items-start justify-between">
                 <div>
-                  <h1 className="text-2xl font-bold text-gray-900 mb-2">{idea.title}</h1>
+                  <h1 className="text-2xl font-bold text-gray-900 mb-2">
+                    {idea.title}
+                    <span className="ml-2 text-base font-normal text-gray-400">#{idea.id}</span>
+                  </h1>
                   <div className="flex items-center gap-3 text-sm text-gray-500">
                     <span>Submitted by {idea.submitter_username || 'Unknown'}</span>
                     <span>•</span>
