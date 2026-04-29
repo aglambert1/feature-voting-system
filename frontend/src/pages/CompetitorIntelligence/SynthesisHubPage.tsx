@@ -44,6 +44,10 @@ export default function SynthesisHubPage() {
 
   const [runningJobUuid, setRunningJobUuid] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  // Bumped when a synthesis run terminally succeeds so child components that
+  // depend on competitor audit state (SynthesisCompetitorList) re-fetch
+  // without requiring a manual browser refresh.
+  const [competitorReloadKey, setCompetitorReloadKey] = useState(0);
 
   // Persist panel expansion across navigation (e.g., clicking into an idea
   // then hitting back) so the user's collapse choice survives. Matches the
@@ -118,6 +122,11 @@ export default function SynthesisHubPage() {
             setRunError(job.error_message ?? "Synthesis failed.");
           } else if (job.status === JobStatus.SUCCESS) {
             await fetchReport();
+            // Synthesis just finished — any competitors that needed audits
+            // now have CompetitorFunctionalReport rows. Bump so the
+            // SynthesisCompetitorList re-fetches and flips them from
+            // "Audit running" to "Report ready" without a manual reload.
+            setCompetitorReloadKey((k) => k + 1);
           }
         }
       } catch (err) {
@@ -300,7 +309,10 @@ export default function SynthesisHubPage() {
           </button>
           {competitorsExpanded && Number.isFinite(numProductId) && (
             <div className="mt-3">
-              <SynthesisCompetitorList productId={numProductId} />
+              <SynthesisCompetitorList
+                productId={numProductId}
+                reloadKey={competitorReloadKey}
+              />
             </div>
           )}
         </div>
