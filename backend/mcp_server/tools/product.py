@@ -693,7 +693,6 @@ def product_get_agent_config(product_id: int) -> dict:
             "deep_analysis_mode": config.deep_analysis_mode.value if config.deep_analysis_mode else "manual",
             "deep_analysis_schedule": config.deep_analysis_schedule,
             "deep_analysis_last_run": config.deep_analysis_last_run.isoformat() if config.deep_analysis_last_run else None,
-            "intensity_idea_threshold": config.intensity_idea_threshold,
         }
 
 
@@ -709,7 +708,6 @@ def product_update_agent_config(
     alert_on_disappeared_competitors: bool = None,
     deep_analysis_mode: str = "",
     deep_analysis_schedule: str = "",
-    intensity_idea_threshold: float = None,
 ) -> dict:
     """Update competitive agent scheduling configuration. Only provided fields are changed.
 
@@ -724,7 +722,6 @@ def product_update_agent_config(
         alert_on_disappeared_competitors: Alert when competitors disappear.
         deep_analysis_mode: "manual" or "scheduled".
         deep_analysis_schedule: "daily", "weekly", or "monthly".
-        intensity_idea_threshold: Priority score threshold (0.0-1.0) for auto-generating ideas from competitive gaps.
     """
     from app.models.competitive_agent import CompetitiveAgentConfig, AgentMode
 
@@ -781,11 +778,6 @@ def product_update_agent_config(
                 return {"error": f"Invalid schedule '{deep_analysis_schedule}'. Must be: {sorted(valid_schedules)}"}
             config.deep_analysis_schedule = deep_analysis_schedule
 
-        if intensity_idea_threshold is not None:
-            if not 0.0 <= intensity_idea_threshold <= 1.0:
-                return {"error": "intensity_idea_threshold must be between 0.0 and 1.0"}
-            config.intensity_idea_threshold = intensity_idea_threshold
-
         db.flush()
 
         return {
@@ -800,7 +792,6 @@ def product_update_agent_config(
             "alert_on_disappeared_competitors": config.alert_on_disappeared_competitors,
             "deep_analysis_mode": config.deep_analysis_mode.value if config.deep_analysis_mode else "manual",
             "deep_analysis_schedule": config.deep_analysis_schedule,
-            "intensity_idea_threshold": config.intensity_idea_threshold,
             "message": "Agent config updated.",
         }
 

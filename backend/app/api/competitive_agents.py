@@ -70,10 +70,6 @@ class AgentConfigResponse(BaseModel):
     deep_analysis_schedule: Optional[str]
     deep_analysis_last_run: Optional[datetime]
 
-    # Idea Auto-Generation Settings
-    intensity_similarity_threshold: float  # DEPRECATED - kept for backwards compatibility
-    intensity_idea_threshold: float  # Priority score threshold (0.0-1.0)
-
     enabled: bool
 
     class Config:
@@ -92,9 +88,6 @@ class AgentConfigUpdateRequest(BaseModel):
 
     deep_analysis_mode: Optional[str] = Field(None, pattern="^(manual|scheduled)$")
     deep_analysis_schedule: Optional[str] = Field(None, pattern="^(daily|weekly|monthly)$")
-
-    intensity_similarity_threshold: Optional[float] = Field(None, ge=0.5, le=0.95)  # DEPRECATED
-    intensity_idea_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)  # Priority threshold (0.0 = disabled)
 
     enabled: Optional[bool] = None
 
@@ -391,8 +384,6 @@ def get_agent_config(
         deep_analysis_mode=config.deep_analysis_mode.value if config.deep_analysis_mode else "manual",
         deep_analysis_schedule=config.deep_analysis_schedule,
         deep_analysis_last_run=config.deep_analysis_last_run,
-        intensity_similarity_threshold=config.intensity_similarity_threshold,
-        intensity_idea_threshold=config.intensity_idea_threshold,
         enabled=config.enabled
     )
 
@@ -425,10 +416,6 @@ def update_agent_config(
         config.deep_analysis_mode = AgentMode(request.deep_analysis_mode)
     if request.deep_analysis_schedule is not None:
         config.deep_analysis_schedule = request.deep_analysis_schedule
-    if request.intensity_similarity_threshold is not None:
-        config.intensity_similarity_threshold = request.intensity_similarity_threshold
-    if request.intensity_idea_threshold is not None:
-        config.intensity_idea_threshold = request.intensity_idea_threshold
     if request.enabled is not None:
         config.enabled = request.enabled
 
