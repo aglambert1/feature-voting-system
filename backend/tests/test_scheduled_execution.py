@@ -15,9 +15,9 @@ class TestCalculateNextRun:
 
     def test_daily_schedule(self):
         """Test daily schedule calculation."""
-        from app.queue.tasks import _calculate_next_run
+        from app.queue.scheduled_tasks import _calculate_next_run
 
-        with patch('app.queue.tasks.datetime') as mock_datetime:
+        with patch('app.queue.scheduled_tasks.datetime') as mock_datetime:
             mock_now = datetime(2024, 1, 15, 10, 0, 0)
             mock_datetime.utcnow.return_value = mock_now
 
@@ -27,9 +27,9 @@ class TestCalculateNextRun:
 
     def test_weekly_schedule(self):
         """Test weekly schedule calculation."""
-        from app.queue.tasks import _calculate_next_run
+        from app.queue.scheduled_tasks import _calculate_next_run
 
-        with patch('app.queue.tasks.datetime') as mock_datetime:
+        with patch('app.queue.scheduled_tasks.datetime') as mock_datetime:
             mock_now = datetime(2024, 1, 15, 10, 0, 0)
             mock_datetime.utcnow.return_value = mock_now
 
@@ -39,9 +39,9 @@ class TestCalculateNextRun:
 
     def test_biweekly_schedule(self):
         """Test biweekly schedule calculation."""
-        from app.queue.tasks import _calculate_next_run
+        from app.queue.scheduled_tasks import _calculate_next_run
 
-        with patch('app.queue.tasks.datetime') as mock_datetime:
+        with patch('app.queue.scheduled_tasks.datetime') as mock_datetime:
             mock_now = datetime(2024, 1, 15, 10, 0, 0)
             mock_datetime.utcnow.return_value = mock_now
 
@@ -51,9 +51,9 @@ class TestCalculateNextRun:
 
     def test_monthly_schedule(self):
         """Test monthly schedule calculation."""
-        from app.queue.tasks import _calculate_next_run
+        from app.queue.scheduled_tasks import _calculate_next_run
 
-        with patch('app.queue.tasks.datetime') as mock_datetime:
+        with patch('app.queue.scheduled_tasks.datetime') as mock_datetime:
             mock_now = datetime(2024, 1, 15, 10, 0, 0)
             mock_datetime.utcnow.return_value = mock_now
 
@@ -63,9 +63,9 @@ class TestCalculateNextRun:
 
     def test_unknown_schedule_defaults_to_weekly(self):
         """Test that unknown schedule defaults to weekly."""
-        from app.queue.tasks import _calculate_next_run
+        from app.queue.scheduled_tasks import _calculate_next_run
 
-        with patch('app.queue.tasks.datetime') as mock_datetime:
+        with patch('app.queue.scheduled_tasks.datetime') as mock_datetime:
             mock_now = datetime(2024, 1, 15, 10, 0, 0)
             mock_datetime.utcnow.return_value = mock_now
 
@@ -96,11 +96,11 @@ class TestCheckScheduledTasks:
         config.deep_analysis_mode.value = 'manual'
         return config
 
-    @patch('app.queue.tasks.get_db')
-    @patch('app.queue.tasks.QueueService')
+    @patch('app.queue.scheduled_tasks.get_db')
+    @patch('app.queue.scheduled_tasks.QueueService')
     def test_no_configs_returns_empty(self, mock_qs_class, mock_get_db, mock_db):
         """Test with no configs returns zero jobs."""
-        from app.queue.tasks import check_scheduled_tasks
+        from app.queue.scheduled_tasks import check_scheduled_tasks
 
         mock_get_db.return_value = mock_db
         mock_db.query.return_value.filter.return_value.all.return_value = []
@@ -116,11 +116,11 @@ class TestCheckScheduledTasks:
         assert result['jobs_queued']['competitor_discovery'] == []
         assert result['jobs_queued']['deep_analysis'] == []
 
-    @patch('app.queue.tasks.get_db')
-    @patch('app.queue.tasks.QueueService')
+    @patch('app.queue.scheduled_tasks.get_db')
+    @patch('app.queue.scheduled_tasks.QueueService')
     def test_manual_configs_not_queued(self, mock_qs_class, mock_get_db, mock_db, mock_config):
         """Test configs in manual mode are not queued."""
-        from app.queue.tasks import check_scheduled_tasks
+        from app.queue.scheduled_tasks import check_scheduled_tasks
         from app.models.competitive_agent import AgentMode
 
         mock_get_db.return_value = mock_db
@@ -141,14 +141,14 @@ class TestCheckScheduledTasks:
         assert result['total_jobs'] == 0
         mock_qs.create_job.assert_not_called()
 
-    @patch('app.queue.tasks.run_competitive_analysis_v2')
-    @patch('app.queue.tasks.get_db')
-    @patch('app.queue.tasks.QueueService')
+    @patch('app.queue.scheduled_tasks.run_competitive_analysis_v2')
+    @patch('app.queue.scheduled_tasks.get_db')
+    @patch('app.queue.scheduled_tasks.QueueService')
     def test_scheduled_deep_analysis_queued_when_due(
         self, mock_qs_class, mock_get_db, mock_deep_task, mock_db, mock_config
     ):
         """Test that deep analysis is queued when scheduled and due."""
-        from app.queue.tasks import check_scheduled_tasks
+        from app.queue.scheduled_tasks import check_scheduled_tasks
         from app.models.competitive_agent import AgentMode
 
         mock_get_db.return_value = mock_db
@@ -177,14 +177,14 @@ class TestCheckScheduledTasks:
         assert len(result['jobs_queued']['deep_analysis']) == 1
         mock_deep_task.delay.assert_called_once_with(1)
 
-    @patch('app.queue.tasks.discover_competitors_task')
-    @patch('app.queue.tasks.get_db')
-    @patch('app.queue.tasks.QueueService')
+    @patch('app.queue.scheduled_tasks.discover_competitors_task')
+    @patch('app.queue.scheduled_tasks.get_db')
+    @patch('app.queue.scheduled_tasks.QueueService')
     def test_scheduled_discovery_queued_when_due(
         self, mock_qs_class, mock_get_db, mock_discover_task, mock_db, mock_config
     ):
         """Test that competitor discovery is queued when scheduled and due."""
-        from app.queue.tasks import check_scheduled_tasks
+        from app.queue.scheduled_tasks import check_scheduled_tasks
         from app.models.competitive_agent import AgentMode
 
         mock_get_db.return_value = mock_db
@@ -211,14 +211,14 @@ class TestCheckScheduledTasks:
         assert len(result['jobs_queued']['competitor_discovery']) == 1
         mock_discover_task.delay.assert_called_once_with(1)
 
-    @patch('app.queue.tasks.analyze_product_task')
-    @patch('app.queue.tasks.get_db')
-    @patch('app.queue.tasks.QueueService')
+    @patch('app.queue.scheduled_tasks.analyze_product_task')
+    @patch('app.queue.scheduled_tasks.get_db')
+    @patch('app.queue.scheduled_tasks.QueueService')
     def test_scheduled_product_analysis_queued_when_due(
         self, mock_qs_class, mock_get_db, mock_product_task, mock_db, mock_config
     ):
         """Test that product analysis is queued when scheduled and due."""
-        from app.queue.tasks import check_scheduled_tasks
+        from app.queue.scheduled_tasks import check_scheduled_tasks
         from app.models.competitive_agent import AgentMode
 
         mock_get_db.return_value = mock_db
@@ -245,11 +245,11 @@ class TestCheckScheduledTasks:
         assert len(result['jobs_queued']['product_analysis']) == 1
         mock_product_task.delay.assert_called_once_with(1)
 
-    @patch('app.queue.tasks.get_db')
-    @patch('app.queue.tasks.QueueService')
+    @patch('app.queue.scheduled_tasks.get_db')
+    @patch('app.queue.scheduled_tasks.QueueService')
     def test_scheduled_not_due_yet(self, mock_qs_class, mock_get_db, mock_db, mock_config):
         """Test that scheduled tasks not yet due are not queued."""
-        from app.queue.tasks import check_scheduled_tasks
+        from app.queue.scheduled_tasks import check_scheduled_tasks
         from app.models.competitive_agent import AgentMode
 
         mock_get_db.return_value = mock_db
@@ -272,17 +272,17 @@ class TestCheckScheduledTasks:
         assert result['total_jobs'] == 0
         mock_qs.create_job.assert_not_called()
 
-    @patch('app.queue.tasks.run_competitive_analysis_v2')
-    @patch('app.queue.tasks.discover_competitors_task')
-    @patch('app.queue.tasks.analyze_product_task')
-    @patch('app.queue.tasks.get_db')
-    @patch('app.queue.tasks.QueueService')
+    @patch('app.queue.scheduled_tasks.run_competitive_analysis_v2')
+    @patch('app.queue.scheduled_tasks.discover_competitors_task')
+    @patch('app.queue.scheduled_tasks.analyze_product_task')
+    @patch('app.queue.scheduled_tasks.get_db')
+    @patch('app.queue.scheduled_tasks.QueueService')
     def test_multiple_tasks_queued_for_one_product(
         self, mock_qs_class, mock_get_db, mock_product_task,
         mock_discover_task, mock_deep_task, mock_db, mock_config
     ):
         """Test multiple tasks can be queued for a single product."""
-        from app.queue.tasks import check_scheduled_tasks
+        from app.queue.scheduled_tasks import check_scheduled_tasks
         from app.models.competitive_agent import AgentMode
 
         mock_get_db.return_value = mock_db
@@ -318,12 +318,12 @@ class TestCheckScheduledTasks:
         assert len(result['jobs_queued']['competitor_discovery']) == 1
         assert len(result['jobs_queued']['deep_analysis']) == 1
 
-    @patch('app.queue.tasks.run_competitive_analysis_v2')
-    @patch('app.queue.tasks.get_db')
-    @patch('app.queue.tasks.QueueService')
+    @patch('app.queue.scheduled_tasks.run_competitive_analysis_v2')
+    @patch('app.queue.scheduled_tasks.get_db')
+    @patch('app.queue.scheduled_tasks.QueueService')
     def test_multiple_products(self, mock_qs_class, mock_get_db, mock_deep_task, mock_db):
         """Test scheduler handles multiple products."""
-        from app.queue.tasks import check_scheduled_tasks
+        from app.queue.scheduled_tasks import check_scheduled_tasks
         from app.models.competitive_agent import AgentMode
 
         mock_get_db.return_value = mock_db
@@ -363,11 +363,11 @@ class TestCheckScheduledTasks:
         assert result['total_jobs'] == 2
         assert len(result['jobs_queued']['deep_analysis']) == 2
 
-    @patch('app.queue.tasks.get_db')
-    @patch('app.queue.tasks.QueueService')
+    @patch('app.queue.scheduled_tasks.get_db')
+    @patch('app.queue.scheduled_tasks.QueueService')
     def test_continues_on_product_error(self, mock_qs_class, mock_get_db, mock_db):
         """Test that errors on one product don't stop processing others."""
-        from app.queue.tasks import check_scheduled_tasks
+        from app.queue.scheduled_tasks import check_scheduled_tasks
         from app.models.competitive_agent import AgentMode
 
         mock_get_db.return_value = mock_db
@@ -413,21 +413,21 @@ class TestCeleryBeatConfiguration:
         assert 'check-scheduled-agent-tasks' in celery_app.conf.beat_schedule
 
         schedule_entry = celery_app.conf.beat_schedule['check-scheduled-agent-tasks']
-        assert schedule_entry['task'] == 'app.queue.tasks.check_scheduled_tasks'
+        assert schedule_entry['task'] == 'app.queue.scheduled_tasks.check_scheduled_tasks'
         assert schedule_entry['schedule'] == 86400.0  # Daily
 
 
 class TestNextRunUpdates:
     """Test that next_run times are properly updated after scheduling."""
 
-    @patch('app.queue.tasks.run_competitive_analysis_v2')
-    @patch('app.queue.tasks.get_db')
-    @patch('app.queue.tasks.QueueService')
+    @patch('app.queue.scheduled_tasks.run_competitive_analysis_v2')
+    @patch('app.queue.scheduled_tasks.get_db')
+    @patch('app.queue.scheduled_tasks.QueueService')
     def test_next_run_updated_after_scheduling(
         self, mock_qs_class, mock_get_db, mock_deep_task
     ):
         """Test that last_run and next_run are updated after scheduling."""
-        from app.queue.tasks import check_scheduled_tasks
+        from app.queue.scheduled_tasks import check_scheduled_tasks
         from app.models.competitive_agent import AgentMode
 
         mock_db = MagicMock()

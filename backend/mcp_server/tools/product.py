@@ -446,7 +446,7 @@ def product_run_analysis(
             user_id=resolve_user_id_for_job(db, product_id),
         )
 
-        from app.queue.tasks import analyze_product_task
+        from app.queue.product_tasks import analyze_product_task
         from mcp_server.db import dispatch_task
         result = dispatch_task(analyze_product_task, job.id)
         queue_service.mark_queued(job.id, result.id)
@@ -573,7 +573,7 @@ def product_full_analysis(product_id: int) -> dict:
             user_id=resolve_user_id_for_job(db, product_id),
         )
 
-        from app.queue.tasks import analyze_product_task
+        from app.queue.product_tasks import analyze_product_task
         from mcp_server.db import dispatch_task
         result = dispatch_task(analyze_product_task, job.id)
         queue_service.mark_queued(job.id, result.id)
@@ -990,7 +990,7 @@ def product_extract_job_map(product_id: int, guidance: str = "") -> dict:
             user_id=resolve_user_id_for_job(db, product_id),
         )
 
-        from app.queue.tasks import extract_job_map_task
+        from app.queue.jtbd_tasks import extract_job_map_task
         from mcp_server.db import dispatch_task
         result = dispatch_task(extract_job_map_task, job.id)
         queue_service.mark_queued(job.id, result.id)

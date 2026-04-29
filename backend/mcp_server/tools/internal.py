@@ -298,7 +298,7 @@ def internal_submit_feedback(
     from app.models.internal_feedback import InternalFeedbackImport
     from app.models.queue import JobType
     from app.services.queue_service import QueueService
-    from app.queue.tasks import internal_discovery_task
+    from app.queue.internal_tasks import internal_discovery_task
 
     with get_session() as db:
         denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)

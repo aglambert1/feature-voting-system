@@ -16,7 +16,7 @@ import pytest
 
 from app.models.queue import QueueJob, JobStatus, JobType
 from app.models.competitor_intelligence import ProductCompetitor
-from app.queue.tasks import _bump_parent_synthesis_progress
+from app.queue.helpers import _bump_parent_synthesis_progress
 
 
 def _make_synthesis_job(db_session, product_id: int, **overrides) -> QueueJob:
@@ -132,14 +132,14 @@ class TestUnifiedSynthesisChordDispatch:
         db_session.refresh(c)
         return c
 
-    @patch("app.queue.tasks.SessionLocal")
+    @patch("app.queue.synthesis_tasks.SessionLocal")
     @patch("celery.chord")
     def test_dispatches_chord_when_audits_missing(
         self, mock_chord, mock_session_local, db_session, test_product
     ):
         """When at least one included competitor has no functional report,
         the task must call chord(audit_signatures)(resume_callback)."""
-        from app.queue.tasks import unified_synthesis_task
+        from app.queue.synthesis_tasks import unified_synthesis_task
 
         mock_session_local.return_value = db_session
 

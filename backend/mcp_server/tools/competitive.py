@@ -230,7 +230,7 @@ def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
     """
     from app.models.queue import JobType
     from app.services.queue_service import QueueService
-    from app.queue.tasks import discover_competitors_task
+    from app.queue.competitor_tasks import discover_competitors_task
 
     max_competitors = max(1, min(20, max_competitors))
 
@@ -333,7 +333,7 @@ def ci_run_competitor_audit(
             user_id=resolve_user_id_for_job(db, product_id),
         )
 
-        from app.queue.tasks import functional_audit_task
+        from app.queue.competitor_tasks import functional_audit_task
         from mcp_server.db import dispatch_task
         result = dispatch_task(functional_audit_task, job.id)
         queue_service.mark_queued(job.id, result.id)

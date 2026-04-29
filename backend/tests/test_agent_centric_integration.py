@@ -72,14 +72,14 @@ class TestScheduledExecutionIntegration:
         """Create a mock database session."""
         return MagicMock()
 
-    @patch('app.queue.tasks.run_competitive_analysis_v2')
-    @patch('app.queue.tasks.get_db')
-    @patch('app.queue.tasks.QueueService')
+    @patch('app.queue.scheduled_tasks.run_competitive_analysis_v2')
+    @patch('app.queue.scheduled_tasks.get_db')
+    @patch('app.queue.scheduled_tasks.QueueService')
     def test_scheduled_task_dispatches_v2_analysis(
         self, mock_qs_class, mock_get_db, mock_v2_task, mock_db
     ):
         """Test that scheduled task correctly dispatches V2 competitive analysis."""
-        from app.queue.tasks import check_scheduled_tasks
+        from app.queue.scheduled_tasks import check_scheduled_tasks
         from app.models.competitive_agent import CompetitiveAgentConfig, AgentMode
 
         mock_get_db.return_value = mock_db
@@ -127,7 +127,7 @@ class TestEndToEndWorkflow:
         )
 
         # Tasks
-        from app.queue.tasks import (
+        from app.queue.scheduled_tasks import (
             check_scheduled_tasks,
         )
 
@@ -156,7 +156,7 @@ class TestEndToEndWorkflow:
 
         assert 'check-scheduled-agent-tasks' in celery_app.conf.beat_schedule
         entry = celery_app.conf.beat_schedule['check-scheduled-agent-tasks']
-        assert entry['task'] == 'app.queue.tasks.check_scheduled_tasks'
+        assert entry['task'] == 'app.queue.scheduled_tasks.check_scheduled_tasks'
 
     def test_api_router_registered(self):
         """Verify competitive_agents router is registered."""

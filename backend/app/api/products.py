@@ -1390,7 +1390,7 @@ def queue_product_analysis(
         409: If analysis job already running for this product
     """
     from app.services.permission_service import PermissionService
-    from app.queue.tasks import analyze_product_task
+    from app.queue.product_tasks import analyze_product_task
     from app.services.scoped_input_validator import validate_scoped_inputs, ScopedInputError
 
     # Validate scoped inputs before any DB work
@@ -1885,7 +1885,7 @@ def queue_competitor_discovery(
         409: If discovery job already running
     """
     from app.services.permission_service import PermissionService
-    from app.queue.tasks import discover_competitors_task
+    from app.queue.competitor_tasks import discover_competitors_task
 
     # Check permission
     permission_service = PermissionService(db)
