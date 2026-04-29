@@ -12,7 +12,7 @@ Analysis results are stored in CompetitorFunctionalReport
 
 from sqlalchemy import (
     Column, Integer, String, DateTime, ForeignKey,
-    Enum, Boolean, Float
+    Enum, Boolean
 )
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -71,16 +71,11 @@ class CompetitiveAgentConfig(Base):
     deep_analysis_next_run = Column(DateTime, nullable=True)
     deep_analysis_last_run = Column(DateTime, nullable=True)
 
-    # === Idea Auto-Generation Settings ===
-    # Controls when ideas are automatically generated from competitive analysis
-    # DEPRECATED: intensity_similarity_threshold - was used for legacy feature clustering
-    intensity_similarity_threshold = Column(Float, nullable=False, default=0.75)  # DEPRECATED - kept for migration
-    # V2: Priority score threshold (0.0-1.0) - ideas with priority >= this are auto-generated
-    # 0.0 = disabled, 0.5 = all, 0.7 = high priority only, 0.85 = critical only
-    intensity_idea_threshold = Column(Float, nullable=False, default=0.0)  # Priority threshold (was Integer)
-    # Note: Once idea is generated, Idea Triage Agent handles dedup, auto-accept, etc.
-
     # === General ===
+    # Auto-idea-generation settings used to live here as `intensity_*` columns.
+    # The JTBD redesign (PR #33) moved them onto SynthesisConfig
+    # (auto_generate_ideas + idea_priority_threshold), and those columns were
+    # dropped in n4o5p6q7r8s9.
     enabled = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -110,8 +105,6 @@ class CompetitiveAgentConfig(Base):
             "deep_analysis_schedule": self.deep_analysis_schedule,
             "deep_analysis_next_run": self.deep_analysis_next_run.isoformat() if self.deep_analysis_next_run else None,
             "deep_analysis_last_run": self.deep_analysis_last_run.isoformat() if self.deep_analysis_last_run else None,
-            "intensity_similarity_threshold": self.intensity_similarity_threshold,
-            "intensity_idea_threshold": self.intensity_idea_threshold,
             "enabled": self.enabled,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

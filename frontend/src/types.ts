@@ -768,10 +768,6 @@ export interface CompetitiveAgentConfig {
   deep_analysis_schedule: ScheduleFrequency | null;
   deep_analysis_last_run: string | null;
 
-  // Idea Auto-Generation Settings
-  intensity_similarity_threshold: number;  // DEPRECATED - kept for backwards compatibility
-  intensity_idea_threshold: number;  // Priority score threshold (0.0-1.0)
-
   enabled: boolean;
 }
 
@@ -789,9 +785,6 @@ export interface CompetitiveAgentConfigUpdate {
 
   deep_analysis_mode?: AgentMode | string;
   deep_analysis_schedule?: ScheduleFrequency;
-
-  intensity_similarity_threshold?: number;
-  intensity_idea_threshold?: number;
 
   enabled?: boolean;
 }

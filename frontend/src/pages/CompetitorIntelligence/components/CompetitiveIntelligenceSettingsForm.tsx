@@ -7,12 +7,10 @@
  * Settings:
  * - Schedule mode (manual/scheduled) and frequency
  * - Advanced: separate schedules for discovery vs analysis
- * - Feature similarity threshold for clustering
  * - Alerts for competitor changes
  *
  * Idea generation is configured on SynthesisConfig in the Synthesis Hub,
- * not here. The legacy `intensity_idea_threshold` field on CompetitiveAgentConfig
- * is orphaned.
+ * not here.
  */
 
 import { useState, useEffect } from 'react';
@@ -23,7 +21,6 @@ export interface SettingsFormData {
   competitor_discovery_schedule?: ScheduleFrequency;
   deep_analysis_mode?: 'manual' | 'scheduled';
   deep_analysis_schedule?: ScheduleFrequency;
-  intensity_similarity_threshold?: number;
   alert_on_new_competitors?: boolean;
   alert_on_disappeared_competitors?: boolean;
 }
