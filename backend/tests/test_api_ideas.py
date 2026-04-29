@@ -288,6 +288,24 @@ class TestIdeaDetail:
         assert "comments" in data
         assert "status_history" in data
 
+    def test_get_idea_detail_includes_vote_counts(self, client, voter_user, test_idea):
+        """Regression: the detail endpoint must include vote_counts so the
+        IdeaDetailPage can render a live count without a parallel call to
+        /ideas/{id}. Previously it omitted vote_counts entirely and the
+        frontend read a non-existent `upvotes` field that always evaluated
+        to 0."""
+        resp = client.get(
+            f"/ideas/{test_idea.id}/detail",
+            headers=auth_headers(voter_user)
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "vote_counts" in data
+        assert isinstance(data["vote_counts"], dict)
+        assert "upvotes" in data["vote_counts"]
+        assert "total_votes" in data["vote_counts"]
+        assert "user_vote" in data
+
     def test_get_idea_detail_not_found(self, client, voter_user):
         resp = client.get(
             "/ideas/99999/detail",
