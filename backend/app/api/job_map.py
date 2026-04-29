@@ -235,7 +235,7 @@ def extract_job_map(
         user_id=current_user.id,
     )
 
-    from app.queue.tasks import extract_job_map_task
+    from app.queue.jtbd_tasks import extract_job_map_task
     extract_job_map_task.delay(job.id)
 
     return {

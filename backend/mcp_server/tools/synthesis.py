@@ -281,7 +281,7 @@ def synthesis_run_unified(product_id: int) -> dict:
     """
     from app.models.queue import JobType
     from app.services.queue_service import QueueService
-    from app.queue.tasks import unified_synthesis_task
+    from app.queue.synthesis_tasks import unified_synthesis_task
 
     with get_session() as db:
         denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)

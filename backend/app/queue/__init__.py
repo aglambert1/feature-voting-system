@@ -2,7 +2,9 @@
 Celery application configuration for background task processing.
 
 This module sets up the Celery app with Redis as the message broker
-and result backend. Tasks are auto-discovered from the tasks module.
+and result backend. Tasks are split across `app.queue.<group>_tasks`
+modules; each module is listed in the `include` argument so Celery
+discovers them at worker startup.
 
 NOTE: On macOS, Celery must be started with --pool=solo or --pool=threads
 to avoid SIGABRT crashes. The default 'fork' pool can cause issues on macOS.
@@ -24,7 +26,15 @@ celery_app = Celery(
     'feature_voting',
     broker=broker_url,
     backend=result_backend,
-    include=['app.queue.tasks']
+    include=[
+        'app.queue.product_tasks',
+        'app.queue.competitor_tasks',
+        'app.queue.triage_tasks',
+        'app.queue.scheduled_tasks',
+        'app.queue.internal_tasks',
+        'app.queue.jtbd_tasks',
+        'app.queue.synthesis_tasks',
+    ]
 )
 
 # Celery configuration
@@ -74,7 +84,7 @@ celery_app.conf.update(
     beat_schedule={
         # Runs daily to check what's due based on each product's schedule config
         'check-scheduled-agent-tasks': {
-            'task': 'app.queue.tasks.check_scheduled_tasks',
+            'task': 'app.queue.scheduled_tasks.check_scheduled_tasks',
             'schedule': 86400.0,  # Run once per day (24 * 60 * 60 seconds)
             # Checks CompetitiveAgentConfig for each product and queues work if due:
             # - Product analysis (if scheduled mode and next_run <= now)

@@ -262,7 +262,7 @@ def _create_manual(db, product_id: int, title: str, description: str) -> dict:
 
     from app.models.queue import JobType
     from app.services.queue_service import QueueService
-    from app.queue.tasks import submit_and_triage_idea_task
+    from app.queue.triage_tasks import submit_and_triage_idea_task
     from mcp_server.db import dispatch_task
 
     queue_service = QueueService(db)
@@ -343,7 +343,7 @@ def _create_from_gaps(db, product_id: int, competitor_name: str) -> dict:
     from app.models.idea import Idea, IdeaStatus, SourceType
     from app.models.queue import JobType
     from app.services.queue_service import QueueService
-    from app.queue.tasks import triage_idea_task
+    from app.queue.triage_tasks import triage_idea_task
     from mcp_server.db import dispatch_task
 
     competitor = db.query(ProductCompetitor).filter(

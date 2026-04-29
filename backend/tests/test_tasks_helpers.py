@@ -1,4 +1,4 @@
-"""Unit tests for pure helpers in app/queue/tasks.py.
+"""Unit tests for pure helpers in app/queue/helpers.py.
 
 These don't touch Celery or the DB — they cover the small functions used by
 the triage and synthesis paths to keep their data hygiene predictable.
@@ -6,7 +6,7 @@ the triage and synthesis paths to keep their data hygiene predictable.
 
 import pytest
 
-from app.queue.tasks import _extract_competitor_names, _sanitize_existing_feature_info
+from app.queue.helpers import _extract_competitor_names, _sanitize_existing_feature_info
 
 
 class TestExtractCompetitorNames:

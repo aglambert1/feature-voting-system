@@ -222,4 +222,7 @@ class TestSendCeleryTaskGuard:
             celery_utils.send_celery_task("unified_synthesis_task", 7)
 
         mock_send.assert_called_once()
-        assert mock_send.call_args.args[0] == "app.queue.tasks.unified_synthesis_task"
+        assert (
+            mock_send.call_args.args[0]
+            == "app.queue.synthesis_tasks.unified_synthesis_task"
+        )

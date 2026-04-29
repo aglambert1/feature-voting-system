@@ -587,7 +587,7 @@ async def create_idea_from_opportunity(
             detail=f"Opportunity already has linked idea {opportunity.linked_idea_id}",
         )
 
-    from app.queue.tasks import _extract_competitor_names
+    from app.queue.helpers import _extract_competitor_names
     competitors_with = _extract_competitor_names(opportunity.competitive_evidence)
     source_metadata = {
         "synthesis_report_id": opportunity.synthesis_report_id,

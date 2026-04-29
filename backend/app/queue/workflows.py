@@ -16,5 +16,6 @@ Use the V2 workflow via the competitive_agents.py API endpoints:
 
 # This file is kept for documentation purposes.
 # All workflow functionality has been moved to:
-# - backend/app/queue/tasks.py (functional_audit_task, unified_synthesis_task)
+# - backend/app/queue/competitor_tasks.py (functional_audit_task)
+# - backend/app/queue/synthesis_tasks.py (unified_synthesis_task)
 # - backend/app/api/competitive_agents.py + backend/app/api/unified_synthesis.py

@@ -146,7 +146,7 @@ class IdeaGenerationService:
         triage_jobs_queued = 0
 
         # Import triage task here to avoid circular imports
-        from app.queue.tasks import triage_idea_task
+        from app.queue.triage_tasks import triage_idea_task
         queue_service = QueueService(self.db)
 
         for idea_data in agent_result.get('ideas', []):

@@ -158,7 +158,7 @@ def _patch_db_and_agent(db_session):
     """
     # 1. Route the task's SessionLocal to our test DB
     session_patch = patch(
-        "app.queue.tasks.SessionLocal",
+        "app.queue.competitor_tasks.SessionLocal",
         return_value=db_session,
     )
     # 2. Patch execute_stage_1/2 on the real agent class so no LLM is called
@@ -172,7 +172,7 @@ def _patch_db_and_agent(db_session):
     )
     # 3. LLMService is instantiated in the task but never called once execute_*
     #    is mocked; patch it to avoid any Anthropic key validation side effects.
-    llm_patch = patch("app.queue.tasks.LLMService")
+    llm_patch = patch("app.queue.competitor_tasks.LLMService")
 
     return [session_patch, stage_1_patch, stage_2_patch, llm_patch]
 
@@ -184,7 +184,7 @@ def _run_task_with_patches(db_session, job_id, extra_patches=None):
     `.run()` bypasses the task registry and executes inline, which is what
     we want for unit tests.
     """
-    from app.queue.tasks import functional_audit_task
+    from app.queue.competitor_tasks import functional_audit_task
 
     patches = _patch_db_and_agent(db_session)
     if extra_patches:
@@ -258,8 +258,8 @@ class TestStagedAuditTask:
             calls["stage_2_arg"] = input_data
             return STAGE_2_RESULT
 
-        with patch("app.queue.tasks.SessionLocal", return_value=db_session), \
-             patch("app.queue.tasks.LLMService"), \
+        with patch("app.queue.competitor_tasks.SessionLocal", return_value=db_session), \
+             patch("app.queue.competitor_tasks.LLMService"), \
              patch(
                  "app.agents.functional_audit_agent.CompetitorFunctionalAuditAgent.execute_stage_1",
                  new=capture_stage_1,
@@ -268,7 +268,7 @@ class TestStagedAuditTask:
                  "app.agents.functional_audit_agent.CompetitorFunctionalAuditAgent.execute_stage_2",
                  new=capture_stage_2,
              ):
-            from app.queue.tasks import functional_audit_task
+            from app.queue.competitor_tasks import functional_audit_task
             functional_audit_task.run(queued_audit_job.id)
 
         assert calls["stage_1_arg"] is not None, "Stage 1 was not invoked"
