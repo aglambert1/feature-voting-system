@@ -18,6 +18,11 @@ import type { SynthesisCompetitorConfigEntry } from '../../../types';
 
 interface SynthesisCompetitorListProps {
   productId: number;
+  // Bumped by the parent SynthesisHubPage whenever a synthesis run finishes
+  // (or starts) — tells this component to re-fetch so freshly-completed
+  // audits flip from "Audit running" to "Report ready" without a manual
+  // browser reload.
+  reloadKey?: number;
 }
 
 type FreshnessState =
@@ -42,7 +47,10 @@ function reportFreshness(entry: SynthesisCompetitorConfigEntry): FreshnessState 
   };
 }
 
-export default function SynthesisCompetitorList({ productId }: SynthesisCompetitorListProps) {
+export default function SynthesisCompetitorList({
+  productId,
+  reloadKey,
+}: SynthesisCompetitorListProps) {
   const [competitors, setCompetitors] = useState<SynthesisCompetitorConfigEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -63,7 +71,10 @@ export default function SynthesisCompetitorList({ productId }: SynthesisCompetit
 
   useEffect(() => {
     load();
-  }, [load]);
+    // reloadKey is intentionally part of the dependency list so a parent-
+    // initiated bump triggers a fresh fetch even when productId is unchanged.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, reloadKey]);
 
   const handleToggle = async (entry: SynthesisCompetitorConfigEntry) => {
     setRowError(null);
