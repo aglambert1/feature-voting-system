@@ -1,256 +1,71 @@
-# Feature Voting System - Backend
+# Feature-IQ Backend
 
-A simple FastAPI backend with user authentication to get you started with web development!
+FastAPI backend for Feature-IQ — competitive product intelligence built around Jobs-to-be-Done.
 
-## What You've Built
+## Start here
 
-This is a basic REST API with:
-- User registration and login
-- JWT token authentication
-- SQLite database (easy for learning)
-- Comprehensive code comments explaining everything
+For getting started, architecture, and a guided walkthrough:
 
-## Project Structure
+→ **[../docs/getting-started/](../docs/getting-started/)**
+
+The quickstart covers fresh setup, running the server, running Celery, and a 10-minute tour of the major features.
+
+## Backend layout
 
 ```
-backend/
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # Main FastAPI application
-│   ├── config.py            # Settings and configuration
-│   ├── database.py          # Database connection
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── user.py          # User database model
-│   ├── schemas/
-│   │   ├── __init__.py
-│   │   └── auth.py          # Request/response schemas
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── auth.py          # Authentication routes
-│   └── utils/
-│       ├── __init__.py
-│       └── security.py      # Password hashing, JWT tokens
-├── requirements.txt         # Python dependencies
-├── .env.example            # Example environment variables
-└── README.md               # This file
+app/
+  api/            FastAPI routers (auth, ideas, votes, products, synthesis, etc.)
+  agents/         LLM-driven analysts (10 agents, all subclassing BaseAgent)
+  models/         SQLAlchemy models (User, Idea, CIProduct, ProductJob, ...)
+  queue/          Celery tasks (split across 7 domain files)
+  schemas/        Pydantic request/response schemas
+  services/       Cross-cutting services (LLM, embeddings, vector, queue, search)
+  utils/          Shared utilities
+
+alembic/          Database migrations (must support SQLite + PostgreSQL)
+mcp_server/       MCP server for Claude Desktop (79 tools across 10 files)
+scripts/          Management scripts (see scripts/README.md)
+tests/            Pytest test suite
 ```
 
-## Getting Started
-
-### 1. Set Up Python Environment
+## Common commands
 
 ```bash
-# Navigate to the backend directory
-cd backend
+# Run the API server
+./venv/bin/python -m uvicorn app.main:app --reload --port 8000
 
-# Create a virtual environment (keeps packages isolated)
-python -m venv venv
+# Run the Celery worker (required for any background work)
+./venv/bin/celery -A app.queue worker --loglevel=info --pool=solo  # macOS
+./venv/bin/celery -A app.queue worker --loglevel=info              # Linux
 
-# Activate the virtual environment
-# On macOS/Linux:
-source venv/bin/activate
-# On Windows:
-# venv\Scripts\activate
+# Run the test suite
+./venv/bin/python -m pytest tests/ -v
 
-# Install dependencies
-pip install -r requirements.txt
+# Apply migrations
+./venv/bin/alembic upgrade head
+
+# Create a migration
+./venv/bin/alembic revision --autogenerate -m "description"
 ```
 
-### 2. Configure Environment Variables
+## Environment variables
 
-```bash
-# Copy the example env file
-cp .env.example .env
+Copy `.env.example` to `.env` and fill in:
 
-# Edit .env and set a secure SECRET_KEY
-# Generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
+| Key | Required | Purpose |
+|---|---|---|
+| `SECRET_KEY` | yes | JWT signing key |
+| `ANTHROPIC_API_KEY` | yes | Claude API for agents |
+| `VOYAGE_API_KEY` | yes | Embeddings (1024 dims) |
+| `BRAVE_API_KEY` | recommended | Web research for competitor audits |
+| `DATABASE_URL` | yes | SQLite for local dev, PostgreSQL for prod |
+| `REDIS_URL` | yes | Celery broker |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | yes | Bootstrap admin user |
+| `DEV_OTP_BYPASS` | dev only | Fixed OTP code when `DEBUG=true` |
 
-### 3. Run the Server
+## Other docs
 
-```bash
-# Start the development server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# The --reload flag automatically restarts the server when you change code
-```
-
-### 4. Test It Out!
-
-Open your browser and visit:
-- **API Documentation**: http://localhost:8000/docs (interactive Swagger UI)
-- **Alternative Docs**: http://localhost:8000/redoc (ReDoc format)
-- **Health Check**: http://localhost:8000/health
-
-## How to Use the API
-
-### Option 1: Interactive Documentation (Easiest!)
-
-1. Go to http://localhost:8000/docs
-2. Click on any endpoint to expand it
-3. Click "Try it out"
-4. Fill in the required fields
-5. Click "Execute"
-
-### Option 2: Using curl (Command Line)
-
-```bash
-# 1. Register a new user
-curl -X POST "http://localhost:8000/auth/register" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "test@example.com",
-    "username": "testuser",
-    "password": "password123",
-    "full_name": "Test User"
-  }'
-
-# 2. Login to get an access token
-curl -X POST "http://localhost:8000/auth/login" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=testuser&password=password123"
-
-# You'll get a response like:
-# {"access_token":"eyJhbGc...", "token_type":"bearer"}
-
-# 3. Use the token to access protected routes
-curl -X GET "http://localhost:8000/auth/me" \
-  -H "Authorization: Bearer YOUR_TOKEN_HERE"
-```
-
-### Option 3: Using Python requests
-
-```python
-import requests
-
-# Base URL
-BASE_URL = "http://localhost:8000"
-
-# 1. Register
-response = requests.post(
-    f"{BASE_URL}/auth/register",
-    json={
-        "email": "test@example.com",
-        "username": "testuser",
-        "password": "password123",
-        "full_name": "Test User"
-    }
-)
-print(response.json())
-
-# 2. Login
-response = requests.post(
-    f"{BASE_URL}/auth/login",
-    data={
-        "username": "testuser",
-        "password": "password123"
-    }
-)
-token = response.json()["access_token"]
-
-# 3. Get current user info
-response = requests.get(
-    f"{BASE_URL}/auth/me",
-    headers={"Authorization": f"Bearer {token}"}
-)
-print(response.json())
-```
-
-## Understanding the Code
-
-### How Authentication Works
-
-1. **Registration** (`POST /auth/register`):
-   - User sends email, username, and password
-   - Password is hashed using bcrypt (never stored as plain text!)
-   - User is saved to the database
-   - User info is returned (without password)
-
-2. **Login** (`POST /auth/login`):
-   - User sends username/email and password
-   - System finds user and verifies password
-   - If correct, creates a JWT token
-   - Token is returned to the user
-
-3. **Protected Routes** (`GET /auth/me`):
-   - User sends token in Authorization header
-   - System decodes and validates token
-   - User info is extracted from token
-   - Route function receives the current user
-
-### Key Concepts
-
-- **Models** (`models/user.py`): Define database structure
-- **Schemas** (`schemas/auth.py`): Define API request/response format
-- **Routes** (`api/auth.py`): Handle HTTP requests
-- **Security** (`utils/security.py`): Password hashing, JWT tokens
-- **Dependencies**: FastAPI's way of sharing code between routes
-
-## Database
-
-This starter uses **SQLite** - a simple file-based database perfect for learning. The database file is created automatically as `feature_voting.db` when you first run the server.
-
-### View the Database
-
-```bash
-# Install SQLite browser (optional)
-# macOS: brew install --cask db-browser-for-sqlite
-# Then open feature_voting.db
-
-# Or use command line:
-sqlite3 feature_voting.db
-# Then: SELECT * FROM users;
-```
-
-### Upgrade to PostgreSQL Later
-
-When you're ready, update `.env`:
-```
-DATABASE_URL=postgresql://username:password@localhost:5432/dbname
-```
-
-And update `database.py` to remove the SQLite-specific `connect_args`.
-
-## Common Issues
-
-### Issue: "Module not found"
-Make sure your virtual environment is activated:
-```bash
-source venv/bin/activate  # macOS/Linux
-```
-
-### Issue: "Address already in use"
-Another process is using port 8000. Either:
-- Stop the other process
-- Use a different port: `uvicorn app.main:app --reload --port 8001`
-
-### Issue: "Could not validate credentials"
-- Make sure you're using the correct token
-- Tokens expire after 30 minutes - login again
-- Check that you're sending the token in the Authorization header
-
-## Next Steps
-
-Now that you have basic authentication working, you can:
-
-1. **Add More Models**: Create models for ideas, votes, etc.
-2. **Add More Routes**: Build endpoints for creating and voting on ideas
-3. **Add Tests**: Write tests for your endpoints
-4. **Build a Frontend**: Create a React app to interact with this API
-5. **Deploy**: Put your app online (Railway, Render, etc.)
-
-## Learning Resources
-
-- **FastAPI Tutorial**: https://fastapi.tiangolo.com/tutorial/
-- **SQLAlchemy Basics**: https://docs.sqlalchemy.org/en/20/tutorial/
-- **JWT Tokens**: https://jwt.io/introduction
-- **HTTP Status Codes**: https://httpstatuses.com/
-
-## Need Help?
-
-- Check the comments in the code - they explain what each part does
-- Read the FastAPI docs - they're excellent!
-- The `/docs` endpoint shows you exactly what each endpoint expects
-
-Happy coding! 🚀
+- **[scripts/README.md](scripts/README.md)** — management scripts, demo seeding, MCP server, migrations
+- **[VECTOR_SEARCH_SETUP.md](VECTOR_SEARCH_SETUP.md)** — Voyage AI + pgvector setup
+- **[PASSWORD_MANAGEMENT.md](PASSWORD_MANAGEMENT.md)** — password reset / OTP flow
+- **[DEV_MODE_OTP.md](DEV_MODE_OTP.md)** — dev-only OTP bypass
