@@ -16,6 +16,8 @@ This is the most powerful way to use Feature-IQ. No coding required.
 
 ## Setup (3 steps)
 
+> **Note**: this guide uses an API-key setup. The MCP server also supports OAuth, which is a smoother experience (no secret to copy-paste, browser-based login). OAuth instructions will replace this section after the path is verified end-to-end against Claude Desktop on prod. If you'd prefer to try OAuth now, contact the operator for the experimental config.
+
 ### 1. Generate an API key
 
 1. Sign in at [https://feature-iq.onrender.com](https://feature-iq.onrender.com)
