@@ -2,13 +2,28 @@
 
 Feature-IQ is a competitive product intelligence platform built around **Jobs-to-be-Done** (JTBD). Product teams define the jobs their customers are trying to do, then run automated competitor audits and synthesis pipelines that surface gaps, advantages, and opportunity ideas — grounded in those jobs.
 
-This kit is the entry point for new users and demo audiences.
+This kit serves three audiences. Pick the one that fits.
 
-## Read these in order
+## If you've been given access to a Feature-IQ instance
 
-1. **[Architecture](architecture.md)** — what the system does, the JTBD model, the major components, and how they fit together. ~5 min read.
-2. **[Quickstart](quickstart.md)** — a hands-on 10-minute walkthrough using the seeded demo product. Log in, view a job map, run an audit, view synthesis, submit an idea.
-3. **[Tour](tour.md)** — feature inventory grouped by user role (Admin, Product Owner, PM, Voter). Use this to figure out *what to show* in a demo, or *what's available* once you're set up.
+You're a prospect or end user. Read this:
+
+- **[Welcome](welcome.md)** — what you can do today, what to try first, and where the value is. The same content also lives at `/welcome` inside the app.
+- **[Claude Desktop setup](claude-desktop.md)** — connect Claude to Feature-IQ via MCP. This is the showcase use case. 5 minutes from API key to working tools.
+
+## If you're evaluating Feature-IQ as a developer
+
+You want to understand what's there and run it locally:
+
+- **[Architecture](architecture.md)** — what the system does, the JTBD model, components, and data flows
+- **[Quickstart](quickstart.md)** — hands-on 10-minute setup and walkthrough on localhost
+- **[Tour](tour.md)** — feature inventory grouped by user role (Admin, Product Owner, PM, Voter)
+
+## If you operate the Feature-IQ deployment
+
+You're setting up demo content or running prod:
+
+- **[Demo recipe](demo-recipe.md)** — step-by-step recipe for building the curated demo product on prod. Covers the full chain: product creation, job map, competitors, audits, synthesis, ideas, and prospect access.
 
 ## What problem does Feature-IQ solve?
 
