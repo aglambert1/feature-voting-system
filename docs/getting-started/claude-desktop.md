@@ -16,34 +16,20 @@ This is the most powerful way to use Feature-IQ. No coding required.
 
 ## Setup (3 steps)
 
-> **Note**: this guide uses an API-key setup. The MCP server also supports OAuth, which is a smoother experience (no secret to copy-paste, browser-based login). OAuth instructions will replace this section after the path is verified end-to-end against Claude Desktop on prod. If you'd prefer to try OAuth now, contact the operator for the experimental config.
-
-### 1. Generate an API key
-
-1. Sign in at [https://feature-iq.onrender.com](https://feature-iq.onrender.com)
-2. Click your profile (top-right) → **API Keys**
-3. Click **Generate New Key**, give it a name like "Claude Desktop"
-4. **Copy the key immediately** — it starts with `fiq_` and is only shown once
-
-> If you don't see the **API Keys** tab, your account doesn't have Product Owner role. Ask your admin to update it.
-
-### 2. Edit your Claude Desktop config
+### 1. Edit your Claude Desktop config
 
 Open the config file:
 
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-If the file doesn't exist, create it. Add this block (replace `fiq_your_key_here` with the key you just copied):
+If the file doesn't exist, create it. Add this block:
 
 ```json
 {
   "mcpServers": {
     "feature-iq": {
-      "url": "https://feature-iq-mcp.onrender.com/mcp",
-      "headers": {
-        "Authorization": "Bearer fiq_your_key_here"
-      }
+      "url": "https://feature-iq-mcp.onrender.com/mcp"
     }
   }
 }
@@ -51,9 +37,15 @@ If the file doesn't exist, create it. Add this block (replace `fiq_your_key_here
 
 If you already have other MCP servers configured, add `feature-iq` as a sibling key inside `mcpServers`.
 
-### 3. Restart Claude Desktop
+### 2. Restart Claude Desktop
 
-Fully quit and reopen. You should see Feature-IQ tools available in the new chat window. Claude will use them automatically when relevant.
+Fully quit and reopen.
+
+### 3. Sign in when prompted
+
+The first time you use a Feature-IQ tool, Claude Desktop will open a browser window asking you to sign in to Feature-IQ. Use the credentials you were given. Approve access. The browser will redirect back to Claude Desktop and the connection will be live.
+
+You only do this once per device. Tokens are managed by Claude Desktop.
 
 ---
 
@@ -123,16 +115,19 @@ Permission scoping applies — you can only use tools against products you have 
 
 | Problem | Fix |
 |---|---|
-| Tools don't appear in Claude Desktop | Fully quit and reopen Claude Desktop (not just close window). Check the config file is valid JSON. |
-| `Authentication failed` errors | Your API key is wrong, expired, or you didn't include `Bearer ` (with the space) before it |
+| Tools don't appear in Claude Desktop | Fully quit and reopen Claude Desktop (not just close the window). Check the config file is valid JSON. |
+| Sign-in browser window doesn't open | Trigger any tool use in a chat (e.g., ask Claude to list your products). The OAuth flow only kicks off on first tool use. |
+| Sign-in succeeds but tools fail | Reconnect: remove the `feature-iq` block from your config, save, restart Claude Desktop, paste it back, restart again. This forces a fresh OAuth handshake. |
 | `Permission denied` on a product | You don't have a `ProductPermission` on that product — ask the owner |
 | Tools work but data is empty | You may be querying the demo product without read access, or your own product has no data yet — start a product analysis first |
 | Audit "kicks off" but never completes | The Celery worker may be down (operational issue, not yours) — contact the admin |
 
 ---
 
-## Local development alternative
+## Alternatives to OAuth
 
-If you're a developer running Feature-IQ locally and don't want to go through the OAuth flow, you can run the MCP server via stdio. See [backend/scripts/README.md](../../backend/scripts/README.md) for the local config.
+OAuth is the recommended path for Claude Desktop. Two other options exist for specific cases:
 
-For everyone else, the HTTP setup above is the way.
+**API key (for headless / CLI / scripted use)** — generate a key in the Feature-IQ web UI under Profile → API Keys. Use it as a `Authorization: Bearer fiq_...` header. Same MCP server, same tools — just a different auth mechanism. Useful if you're integrating Feature-IQ into a script or non-interactive client.
+
+**Local stdio (for developers running Feature-IQ locally)** — see [backend/scripts/README.md](../../backend/scripts/README.md) for the stdio config. Uses the local Python install directly, no auth.
