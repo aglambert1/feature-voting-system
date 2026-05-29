@@ -162,3 +162,8 @@ backend/data/competitive_reports/
 celerybeat-schedule
 celerybeat-schedule-shm
 celerybeat-schedule-wal
+
+# Python
+__pycache__/
+*.pem
+venv/

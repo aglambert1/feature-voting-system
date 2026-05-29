@@ -42,7 +42,7 @@ Successfully implemented LangChain + Brave Search integration with Claude's tool
 
 ```bash
 # backend/.env
-BRAVE_API_KEY=BSAkFBYExiJxQFetvzdxRwD6-kvWJY9
+BRAVE_API_KEY=your-brave-api-key-here
 ENABLE_WEB_SEARCH=false  # ← Knowledge-only mode
 ```
 
