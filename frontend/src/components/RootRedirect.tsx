@@ -9,11 +9,11 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { UserRole } from '../types';
+import { WELCOMED_FLAG } from '../pages/WelcomePage';
 
 export default function RootRedirect() {
   const { user, loading } = useAuth();
 
-  // While auth is loading, show nothing (prevents flash)
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -22,16 +22,20 @@ export default function RootRedirect() {
     );
   }
 
-  // If not logged in, redirect to login
   if (!user) {
     return <Navigate to="/login" replace />;
   }
 
-  // PO and Admin go to Product Dashboard
-  if (user.role === UserRole.ADMIN || user.role === UserRole.PRODUCT_OWNER) {
+  const isPO = user.role === UserRole.ADMIN || user.role === UserRole.PRODUCT_OWNER;
+  const hasSeenWelcome = localStorage.getItem(WELCOMED_FLAG) === '1';
+
+  if (isPO && !hasSeenWelcome) {
+    return <Navigate to="/welcome" replace />;
+  }
+
+  if (isPO) {
     return <Navigate to="/product-intelligence" replace />;
   }
 
-  // Voters go to Ideas
   return <Navigate to="/ideas" replace />;
 }
