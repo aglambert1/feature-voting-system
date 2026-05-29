@@ -1,0 +1,269 @@
+import { Link } from 'react-router-dom';
+
+const LINKEDIN_URL = 'https://www.linkedin.com/in/aglambert/';
+const GITHUB_URL = 'https://github.com/aglambert1/feature-voting-system';
+const GITHUB_DISCUSSIONS_URL = 'https://github.com/aglambert1/feature-voting-system/discussions';
+const GITHUB_ISSUES_URL = 'https://github.com/aglambert1/feature-voting-system/issues';
+const LICENSE_URL = 'https://github.com/aglambert1/feature-voting-system/blob/main/LICENSE';
+const FEEDBACK_EMAIL = 'aglambert@gmail.com';
+
+const FEATURE_IQ_FEEDBACK_INVITE_URL = 'TODO_REPLACE_WITH_INVITE_URL';
+const SCREENSHOT_JOB_MAP = '/screenshots/jobmap.png';
+const SCREENSHOT_SYNTHESIS = '/screenshots/synthesis.png';
+const LOOM_EMBED_URL = '';
+
+const LandingPage = () => {
+  return (
+    <div className="min-h-screen bg-white">
+      <nav className="border-b border-gray-200 bg-white">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex justify-between items-center">
+          <span className="text-lg font-semibold text-gray-900">Feature-IQ</span>
+          <Link
+            to="/login"
+            className="text-sm text-gray-700 hover:text-gray-900 font-medium"
+          >
+            Sign in
+          </Link>
+        </div>
+      </nav>
+
+      <main className="max-w-3xl mx-auto px-6 py-16">
+        <section className="mb-16">
+          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 leading-tight mb-6">
+            A bet on a new product management workflow.
+          </h1>
+          <p className="text-lg text-gray-700 leading-relaxed">
+            Most AI-for-PM tools speed up the old workflow. Feature-IQ is a bet on a new one.
+            The PM stays in the loop as the strategic judge — what gets built, why, and what to
+            ignore. But every step of the workflow around that judgment is transformed by AI agents.
+            Feature-IQ is one focused component of that workflow: a continuous fact-base for
+            market and customer signal, synthesized through a Jobs-to-be-Done spine, with every
+            claim traceable back to its source. It's not the only thing a PM uses, and it doesn't
+            try to be. It works today and it delivers value today — and it's also an experiment
+            in how AI is changing the practice of product management. When you use it, I want to
+            hear what you think.
+          </p>
+        </section>
+
+        <section className="mb-16">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-6">What it does today</h2>
+          <ul className="space-y-4 text-gray-700">
+            <li className="border-l-2 border-blue-500 pl-4">
+              <span className="font-medium text-gray-900">Audit a competitor in 3 minutes.</span>{' '}
+              Get back a structured comparison across your customers' Jobs-to-be-Done — not a
+              bullet list of features.
+            </li>
+            <li className="border-l-2 border-blue-500 pl-4">
+              <span className="font-medium text-gray-900">Synthesize across signals.</span>{' '}
+              Customer ideas, competitor reports, and internal feedback themes combine into
+              prioritized opportunities, each tagged to a specific job.
+            </li>
+            <li className="border-l-2 border-blue-500 pl-4">
+              <span className="font-medium text-gray-900">Ask in plain English.</span>{' '}
+              Connect Claude Desktop via MCP. Ask "what are the top opportunities and which jobs
+              do they serve?" — get an answer grounded in your own data.
+            </li>
+          </ul>
+        </section>
+
+        <section className="mb-16">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+            The job map is the spine.
+          </h2>
+          <p className="text-gray-700 mb-6">
+            You define what customers are trying to do. Audits, synthesis, and idea triage all
+            reason against the same structure. Every claim traces back to its source.
+          </p>
+          <ScreenshotSlot src={SCREENSHOT_JOB_MAP} alt="Job map editor" caption="The PO-owned job map. Functional, emotional, and social jobs." />
+        </section>
+
+        <section className="mb-16">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+            Synthesis isn't a list — it's a structured view per job.
+          </h2>
+          <p className="text-gray-700 mb-6">
+            Opportunities are scored, tier-classified, and tagged to the job they serve.
+            High-priority ones flow into the voting board as triaged ideas automatically.
+          </p>
+          <ScreenshotSlot src={SCREENSHOT_SYNTHESIS} alt="Synthesis output" caption="Unified synthesis: opportunities grouped by job, scored, and linked to ideas." />
+        </section>
+
+        {LOOM_EMBED_URL && (
+          <section className="mb-16">
+            <h2 className="text-2xl font-semibold text-gray-900 mb-6">See it in 90 seconds</h2>
+            <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden">
+              <iframe
+                src={LOOM_EMBED_URL}
+                className="w-full h-full"
+                frameBorder={0}
+                allow="fullscreen"
+                title="Feature-IQ demo"
+              />
+            </div>
+          </section>
+        )}
+
+        <section className="mb-16 bg-gray-50 border border-gray-200 rounded-lg p-8">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-4">Try it</h2>
+          <p className="text-gray-700 mb-6">
+            Access is hand-issued. Two paths:
+          </p>
+          <div className="space-y-4">
+            <div>
+              <p className="text-gray-900 font-medium mb-1">Already have credentials?</p>
+              <Link to="/login" className="text-blue-600 hover:underline">
+                Sign in →
+              </Link>
+            </div>
+            <div>
+              <p className="text-gray-900 font-medium mb-1">Want to try Feature-IQ?</p>
+              <p className="text-gray-700 text-sm">
+                Email{' '}
+                <a href={`mailto:${FEEDBACK_EMAIL}?subject=Feature-IQ access request`} className="text-blue-600 hover:underline">
+                  {FEEDBACK_EMAIL}
+                </a>
+                {' '}with a sentence on what you'd want to use it for. I'll set up an account and send credentials.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="mb-16">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-4">
+            Part of a broader transformation
+          </h2>
+          <p className="text-gray-700 mb-6">
+            Feature-IQ is one bet on how AI is reshaping the practice of product management.
+            The bigger conversation — what changes, what doesn't, what's still missing — is
+            happening across the industry. Your feedback shapes both this tool and that
+            conversation. Three ways to engage:
+          </p>
+          <div className="grid gap-4 md:grid-cols-3">
+            <FeedbackCard
+              title="Use the product itself"
+              body="Feature-IQ runs its own feedback board. Submit ideas, vote, and watch them get triaged through the same flow you'd use for your own product."
+              cta="Join the feedback product"
+              href={FEATURE_IQ_FEEDBACK_INVITE_URL}
+              primary
+            />
+            <FeedbackCard
+              title="Email a quick thought"
+              body="Best for general reactions, half-formed ideas, or 'what do you think about X' questions."
+              cta="Email AG"
+              href={`mailto:${FEEDBACK_EMAIL}?subject=Feature-IQ feedback`}
+            />
+            <FeedbackCard
+              title="GitHub Discussions or Issues"
+              body="Best for technical discussion, bug reports, and conversations the broader community might want to see."
+              cta="Open a discussion"
+              href={GITHUB_DISCUSSIONS_URL}
+              secondaryCta="Or file an issue"
+              secondaryHref={GITHUB_ISSUES_URL}
+            />
+          </div>
+        </section>
+
+        <section className="mb-16">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-4">What it isn't</h2>
+          <ul className="space-y-2 text-gray-700">
+            <li>— A roadmapping tool. It informs roadmap decisions; it doesn't replace Jira / Linear / Productboard.</li>
+            <li>— A customer-facing portal. Voters are internal stakeholders, not the public.</li>
+            <li>— A live CRM integration. Internal feedback comes in via import, not real-time sync.</li>
+          </ul>
+        </section>
+      </main>
+
+      <footer className="border-t border-gray-200 bg-gray-50">
+        <div className="max-w-3xl mx-auto px-6 py-8 text-sm text-gray-600 flex flex-col md:flex-row md:justify-between gap-4">
+          <p>
+            Built by{' '}
+            <a href={LINKEDIN_URL} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+              A.G. Lambert
+            </a>
+            .
+          </p>
+          <p className="flex gap-4">
+            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+              Open source on GitHub
+            </a>
+            <a href={LICENSE_URL} target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:underline">
+              MIT licensed
+            </a>
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
+};
+
+interface ScreenshotSlotProps {
+  src: string;
+  alt: string;
+  caption: string;
+}
+
+const ScreenshotSlot = ({ src, alt, caption }: ScreenshotSlotProps) => (
+  <figure>
+    <div className="bg-gray-100 border border-gray-200 rounded-lg aspect-video flex items-center justify-center overflow-hidden">
+      <img
+        src={src}
+        alt={alt}
+        className="w-full h-full object-cover"
+        onError={(e) => {
+          const target = e.currentTarget;
+          target.style.display = 'none';
+          if (target.parentElement) {
+            target.parentElement.innerHTML =
+              '<div class="text-gray-400 text-sm italic p-8 text-center">Screenshot placeholder — drop image at ' +
+              src +
+              '</div>';
+          }
+        }}
+      />
+    </div>
+    <figcaption className="text-sm text-gray-500 mt-2 italic">{caption}</figcaption>
+  </figure>
+);
+
+interface FeedbackCardProps {
+  title: string;
+  body: string;
+  cta: string;
+  href: string;
+  primary?: boolean;
+  secondaryCta?: string;
+  secondaryHref?: string;
+}
+
+const FeedbackCard = ({ title, body, cta, href, primary, secondaryCta, secondaryHref }: FeedbackCardProps) => (
+  <div
+    className={`border rounded-lg p-5 ${
+      primary ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'
+    }`}
+  >
+    <h3 className="font-semibold text-gray-900 mb-2">{title}</h3>
+    <p className="text-sm text-gray-700 mb-4">{body}</p>
+    <a
+      href={href}
+      target={href.startsWith('http') ? '_blank' : undefined}
+      rel={href.startsWith('http') ? 'noopener noreferrer' : undefined}
+      className={`text-sm font-medium hover:underline ${
+        primary ? 'text-blue-700' : 'text-blue-600'
+      }`}
+    >
+      {cta} →
+    </a>
+    {secondaryCta && secondaryHref && (
+      <a
+        href={secondaryHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-sm text-gray-600 hover:underline block mt-1"
+      >
+        {secondaryCta} →
+      </a>
+    )}
+  </div>
+);
+
+export default LandingPage;

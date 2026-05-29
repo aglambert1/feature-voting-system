@@ -10,6 +10,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { UserRole } from '../types';
 import { WELCOMED_FLAG } from '../pages/WelcomePage';
+import LandingPage from '../pages/LandingPage';
 
 export default function RootRedirect() {
   const { user, loading } = useAuth();
@@ -23,7 +24,7 @@ export default function RootRedirect() {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <LandingPage />;
   }
 
   const isPO = user.role === UserRole.ADMIN || user.role === UserRole.PRODUCT_OWNER;

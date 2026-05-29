@@ -1,17 +1,5 @@
-/**
- * LoginPage
- *
- * User authentication page with:
- * - Email/username and password fields
- * - Form validation
- * - Error handling
- * - Loading states
- * - Role-based redirect on success (PO/Admin to Product Dashboard, Voter to Ideas)
- * - Link to registration
- */
-
 import { useState, ChangeEvent, FormEvent } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const LoginPage = () => {
@@ -147,18 +135,6 @@ const LoginPage = () => {
             </button>
           </div>
 
-          {/* Register Link */}
-          <div className="text-center">
-            <p className="text-sm text-gray-600">
-              Don't have an account?{' '}
-              <Link
-                to="/register"
-                className="font-medium text-blue-600 hover:text-blue-500"
-              >
-                Register here
-              </Link>
-            </p>
-          </div>
         </form>
       </div>
     </div>

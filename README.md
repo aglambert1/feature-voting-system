@@ -47,4 +47,4 @@ docs/            Documentation
 
 ## License
 
-See [LICENSE](LICENSE) if present.
+MIT — see [LICENSE](LICENSE).
