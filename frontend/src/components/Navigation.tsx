@@ -130,6 +130,27 @@ export default function Navigation() {
                         My Profile
                       </a>
 
+                      <a
+                        href="/welcome"
+                        className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                        onClick={() => setShowUserMenu(false)}
+                      >
+                        <svg
+                          className="inline-block w-4 h-4 mr-2"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                          />
+                        </svg>
+                        Welcome Page
+                      </a>
+
                       <button
                         onClick={() => {
                           setShowUserMenu(false);
