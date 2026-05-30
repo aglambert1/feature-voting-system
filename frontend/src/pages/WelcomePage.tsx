@@ -29,6 +29,15 @@ const WelcomePage = () => {
     <div className="min-h-screen bg-gray-50">
       <Navigation />
       <main className="main-content max-w-4xl mx-auto py-10 px-4">
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={() => handleAcknowledge(isPO ? '/product-intelligence' : '/ideas')}
+            disabled={acknowledging}
+            className="text-sm text-gray-500 hover:text-gray-700 disabled:text-gray-300 underline"
+          >
+            Skip and go to my dashboard
+          </button>
+        </div>
         <header className="mb-10">
           <p className="text-sm text-blue-600 font-medium mb-2">Welcome to Feature-IQ</p>
           <h1 className="text-3xl font-bold text-gray-900 mb-3">
@@ -191,7 +200,8 @@ const WelcomePage = () => {
             </button>
           </div>
           <p className="text-xs text-gray-500 mt-3">
-            You can return to this page anytime by clicking the Feature-IQ wordmark in the header.
+            The project framing and feedback channels live on the landing page — click the
+            Feature-IQ wordmark in the header anytime.
           </p>
         </footer>
       </main>
