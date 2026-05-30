@@ -14,7 +14,7 @@ import { ProductProvider } from './contexts/ProductContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
 import ProductOwnerRoute from './components/ProductOwnerRoute';
-import RootRedirect from './components/RootRedirect';
+import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import IdeasPage from './pages/IdeasPage';
@@ -48,8 +48,9 @@ function App() {
       <AuthProvider>
         <ProductProvider>
           <Routes>
-          {/* Root - role-aware redirect */}
-          <Route path="/" element={<RootRedirect />} />
+          {/* Root - always shows the public landing page. Authenticated users
+              go to their role-appropriate page via direct URL or post-login redirect. */}
+          <Route path="/" element={<LandingPage />} />
 
           {/* Public routes */}
           <Route path="/login" element={<LoginPage />} />

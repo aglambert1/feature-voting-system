@@ -270,6 +270,46 @@ class TestTokenValidation:
 
 
 # ============================================================================
+# Welcome Flag (POST /auth/me/mark-welcomed)
+# ============================================================================
+
+
+class TestMarkWelcomed:
+
+    def test_new_user_defaults_to_unwelcomed(self, client, voter_user):
+        resp = client.get("/auth/me", headers=auth_headers(voter_user))
+        assert resp.status_code == 200
+        assert resp.json()["has_seen_welcome"] is False
+
+    def test_mark_welcomed_flips_flag(self, client, db_session, voter_user):
+        resp = client.post("/auth/me/mark-welcomed", headers=auth_headers(voter_user))
+        assert resp.status_code == 200
+        assert resp.json()["has_seen_welcome"] is True
+
+        db_session.refresh(voter_user)
+        assert voter_user.has_seen_welcome is True
+
+    def test_mark_welcomed_is_idempotent(self, client, voter_user):
+        first = client.post("/auth/me/mark-welcomed", headers=auth_headers(voter_user))
+        second = client.post("/auth/me/mark-welcomed", headers=auth_headers(voter_user))
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["has_seen_welcome"] is True
+
+    def test_mark_welcomed_requires_auth(self, client):
+        resp = client.post("/auth/me/mark-welcomed")
+        assert resp.status_code == 401
+
+    def test_welcome_flag_is_per_user(self, client, db_session, voter_user, admin_user):
+        # Admin flips the flag on their own account...
+        client.post("/auth/me/mark-welcomed", headers=auth_headers(admin_user))
+
+        # ...voter's flag stays false. This is the regression the bug fix exists for.
+        resp = client.get("/auth/me", headers=auth_headers(voter_user))
+        assert resp.json()["has_seen_welcome"] is False
+
+
+# ============================================================================
 # Role-Based Access Control
 # ============================================================================
 

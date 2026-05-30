@@ -46,6 +46,7 @@ export interface User {
   full_name: string | null;
   role: UserRole;
   is_active: boolean;
+  has_seen_welcome: boolean;
   created_at: string;
 }
 
@@ -101,6 +102,7 @@ export interface UserProduct {
 export interface AuthResult {
   success: boolean;
   error?: string;
+  user?: User;
 }
 
 // ============================================================================

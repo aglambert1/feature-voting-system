@@ -101,7 +101,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       // Notify other components that user logged in (e.g., ProductContext)
       window.dispatchEvent(new Event('user-logged-in'));
 
-      return { success: true };
+      return { success: true, user: userData };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Login failed';
       setError(errorMsg);

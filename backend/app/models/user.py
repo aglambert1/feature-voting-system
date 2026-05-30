@@ -80,6 +80,10 @@ class User(Base):
     # Is the account active? (can be used to disable accounts)
     is_active = Column(Boolean, default=True, nullable=False)
 
+    # Has the user seen the post-login welcome page? Flipped by an explicit
+    # CTA on /welcome, NOT on mount — bouncing out should re-show next login.
+    has_seen_welcome = Column(Boolean, default=False, nullable=False, server_default="0")
+
     # When the account was created
     # server_default=func.now() means the database sets this automatically
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

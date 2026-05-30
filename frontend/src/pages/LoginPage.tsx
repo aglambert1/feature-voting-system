@@ -1,6 +1,7 @@
 import { useState, ChangeEvent, FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { UserRole, type User } from '../types';
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -40,11 +41,12 @@ const LoginPage = () => {
       // Call login from AuthContext
       const result = await login(formData.username, formData.password);
 
-      if (result.success) {
-        // Redirect to specified path (e.g. /join/:code) or root
+      if (result.success && result.user) {
+        // Honor explicit ?redirect= (e.g. /join/:code). Otherwise role-aware default.
+        navigate(redirectTo || defaultLandingFor(result.user));
+      } else if (result.success) {
         navigate(redirectTo || '/');
       } else {
-        // Show error message
         setError(result.error || 'Login failed');
       }
     } catch (err) {
@@ -53,6 +55,19 @@ const LoginPage = () => {
       setLoading(false);
     }
   };
+
+  /**
+   * Where a user lands after successful login when no explicit redirect is set:
+   * - PO/Admin who hasn't seen the welcome → /welcome
+   * - PO/Admin who has seen it → /product-intelligence
+   * - Voter → /ideas
+   */
+  function defaultLandingFor(user: User): string {
+    const isPO = user.role === UserRole.ADMIN || user.role === UserRole.PRODUCT_OWNER;
+    if (isPO && !user.has_seen_welcome) return '/welcome';
+    if (isPO) return '/product-intelligence';
+    return '/ideas';
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">

@@ -58,6 +58,7 @@ class UserResponse(BaseModel):
     full_name: Optional[str] = None
     role: UserRole
     is_active: bool
+    has_seen_welcome: bool = False
     created_at: datetime
 
     class Config:

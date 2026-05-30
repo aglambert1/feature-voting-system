@@ -1,4 +1,6 @@
 import { Link } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { UserRole } from '../types';
 
 const LINKEDIN_URL = 'https://www.linkedin.com/in/aglambert/';
 const GITHUB_URL = 'https://github.com/aglambert1/feature-voting-system';
@@ -13,17 +15,30 @@ const SCREENSHOT_SYNTHESIS = '/screenshots/synthesis.png';
 const LOOM_EMBED_URL = '';
 
 const LandingPage = () => {
+  const { user } = useAuth();
+  const isPO = user?.role === UserRole.PRODUCT_OWNER || user?.role === UserRole.ADMIN;
+  const dashboardPath = isPO ? '/product-intelligence' : '/ideas';
+
   return (
     <div className="min-h-screen bg-white">
       <nav className="border-b border-gray-200 bg-white">
         <div className="max-w-5xl mx-auto px-6 py-4 flex justify-between items-center">
           <span className="text-lg font-semibold text-gray-900">Feature-IQ</span>
-          <Link
-            to="/login"
-            className="text-sm text-gray-700 hover:text-gray-900 font-medium"
-          >
-            Sign in
-          </Link>
+          {user ? (
+            <Link
+              to={dashboardPath}
+              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+            >
+              Continue to dashboard →
+            </Link>
+          ) : (
+            <Link
+              to="/login"
+              className="text-sm text-gray-700 hover:text-gray-900 font-medium"
+            >
+              Sign in
+            </Link>
+          )}
         </div>
       </nav>
 
