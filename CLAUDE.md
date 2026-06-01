@@ -59,6 +59,22 @@ When adding, removing, or changing scripts, migrations, or CLI tools, update the
 - This applies to all changes, including one-line fixes and .gitignore updates
 - Production (Render) deploys from `main`, so treat it as protected
 
+## Security (always follow)
+
+**The GitHub repo is PUBLIC.** Every commit is world-readable, forever, including from history.
+
+Before staging or pushing, verify the diff contains:
+- No API keys, tokens, or secrets of any kind (Anthropic, Voyage, Brave, JWT signing keys, OAuth client secrets, OTP codes, database passwords)
+- No `.env`, `.env.local`, `.env.production`, or any file that resembles one
+- No real user emails, PII, credentials, or customer data
+- No prod URLs/IPs/hostnames that aren't already documented publicly
+- No internal monitoring dashboards, admin URLs, or anything that gives an attacker reconnaissance value
+- No hardcoded passwords in tests, fixtures, or seed scripts (use placeholders)
+
+Treat `.gitignore` as load-bearing. If a file might contain secrets in any environment, gitignore it.
+
+If a secret is accidentally committed: rotate it immediately (assume compromised), then scrub from history. Don't just delete the file in a follow-up commit — git history retains it.
+
 ## Project Structure
 
 - `backend/` - FastAPI backend with SQLAlchemy models
