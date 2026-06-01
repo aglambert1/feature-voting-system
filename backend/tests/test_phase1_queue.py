@@ -24,6 +24,25 @@ class TestQueueJobModel:
         assert JobType.COMPETITOR_DISCOVERY.value == "competitor_discovery"
         assert JobType.FEATURE_EXTRACTION.value == "feature_extraction"
 
+    def test_jobtype_pg_enum_names_do_not_collide(self):
+        """Regression: the two JobType enums must map to DISTINCT Postgres types.
+
+        queue.JobType and competitor_intelligence.JobType both used to derive
+        the same native enum type name ``jobtype``, so create_all() only built
+        one of them and every queue_jobs insert 500'd on Postgres. Each column
+        now pins an explicit, distinct ``name=``. If anyone drops those names,
+        the collision returns (and SQLite won't catch it) — this test will.
+        """
+        from app.models.queue import QueueJob
+        from app.models.competitor_intelligence import ProductJob
+
+        queue_enum = QueueJob.__table__.c.job_type.type
+        jtbd_enum = ProductJob.__table__.c.job_type.type
+
+        assert queue_enum.name == "queue_job_type"
+        assert jtbd_enum.name == "jtbd_job_type"
+        assert queue_enum.name != jtbd_enum.name
+
     def test_job_status_enum(self):
         """Test JobStatus enum values."""
         assert JobStatus.PENDING.value == "pending"
@@ -119,6 +138,40 @@ class TestQueueService:
         assert job.input_data == {"product_name": "Test Product"}
         assert job.product_id == product.id
         assert job.user_id == user.id
+
+    def test_queue_and_jtbd_jobtypes_persist_independently(self, db_session):
+        """Regression: a QueueJob and a ProductJob with their respective
+        JobType enums must both persist and read back, proving the two columns
+        no longer share one native enum type."""
+        from app.models.competitor_intelligence import (
+            CIProduct, ProductJob, JobType as JTBDJobType, JobImportance,
+        )
+        from app.models.user import User, UserRole
+
+        user = User(email="enumcollide@example.com", username="enumcollide",
+                    hashed_password="h", role=UserRole.VOTER)
+        db_session.add(user)
+        db_session.flush()
+        product = CIProduct(product_name="Enum Collision Product",
+                            product_description="x", created_by_user_id=user.id,
+                            status="active")
+        db_session.add(product)
+        db_session.commit()
+
+        queue_job = QueueJob(job_type=JobType.PRODUCT_ANALYSIS,
+                             status=JobStatus.PENDING, priority=JobPriority.NORMAL,
+                             product_id=product.id, user_id=user.id)
+        jtbd_job = ProductJob(product_id=product.id, job_id_key="j1",
+                              job_type=JTBDJobType.FUNCTIONAL,
+                              statement="When X, I want Y, so I can Z",
+                              importance=JobImportance.MEDIUM)
+        db_session.add_all([queue_job, jtbd_job])
+        db_session.commit()
+        db_session.refresh(queue_job)
+        db_session.refresh(jtbd_job)
+
+        assert queue_job.job_type == JobType.PRODUCT_ANALYSIS
+        assert jtbd_job.job_type == JTBDJobType.FUNCTIONAL
 
     def test_get_job(self, queue_service, db_session):
         """Test retrieving a job by ID."""
