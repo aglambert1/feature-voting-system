@@ -166,7 +166,7 @@ class ProductJob(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
     job_id_key = Column(String(50), nullable=False)  # "j1", "je1", "js1" etc.
-    job_type = Column(Enum(JobType), nullable=False)
+    job_type = Column(Enum(JobType, name="jtbd_job_type"), nullable=False)
     statement = Column(Text, nullable=False)  # "When [situation], I want to [action], so I can [outcome]"
     desired_outcomes = Column(JSON, nullable=True)  # List of outcome statements
     importance = Column(Enum(JobImportance), nullable=False, default=JobImportance.MEDIUM)

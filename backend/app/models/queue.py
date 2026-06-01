@@ -130,7 +130,7 @@ class QueueJob(Base):
     job_uuid = Column(String(36), unique=True, nullable=False, default=generate_uuid, index=True)
 
     # Job type and status
-    job_type = Column(Enum(JobType), nullable=False, index=True)
+    job_type = Column(Enum(JobType, name="queue_job_type"), nullable=False, index=True)
     status = Column(Enum(JobStatus), nullable=False, default=JobStatus.PENDING, index=True)
     priority = Column(Enum(JobPriority), nullable=False, default=JobPriority.NORMAL)
 
