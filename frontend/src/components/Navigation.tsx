@@ -14,10 +14,12 @@ export default function Navigation() {
     <nav className="bg-white shadow-lg">
       <div className="w-full px-3 sm:px-4 lg:px-6">
         <div className="flex items-center justify-between h-14 sm:h-16">
-          {/* Logo - compact on all screens, role-aware navigation */}
+          {/* Logo - links to landing page so the project framing and feedback
+              channels are always one click away. Role-specific dashboards are
+              reachable via the nav links and bookmarks. */}
           <div className="flex-shrink-0 flex items-center">
             <a
-              href={isProductOwnerOrAdmin ? '/product-intelligence' : '/ideas'}
+              href="/"
               className="text-lg sm:text-xl font-bold text-blue-600 whitespace-nowrap"
             >
               Feature-IQ
@@ -126,6 +128,27 @@ export default function Navigation() {
                           />
                         </svg>
                         My Profile
+                      </a>
+
+                      <a
+                        href="/welcome"
+                        className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                        onClick={() => setShowUserMenu(false)}
+                      >
+                        <svg
+                          className="inline-block w-4 h-4 mr-2"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                          />
+                        </svg>
+                        Welcome Page
                       </a>
 
                       <button

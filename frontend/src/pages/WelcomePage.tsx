@@ -1,25 +1,43 @@
-import { Link, useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { UserRole } from '../types';
+import { markWelcomed } from '../services/api';
 import Navigation from '../components/Navigation';
 
-export const WELCOMED_FLAG = 'featureiq_welcomed';
-
 const WelcomePage = () => {
-  const { user } = useAuth();
+  const { user, setUser } = useAuth();
   const navigate = useNavigate();
-
-  useEffect(() => {
-    localStorage.setItem(WELCOMED_FLAG, '1');
-  }, []);
+  const [acknowledging, setAcknowledging] = useState(false);
 
   const isPO = user?.role === UserRole.PRODUCT_OWNER || user?.role === UserRole.ADMIN;
+
+  const handleAcknowledge = async (destination: string) => {
+    setAcknowledging(true);
+    try {
+      const updatedUser = await markWelcomed();
+      setUser(updatedUser);
+    } catch {
+      // If the flag flip fails, still let the user proceed. The next login will
+      // re-show the welcome page, which is acceptable.
+    } finally {
+      navigate(destination);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Navigation />
       <main className="main-content max-w-4xl mx-auto py-10 px-4">
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={() => handleAcknowledge(isPO ? '/product-intelligence' : '/ideas')}
+            disabled={acknowledging}
+            className="text-sm text-gray-500 hover:text-gray-700 disabled:text-gray-300 underline"
+          >
+            Skip and go to my dashboard
+          </button>
+        </div>
         <header className="mb-10">
           <p className="text-sm text-blue-600 font-medium mb-2">Welcome to Feature-IQ</p>
           <h1 className="text-3xl font-bold text-gray-900 mb-3">
@@ -148,24 +166,42 @@ const WelcomePage = () => {
           </ul>
         </section>
 
-        <footer className="border-t border-gray-200 pt-6 text-sm text-gray-600">
-          <p>
-            Bookmark this page or jump straight into the app:{' '}
-            <Link to="/ideas" className="text-blue-600 hover:underline">
-              Ideas board
-            </Link>
+        <footer className="border-t border-gray-200 pt-8 mt-10">
+          <p className="text-sm text-gray-600 mb-4">
+            Got it. Take me to:
+          </p>
+          <div className="flex flex-wrap gap-3">
             {isPO && (
-              <>
-                {' · '}
-                <Link to="/product-intelligence" className="text-blue-600 hover:underline">
-                  Competitive Intelligence
-                </Link>
-              </>
+              <button
+                onClick={() => handleAcknowledge('/product-intelligence')}
+                disabled={acknowledging}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+              >
+                Competitive Intelligence
+              </button>
             )}
-            {' · '}
-            <Link to="/profile" className="text-blue-600 hover:underline">
+            <button
+              onClick={() => handleAcknowledge('/ideas')}
+              disabled={acknowledging}
+              className={`text-sm font-medium px-4 py-2 rounded transition-colors ${
+                isPO
+                  ? 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 disabled:bg-gray-100'
+                  : 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white'
+              }`}
+            >
+              Ideas board
+            </button>
+            <button
+              onClick={() => handleAcknowledge('/profile')}
+              disabled={acknowledging}
+              className="bg-white border border-gray-300 hover:bg-gray-50 disabled:bg-gray-100 text-gray-700 text-sm font-medium px-4 py-2 rounded transition-colors"
+            >
               Profile
-            </Link>
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mt-3">
+            The project framing and feedback channels live on the landing page — click the
+            Feature-IQ wordmark in the header anytime.
           </p>
         </footer>
       </main>

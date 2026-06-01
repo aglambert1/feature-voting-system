@@ -181,6 +181,14 @@ export const getCurrentUser = async (): Promise<User> => {
 };
 
 /**
+ * Mark the current user as having seen the welcome page. Idempotent.
+ */
+export const markWelcomed = async (): Promise<User> => {
+  const response = await api.post<User>('/auth/me/mark-welcomed');
+  return response.data;
+};
+
+/**
  * Logout user (client-side only - clear token)
  */
 export const logout = (): void => {

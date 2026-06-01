@@ -257,6 +257,27 @@ async def get_current_user_info(
     """
     return current_user
 
+
+@router.post("/me/mark-welcomed", response_model=UserResponse)
+async def mark_welcomed(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Flip the current user's has_seen_welcome flag to True.
+
+    Called by the frontend WelcomePage when the user clicks the explicit
+    "Got it" CTA. Bouncing out of the welcome page without clicking the CTA
+    leaves the flag false, so the user re-sees the page on next login.
+
+    Idempotent - flipping an already-true flag is a no-op.
+    """
+    if not current_user.has_seen_welcome:
+        current_user.has_seen_welcome = True
+        db.commit()
+        db.refresh(current_user)
+    return current_user
+
 @router.get("/users", response_model=list[UserResponse])
 async def get_all_users(
     current_user: User = Depends(get_current_admin_user),

@@ -1,18 +1,7 @@
-/**
- * LoginPage
- *
- * User authentication page with:
- * - Email/username and password fields
- * - Form validation
- * - Error handling
- * - Loading states
- * - Role-based redirect on success (PO/Admin to Product Dashboard, Voter to Ideas)
- * - Link to registration
- */
-
 import { useState, ChangeEvent, FormEvent } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { UserRole, type User } from '../types';
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -52,11 +41,12 @@ const LoginPage = () => {
       // Call login from AuthContext
       const result = await login(formData.username, formData.password);
 
-      if (result.success) {
-        // Redirect to specified path (e.g. /join/:code) or root
+      if (result.success && result.user) {
+        // Honor explicit ?redirect= (e.g. /join/:code). Otherwise role-aware default.
+        navigate(redirectTo || defaultLandingFor(result.user));
+      } else if (result.success) {
         navigate(redirectTo || '/');
       } else {
-        // Show error message
         setError(result.error || 'Login failed');
       }
     } catch (err) {
@@ -65,6 +55,19 @@ const LoginPage = () => {
       setLoading(false);
     }
   };
+
+  /**
+   * Where a user lands after successful login when no explicit redirect is set:
+   * - PO/Admin who hasn't seen the welcome → /welcome
+   * - PO/Admin who has seen it → /product-intelligence
+   * - Voter → /ideas
+   */
+  function defaultLandingFor(user: User): string {
+    const isPO = user.role === UserRole.ADMIN || user.role === UserRole.PRODUCT_OWNER;
+    if (isPO && !user.has_seen_welcome) return '/welcome';
+    if (isPO) return '/product-intelligence';
+    return '/ideas';
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
@@ -147,18 +150,6 @@ const LoginPage = () => {
             </button>
           </div>
 
-          {/* Register Link */}
-          <div className="text-center">
-            <p className="text-sm text-gray-600">
-              Don't have an account?{' '}
-              <Link
-                to="/register"
-                className="font-medium text-blue-600 hover:text-blue-500"
-              >
-                Register here
-              </Link>
-            </p>
-          </div>
         </form>
       </div>
     </div>
