@@ -44,27 +44,46 @@ def _make_product(db):
     return user, product, history
 
 
-class TestVoyageClientTimeout:
-    def test_client_configured_with_timeout(self):
-        """The Voyage client must have a finite timeout so an embed call can
-        never hang a request worker indefinitely."""
+class TestVoyageRequestTimeout:
+    def test_embed_call_passes_finite_timeout(self):
+        """The embeddings HTTP call must pass a finite timeout so it can never
+        hang a worker indefinitely (the cause of the original 502/OOM cascade)."""
         import app.services.embedding_service as es
         from app.config import settings
 
-        es._client = None  # reset singleton
-        captured = {}
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status.return_value = None
+        fake_resp.json.return_value = {"data": [{"embedding": [0.1] * 1024, "index": 0}]}
 
-        def fake_client(**kwargs):
-            captured.update(kwargs)
-            return MagicMock()
+        with patch("app.services.embedding_service.requests.post", return_value=fake_resp) as mock_post:
+            es.generate_embedding("hello", input_type="query")
 
-        with patch.object(es.voyageai, "Client", side_effect=fake_client):
-            es._get_client()
+        assert mock_post.call_count == 1
+        kwargs = mock_post.call_args.kwargs
+        assert kwargs.get("timeout") == settings.voyage_timeout_seconds
+        assert kwargs.get("timeout") is not None
 
-        assert captured.get("timeout") == settings.voyage_timeout_seconds
-        assert captured.get("timeout") is not None
-        assert captured.get("max_retries") == settings.voyage_max_retries
-        es._client = None  # leave clean
+    def test_no_heavy_ml_imports(self):
+        """Importing the embedding service must NOT drag in torch/voyageai
+        (the ~366 MB footprint that OOM-killed the 512 MB instance). Checked in
+        a clean subprocess so prior test imports can't mask a regression."""
+        import subprocess
+        import sys
+
+        code = (
+            "import sys; import app.services.embedding_service;"
+            "bad=[m for m in ('torch','transformers','voyageai','sentence_transformers') "
+            "if m in sys.modules];"
+            "print(','.join(bad));"
+            "sys.exit(1 if bad else 0)"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, (
+            f"embedding_service pulled in heavy ML modules: {result.stdout.strip()}"
+        )
 
 
 class TestSharedFeatureHelper:

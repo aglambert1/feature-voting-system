@@ -1,8 +1,12 @@
 """
-Embedding service using Voyage AI API.
+Embedding service using the Voyage AI REST API.
 
-Replaces the local SentenceTransformer model (which required PyTorch ~300-400MB RAM)
-with API-based embeddings via Voyage AI's voyage-3.5-lite model (1024 dimensions).
+Calls Voyage's HTTP embeddings endpoint directly with ``requests`` rather than
+the ``voyageai`` SDK. The SDK transitively imports PyTorch + transformers
+(~366 MB RSS) for local tokenization — which defeats the whole point of using
+an API instead of a local SentenceTransformer model, and on a 512 MB instance
+caused OOM kills the moment any worker/request first generated an embedding.
+A plain POST has none of that footprint.
 
 Usage:
     from app.services.embedding_service import generate_embedding, generate_embeddings_batch
@@ -15,42 +19,65 @@ Usage:
 """
 
 import logging
-from typing import List, Optional
+from typing import List
 
-import voyageai
+import requests
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Lazy-initialized module-level client singleton.
-# Works in both FastAPI and Celery contexts.
-_client: Optional[voyageai.Client] = None
-
 MODEL = "voyage-3.5-lite"
+_API_URL = "https://api.voyageai.com/v1/embeddings"
 
 
-def _get_client() -> voyageai.Client:
-    """Get or create the Voyage AI client singleton.
+class EmbeddingServiceError(RuntimeError):
+    """Raised when the Voyage embeddings API call fails."""
 
-    A finite ``timeout`` is essential: without it a single slow embed call
-    blocks the request worker indefinitely, which on a single-worker instance
+
+def _embed(texts: List[str], input_type: str) -> List[List[float]]:
+    """POST to the Voyage embeddings endpoint and return vectors in input order.
+
+    A finite ``timeout`` is essential: without it a single slow/stalled call
+    blocks the calling worker indefinitely, which on a single-worker instance
     starves the health check and gets the instance restarted (surfacing as a
-    502 to the browser). ``max_retries`` is bounded so transient errors don't
-    multiply the worst-case latency.
+    502 to the browser). Retries are bounded so transient errors don't multiply
+    the worst-case latency.
     """
-    global _client
-    if _client is None:
-        _client = voyageai.Client(
-            api_key=settings.voyage_api_key,
-            timeout=settings.voyage_timeout_seconds,
-            max_retries=settings.voyage_max_retries,
-        )
-        logger.info(
-            "Initialized Voyage AI client (model=%s, timeout=%ss, max_retries=%s)",
-            MODEL, settings.voyage_timeout_seconds, settings.voyage_max_retries,
-        )
-    return _client
+    payload = {"input": texts, "model": MODEL, "input_type": input_type}
+    headers = {
+        "Authorization": f"Bearer {settings.voyage_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    last_err: Exception | None = None
+    attempts = settings.voyage_max_retries + 1
+    for attempt in range(attempts):
+        try:
+            resp = requests.post(
+                _API_URL,
+                json=payload,
+                headers=headers,
+                timeout=settings.voyage_timeout_seconds,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            # Response: {"data": [{"embedding": [...], "index": 0}, ...]}
+            items = sorted(data["data"], key=lambda d: d["index"])
+            return [item["embedding"] for item in items]
+        except (requests.RequestException, KeyError, ValueError) as e:
+            last_err = e
+            if attempt < attempts - 1:
+                logger.warning(
+                    "Voyage embeddings call failed (attempt %s/%s): %s",
+                    attempt + 1, attempts, e,
+                )
+                continue
+            break
+
+    raise EmbeddingServiceError(
+        f"Voyage embeddings request failed after {attempts} attempt(s): {last_err}"
+    ) from last_err
 
 
 def generate_embedding(text: str, input_type: str = "document") -> List[float]:
@@ -65,9 +92,7 @@ def generate_embedding(text: str, input_type: str = "document") -> List[float]:
     Returns:
         1024-dimensional embedding vector.
     """
-    client = _get_client()
-    result = client.embed([text], model=MODEL, input_type=input_type)
-    return result.embeddings[0]
+    return _embed([text], input_type)[0]
 
 
 def generate_embeddings_batch(texts: List[str], input_type: str = "document") -> List[List[float]]:
@@ -81,6 +106,6 @@ def generate_embeddings_batch(texts: List[str], input_type: str = "document") ->
     Returns:
         List of 1024-dimensional embedding vectors (same order as input).
     """
-    client = _get_client()
-    result = client.embed(texts, model=MODEL, input_type=input_type)
-    return result.embeddings
+    if not texts:
+        return []
+    return _embed(texts, input_type)
