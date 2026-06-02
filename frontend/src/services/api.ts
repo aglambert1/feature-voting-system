@@ -1222,6 +1222,17 @@ import type {
   JtbdJob,
 } from '../types';
 
+export const extractJobMap = async (
+  productId: number,
+  guidance?: string
+): Promise<AgentJobResponse> => {
+  const params = guidance ? `?guidance=${encodeURIComponent(guidance)}` : '';
+  const response = await api.post<AgentJobResponse>(
+    `/product-intelligence/products/${productId}/extract-job-map${params}`
+  );
+  return response.data;
+};
+
 export const getJobMap = async (
   productId: number
 ): Promise<JobMapResponse> => {
