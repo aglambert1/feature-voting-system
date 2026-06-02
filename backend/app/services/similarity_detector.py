@@ -596,18 +596,20 @@ class SimilarityDetectorService:
                 source_url=source_url
             ))
 
-        # Also check against core_features (stored as strings in structured_product_data)
-        core_feature_matches = self._check_core_features(
-            idea_text=idea_text,
-            product_id=product_id,
-            similarity_threshold=similarity_threshold
-        )
-
-        # Combine and deduplicate (prefer detailed features over core)
-        existing_names = {m.feature_name.lower() for m in matches}
-        for cm in core_feature_matches:
-            if cm.feature_name.lower() not in existing_names:
-                matches.append(cm)
+        # Fallback: only check core_features (which embed on-the-fly) when the
+        # fast path found nothing. Detailed ProductFeature embeddings are the
+        # primary, precomputed source; when they return matches we skip the
+        # slower core_features path entirely.
+        if not matches:
+            core_feature_matches = self._check_core_features(
+                idea_text=idea_text,
+                product_id=product_id,
+                similarity_threshold=similarity_threshold
+            )
+            existing_names = {m.feature_name.lower() for m in matches}
+            for cm in core_feature_matches:
+                if cm.feature_name.lower() not in existing_names:
+                    matches.append(cm)
 
         # Sort by similarity and limit
         matches.sort(key=lambda x: x.similarity_score, reverse=True)
@@ -653,14 +655,21 @@ class SimilarityDetectorService:
         if not core_features:
             return []
 
-        # Generate embedding for idea text
-        idea_embedding = self.generate_embedding(idea_text)
+        # Embed the idea + all core features in ONE batched call. The previous
+        # implementation made one Voyage call per core feature in a loop, which
+        # (with no client timeout) could block a request worker long enough to
+        # get the instance restarted (a 502). core_features are 5-7 strings, so
+        # one batch is cheap. This path is a FALLBACK for products whose
+        # detailed ProductFeature embeddings aren't populated yet.
+        from app.services.embedding_service import generate_embeddings_batch
+        all_embeddings = generate_embeddings_batch(
+            [idea_text] + list(core_features), input_type="document"
+        )
+        idea_embedding = all_embeddings[0]
+        feature_embeddings = all_embeddings[1:]
 
         matches = []
-        for feature_name in core_features:
-            # Generate embedding for core feature
-            feature_embedding = self.generate_embedding(feature_name)
-
+        for feature_name, feature_embedding in zip(core_features, feature_embeddings):
             # Voyage embeddings are L2-normalized, so dot product = cosine similarity
             similarity = float(np.dot(idea_embedding, feature_embedding))
 
@@ -696,3 +705,29 @@ class SimilarityDetectorService:
             feature_id=feature_id,
             embedding=embedding
         )
+
+    def store_product_feature_embeddings_batch(
+        self, items: List[Tuple[int, str]]
+    ) -> None:
+        """
+        Generate and store embeddings for many product features in ONE API call.
+
+        Prefer this over calling store_product_feature_embedding in a loop:
+        it makes a single Voyage batch request instead of N sequential ones,
+        which is both faster and far less likely to hit rate limits.
+
+        Args:
+            items: List of (feature_id, feature_text) tuples.
+        """
+        if not items:
+            return
+        from app.services.embedding_service import generate_embeddings_batch
+
+        texts = [text for _, text in items]
+        embeddings = generate_embeddings_batch(texts, input_type="document")
+        for (feature_id, _), embedding in zip(items, embeddings):
+            VectorService.store_product_feature_embedding(
+                db=self.db,
+                feature_id=feature_id,
+                embedding=embedding,
+            )

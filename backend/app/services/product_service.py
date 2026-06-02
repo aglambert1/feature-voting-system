@@ -29,6 +29,71 @@ from app.services.vector_service import VectorService
 logger = logging.getLogger(__name__)
 
 
+def create_product_features_with_embeddings(
+    db: Session,
+    *,
+    product_id: int,
+    analysis_history_id: int,
+    analysis_version: int,
+    detailed_features: List[Dict[str, Any]],
+    source_url: Optional[str] = None,
+) -> List[ProductFeature]:
+    """Create ProductFeature rows AND populate their embeddings (batched).
+
+    This is the single source of truth for persisting a product's detailed
+    features so the synchronous (ProductService) and queued (analyze_product_task)
+    analysis paths cannot drift. Embeddings are what the fast feature-match /
+    "does this feature exist?" lookup relies on; if they are missing, every
+    query falls through to a slow per-feature on-the-fly embedding path.
+
+    Embeddings are generated in a single Voyage batch call rather than one call
+    per feature. Embedding failures are logged but do not abort feature
+    creation — the rows are still useful as LLM context and matching degrades
+    gracefully (and can be backfilled by re-analysis).
+
+    Returns the created ProductFeature rows (already flushed, so .id is set).
+    """
+    if not detailed_features:
+        return []
+
+    created: List[ProductFeature] = []
+    embed_items = []  # (feature_id, feature_text)
+    for feat in detailed_features:
+        pf = ProductFeature(
+            product_id=product_id,
+            analysis_history_id=analysis_history_id,
+            analysis_version=analysis_version,
+            feature_name=feat.get('name', ''),
+            feature_description=feat.get('description', ''),
+            feature_category=feat.get('category', ''),
+            extraction_confidence=feat.get('confidence', 0.0),
+            source_reference=feat.get('source_reference', ''),
+            source_url=source_url,
+            status='active',
+        )
+        db.add(pf)
+        created.append(pf)
+
+    db.flush()  # Assign ids before storing embeddings
+
+    for pf, feat in zip(created, detailed_features):
+        feature_text = f"{feat.get('name', '')}\n{feat.get('description', '')}"
+        embed_items.append((pf.id, feature_text))
+
+    try:
+        from app.services.similarity_detector import SimilarityDetectorService
+        SimilarityDetectorService(db).store_product_feature_embeddings_batch(embed_items)
+    except Exception as e:
+        logger.warning(
+            "Failed to store product-feature embeddings for product %s "
+            "(features created without embeddings; matching will use the slow "
+            "fallback until re-analyzed): %s",
+            product_id, e,
+        )
+
+    return created
+
+
 class ProductService:
     """Service for managing CI products."""
 
@@ -218,44 +283,19 @@ class ProductService:
             self.db.add(session)
             self.db.flush()  # Flush to get history.id for detailed features
 
-            # Store detailed features
+            # Store detailed features WITH embeddings via the shared helper
+            # (same path as analyze_product_task, so the two cannot drift).
             detailed_features_data = analyzed_structure.get('detailed_features', [])
             if detailed_features_data:
                 print(f"[ProductService] Storing {len(detailed_features_data)} detailed features...")
-
-                # Determine source_url from product source
-                feature_source_url = self._get_source_url(source_type, source_data)
-
-                # Import similarity service for embedding generation
-                from app.services.similarity_detector import SimilarityDetectorService
-                similarity_service = SimilarityDetectorService(self.db)
-
-                for feature_data in detailed_features_data:
-                    product_feature = ProductFeature(
-                        product_id=product_id,
-                        analysis_history_id=history.id,
-                        analysis_version=new_version,
-                        feature_name=feature_data.get('name'),
-                        feature_description=feature_data.get('description'),
-                        feature_category=feature_data.get('category'),
-                        extraction_confidence=feature_data.get('confidence'),
-                        source_reference=feature_data.get('source_reference'),
-                        source_url=feature_source_url,  # Store source URL for feature exists detection
-                        status='active'
-                    )
-                    self.db.add(product_feature)
-                    self.db.flush()  # Get ID for embedding storage
-
-                    # Store embedding for the feature (enables vector similarity search)
-                    feature_text = f"{feature_data.get('name')}\n{feature_data.get('description', '')}"
-                    try:
-                        similarity_service.store_product_feature_embedding(
-                            feature_id=product_feature.id,
-                            feature_text=feature_text
-                        )
-                    except Exception as e:
-                        print(f"[ProductService] Warning: Failed to store embedding for feature {product_feature.id}: {e}")
-
+                create_product_features_with_embeddings(
+                    self.db,
+                    product_id=product_id,
+                    analysis_history_id=history.id,
+                    analysis_version=new_version,
+                    detailed_features=detailed_features_data,
+                    source_url=self._get_source_url(source_type, source_data),
+                )
                 print(f"[ProductService] Stored {len(detailed_features_data)} detailed features with embeddings for version {new_version}")
 
             # Update product with latest analysis and description
