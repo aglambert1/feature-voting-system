@@ -31,7 +31,7 @@ _TASK_NAME_MAP = {
     # competitor_tasks
     "discover_competitors_task": "app.queue.competitor_tasks.discover_competitors_task",
     "functional_audit_task": "app.queue.competitor_tasks.functional_audit_task",
-    "aggregate_functional_audits_v2": "app.queue.competitor_tasks.aggregate_functional_audits_v2",
+    "mark_audits_complete": "app.queue.competitor_tasks.mark_audits_complete",
     "run_competitive_analysis_v2": "app.queue.competitor_tasks.run_competitive_analysis_v2",
     # triage_tasks
     "triage_idea_task": "app.queue.triage_tasks.triage_idea_task",

@@ -28,7 +28,6 @@ from app.services.queue_service import QueueService
 from app.services.llm_service import llm_service, set_llm_context, clear_llm_context
 from app.services.document_parsing_service import DocumentParsingService
 from app.models.cost_tracking import OperationType
-from app.services.vector_service import VectorService
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
 
 # Thread-safe task dispatch (see app/utils/celery_utils.py for explanation)
@@ -51,13 +50,6 @@ class ProductCreateRequest(BaseModel):
     product_name: str = Field(..., min_length=1, max_length=255)
     product_description: str = Field(..., min_length=10)
     source_type: str = Field(default="text", pattern="^(text|document|url)$")
-    source_data: Optional[dict] = None
-
-
-class ProductAnalyzeRequest(BaseModel):
-    """Schema for analyzing a product (Stage 1)."""
-    product_description: str = Field(..., min_length=10)
-    source_type: str = Field(..., pattern="^(text|document|url)$")
     source_data: Optional[dict] = None
 
 
@@ -160,120 +152,6 @@ def create_product(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
-        )
-
-
-@router.post("/{product_id}/analyze", response_model=dict)
-def analyze_product(
-    product_id: int,
-    request: ProductAnalyzeRequest,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Analyze a product with AI (Stage 1 - Independent Operation).
-
-    This can be called multiple times to re-analyze a product as it evolves.
-    Each analysis is versioned and stored in analysis history.
-
-    Requires EDIT permission on the product.
-
-    Returns:
-        Analyzed product structure including:
-        - product_name (AI-refined)
-        - product_category
-        - core_features
-        - target_users
-        - value_propositions
-        - competitor_search_keywords
-
-    Raises:
-        403: If user lacks EDIT permission
-        404: If product not found
-    """
-    service = ProductService(db)
-
-    try:
-        analyzed_structure = service.analyze_product(
-            product_id=product_id,
-            user_id=current_user.id,
-            product_description=request.product_description,
-            source_type=request.source_type,
-            source_data=request.source_data,
-            llm_service=llm_service
-        )
-
-        # Generate and store product embeddings after analysis completes
-        try:
-            from app.services.embedding_service import generate_embedding
-
-            product_text = request.product_description
-            print(f"[API] Generating embedding for product {product_id}...")
-
-            # Check if text is large enough to require chunking
-            if len(product_text) > 16000:  # ~4000 tokens
-                print(f"[API] Text is large ({len(product_text)} chars), chunking...")
-                chunk_size = 12000
-                overlap = 1000
-                chunks = []
-
-                for i in range(0, len(product_text), chunk_size - overlap):
-                    chunk = product_text[i:i + chunk_size]
-                    if chunk.strip():
-                        chunks.append(chunk)
-
-                print(f"[API] Created {len(chunks)} chunks")
-
-                for i, chunk in enumerate(chunks):
-                    embedding = generate_embedding(chunk, input_type="document")
-                    VectorService.store_product_embedding(
-                        db,
-                        product_id,
-                        embedding,
-                        chunk_index=i,
-                        chunk_text=chunk[:500]
-                    )
-
-                print(f"[API] ✓ Stored {len(chunks)} chunk embeddings for product {product_id}")
-            else:
-                embedding = generate_embedding(product_text, input_type="document")
-                VectorService.store_product_embedding(
-                    db,
-                    product_id,
-                    embedding,
-                    chunk_index=0,
-                    chunk_text=product_text[:500]
-                )
-                print(f"[API] ✓ Stored single embedding for product {product_id}")
-
-            db.commit()
-        except Exception as e:
-            print(f"[API] Warning: Failed to generate product embedding: {e}")
-            db.rollback()
-
-        return {
-            "product_id": product_id,
-            "analysis_version": analyzed_structure.get("version", "latest"),
-            "analyzed_structure": analyzed_structure
-        }
-    except PermissionError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e)
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        # Catch all other exceptions to prevent 500 errors with CORS issues
-        import traceback
-        print(f"[API] Error analyzing product {product_id}: {e}")
-        print(f"[API] Traceback: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Analysis failed: {str(e)}"
         )
 
 
@@ -473,97 +351,6 @@ def get_detailed_features(
         }
         for f in features
     ]
-
-
-@router.get("/{product_id}/search")
-def search_product_content(
-    product_id: int,
-    q: str = Query(..., min_length=10, description="Search query (minimum 10 characters)"),
-    threshold: float = Query(0.6, ge=0.0, le=1.0, description="Similarity threshold (0-1, higher = more similar)"),
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Semantic search within product documentation.
-
-    Uses vector similarity search to find relevant content in the product's
-    documentation. This is useful for:
-    - Checking if a user idea is already implemented in the product
-    - Finding relevant product sections for specific features
-    - General product knowledge search
-
-    Requires VIEW permission on the product.
-
-    Args:
-        product_id: Product ID to search within
-        q: Search query (minimum 10 characters for meaningful results)
-        threshold: Similarity threshold (0-1, default 0.6). Higher values return only closer matches.
-
-    Returns:
-        List of matching content chunks with similarity scores
-
-    Raises:
-        400: If query is too short or embedding model unavailable
-        403: If user lacks VIEW permission
-        404: If product not found or has no embeddings
-    """
-    # Check permission
-    service = ProductService(db)
-    product = service.get_product(product_id, current_user.id)
-
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found or you don't have permission to view it"
-        )
-
-    try:
-        from app.services.embedding_service import generate_embedding
-
-        # Generate query embedding
-        query_embedding = generate_embedding(q, input_type="query")
-
-        # Search product chunks
-        results = VectorService.find_similar_in_product(
-            db,
-            query_embedding,
-            product_id,
-            threshold=threshold
-        )
-
-        if not results:
-            return {
-                "product_id": product_id,
-                "query": q,
-                "threshold": threshold,
-                "matches": [],
-                "message": "No matches found. Try lowering the threshold or rephrasing your query."
-            }
-
-        # Convert distance to similarity score (distance = 2 * (1 - similarity))
-        # So similarity = 1 - (distance / 2)
-        matches = [
-            {
-                "text": text,
-                "similarity_score": 1 - (distance / 2),
-                "distance": distance
-            }
-            for text, distance in results
-        ]
-
-        return {
-            "product_id": product_id,
-            "query": q,
-            "threshold": threshold,
-            "matches": matches
-        }
-
-    except Exception as e:
-        print(f"[API] Error during product search: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Search failed: {str(e)}"
-        )
 
 
 @router.post("/{product_id}/feature-query", response_model=FeatureQueryResponse)
