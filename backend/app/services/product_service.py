@@ -18,11 +18,9 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models.competitor_intelligence import (
     CIProduct, ProductAnalysisHistory, ProductPermission, ProductPermissionLevel,
-    CompetitorAnalysisSession, SessionStage, ProductFeature
+    ProductFeature
 )
 from app.models.user import User
-from app.agents.product_analyzer import ProductAnalyzerAgent
-from app.services.llm_service import LLMService
 from app.services.permission_service import PermissionService
 from app.services.vector_service import VectorService
 
@@ -178,152 +176,6 @@ class ProductService:
             raise ValueError(f"Failed to create product: {str(e)}")
 
         return product
-
-    def analyze_product(
-        self,
-        product_id: int,
-        user_id: int,
-        product_description: str,
-        source_type: str,
-        source_data: Optional[Dict[str, Any]],
-        llm_service: LLMService
-    ) -> Dict[str, Any]:
-        """
-        Analyze a product with AI (Stage 1 - independent operation).
-
-        This can be called multiple times to re-analyze a product,
-        creating a versioned history of analyses.
-
-        Args:
-            product_id: Product ID to analyze
-            user_id: User performing the analysis
-            product_description: Updated product description to analyze
-            source_type: Source type (text, document, url)
-            source_data: Additional source data
-            llm_service: LLM service instance
-
-        Returns:
-            Analyzed product structure
-
-        Raises:
-            PermissionError: If user lacks EDIT permission
-            ValueError: If product not found
-        """
-        # Check permission
-        if not self.permission_service.can_access_product(
-            user_id=user_id,
-            product_id=product_id,
-            required_level=ProductPermissionLevel.EDIT
-        ):
-            raise PermissionError(
-                f"User {user_id} does not have EDIT permission for product {product_id}"
-            )
-
-        # Get product
-        product = self.db.query(CIProduct).filter(CIProduct.id == product_id).first()
-        if not product:
-            raise ValueError(f"Product {product_id} not found")
-
-        # Run AI analysis with the provided (possibly updated) description
-        agent = ProductAnalyzerAgent(
-            db=self.db,
-            llm_service=llm_service,
-            session_id=None,  # No session - this is independent
-            product_id=product_id
-        )
-
-        analyzed_structure = agent.execute({
-            'product_name': product.product_name,
-            'product_description': product_description,
-            'source_type': source_type
-        })
-
-        # Increment version
-        new_version = product.analysis_version + 1
-
-        # Calculate source hash for change detection
-        source_hash = self._calculate_source_hash(
-            product_description=product_description,
-            source_type=source_type,
-            source_data=source_data
-        )
-
-        # Save to analysis history with the analyzed description
-        history = ProductAnalysisHistory(
-            product_id=product_id,
-            analysis_version=new_version,
-            analyzed_by_user_id=user_id,
-            product_description=product_description,
-            product_source_type=source_type,
-            product_source_data=source_data,
-            analyzed_structure=analyzed_structure,
-            tokens_used=None  # Could be extracted from agent logs
-        )
-
-        # AUTO-CREATE SESSION (Unified Session Architecture)
-        # Every product analysis now creates a session
-        session = CompetitorAnalysisSession(
-            product_id=product_id,
-            user_id=user_id,
-            session_number=new_version,  # Match analysis version
-            analysis_version=new_version,  # Link to specific analysis
-            stage_completed=SessionStage.PRODUCT_ANALYSIS,  # Stage 1 complete
-            status="completed",  # Product analysis is done
-            analysis_type="full",  # No comparison at this stage
-            product_source_type=source_type,
-            product_source_data=source_data,
-            analyzed_product_structure=analyzed_structure,
-            product_source_hash=source_hash,
-            created_at=datetime.utcnow(),
-            completed_at=datetime.utcnow()  # Stage 1 is complete
-        )
-
-        try:
-            self.db.add(history)
-            self.db.add(session)
-            self.db.flush()  # Flush to get history.id for detailed features
-
-            # Store detailed features WITH embeddings via the shared helper
-            # (same path as analyze_product_task, so the two cannot drift).
-            detailed_features_data = analyzed_structure.get('detailed_features', [])
-            if detailed_features_data:
-                print(f"[ProductService] Storing {len(detailed_features_data)} detailed features...")
-                create_product_features_with_embeddings(
-                    self.db,
-                    product_id=product_id,
-                    analysis_history_id=history.id,
-                    analysis_version=new_version,
-                    detailed_features=detailed_features_data,
-                    source_url=self._get_source_url(source_type, source_data),
-                )
-                print(f"[ProductService] Stored {len(detailed_features_data)} detailed features with embeddings for version {new_version}")
-
-            # Update product with latest analysis and description
-            print(f"[ProductService] Updating product {product_id} description: {product_description[:100]}...")
-            product.product_description = product_description
-            product.structured_product_data = analyzed_structure
-            product.product_category = analyzed_structure.get('product_category')
-            product.product_source_type = source_type
-            product.product_source_data = source_data
-            product.analysis_version = new_version
-            product.last_analyzed_at = datetime.utcnow()
-            product.last_analyzed_by_user_id = user_id
-            product.analysis_count = new_version
-            product.last_modified_by_user_id = user_id
-            product.last_source_hash = source_hash  # Update source hash
-
-            print(f"[ProductService] Auto-creating session #{new_version} for product analysis...")
-            print(f"[ProductService] Committing changes to database...")
-            self.db.commit()
-            self.db.refresh(product)
-            self.db.refresh(session)
-            print(f"[ProductService] Created session #{session.session_number} (ID: {session.id}) for product {product_id}")
-            print(f"[ProductService] After commit, product.product_description: {product.product_description[:100]}...")
-        except IntegrityError as e:
-            self.db.rollback()
-            raise ValueError(f"Failed to save analysis: {str(e)}")
-
-        return analyzed_structure
 
     def get_product(
         self,

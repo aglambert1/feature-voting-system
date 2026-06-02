@@ -6,7 +6,7 @@ Houses the V2 competitive workflow:
   ProductCompetitor rows.
 * ``functional_audit_task`` — generates a CompetitorFunctionalReport for one
   competitor (Stage 1 + Stage 2 LLM calls).
-* ``aggregate_functional_audits_v2`` — chord callback after all audits complete.
+* ``mark_audits_complete`` — chord callback after all audits complete; marks the parent orchestration job successful.
 * ``run_competitive_analysis_v2`` — orchestrates parallel audits via Celery chord.
 """
 
@@ -620,17 +620,17 @@ def functional_audit_task(self, job_id: int):
             db.close()
 
 
-@shared_task(bind=True, name='app.queue.competitor_tasks.aggregate_functional_audits_v2', soft_time_limit=300)
-def aggregate_functional_audits_v2(self, audit_results: list, parent_job_id: int):
+@shared_task(bind=True, name='app.queue.competitor_tasks.mark_audits_complete', soft_time_limit=300)
+def mark_audits_complete(self, audit_results: list, parent_job_id: int):
     """
-    Callback task after all functional audits complete.
+    Chord callback after all functional_audit_task instances complete.
 
-    Marks the parent orchestration job as successful. Landscape synthesis
-    is no longer auto-triggered — the user should run unified_synthesis
-    explicitly via synthesis_run_unified.
+    Marks the parent orchestration job (SCHEDULED_DEEP_ANALYSIS) successful
+    with a summary of audit outcomes. Synthesis is decoupled — the user
+    triggers unified_synthesis separately after reviewing audit results.
 
     Args:
-        audit_results: List of results from functional_audit_task
+        audit_results: List of return values from functional_audit_task
         parent_job_id: The parent orchestration job ID
     """
     db = None
@@ -641,7 +641,7 @@ def aggregate_functional_audits_v2(self, audit_results: list, parent_job_id: int
         successful_audits = [r for r in audit_results if r and r.get('report_id')]
         failed_audits = len(audit_results) - len(successful_audits)
 
-        print(f"[aggregate_functional_audits_v2] {len(successful_audits)} successful, {failed_audits} failed")
+        print(f"[mark_audits_complete] {len(successful_audits)} successful, {failed_audits} failed")
 
         queue_service.mark_success(parent_job_id, {
             'status': 'audits_completed',
@@ -659,7 +659,7 @@ def aggregate_functional_audits_v2(self, audit_results: list, parent_job_id: int
     except Exception as e:
         error_msg = str(e)
         error_tb = traceback.format_exc()
-        print(f"[aggregate_functional_audits_v2] Error: {error_msg}")
+        print(f"[mark_audits_complete] Error: {error_msg}")
 
         if db:
             try:
@@ -750,7 +750,7 @@ def run_competitive_analysis_v2(self, job_id: int):
         db.commit()
 
         # Dispatch parallel audits; callback marks the parent job complete
-        workflow = chord(audit_tasks)(aggregate_functional_audits_v2.s(job_id))
+        workflow = chord(audit_tasks)(mark_audits_complete.s(job_id))
 
         return {
             'status': 'workflow_started',
