@@ -10,7 +10,7 @@ from celery import shared_task
 from datetime import datetime
 
 from app.models.competitor_intelligence import (
-    CIProduct, ProductAnalysisHistory, ProductFeature,
+    CIProduct, ProductAnalysisHistory,
 )
 from app.services.queue_service import QueueService
 from app.services.llm_service import LLMService
@@ -133,20 +133,19 @@ def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
         db.add(history)
         db.flush()  # Get the history.id
 
-        # Store detailed features
+        # Store detailed features WITH embeddings (shared with the synchronous
+        # ProductService path so the two cannot drift). Embeddings power the
+        # fast feature-match lookup; creating rows without them forces every
+        # query onto a slow per-feature embedding fallback.
+        from app.services.product_service import create_product_features_with_embeddings
         detailed_features = result.get('detailed_features', [])
-        for feat in detailed_features:
-            product_feature = ProductFeature(
-                product_id=product_id,
-                analysis_history_id=history.id,
-                analysis_version=product.analysis_version,
-                feature_name=feat.get('name', ''),
-                feature_description=feat.get('description', ''),
-                feature_category=feat.get('category', ''),
-                extraction_confidence=feat.get('confidence', 0.0),
-                source_reference=feat.get('source_reference', ''),
-            )
-            db.add(product_feature)
+        create_product_features_with_embeddings(
+            db,
+            product_id=product_id,
+            analysis_history_id=history.id,
+            analysis_version=product.analysis_version,
+            detailed_features=detailed_features,
+        )
 
         db.commit()
 

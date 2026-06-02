@@ -31,11 +31,25 @@ MODEL = "voyage-3.5-lite"
 
 
 def _get_client() -> voyageai.Client:
-    """Get or create the Voyage AI client singleton."""
+    """Get or create the Voyage AI client singleton.
+
+    A finite ``timeout`` is essential: without it a single slow embed call
+    blocks the request worker indefinitely, which on a single-worker instance
+    starves the health check and gets the instance restarted (surfacing as a
+    502 to the browser). ``max_retries`` is bounded so transient errors don't
+    multiply the worst-case latency.
+    """
     global _client
     if _client is None:
-        _client = voyageai.Client(api_key=settings.voyage_api_key)
-        logger.info("Initialized Voyage AI client (model=%s)", MODEL)
+        _client = voyageai.Client(
+            api_key=settings.voyage_api_key,
+            timeout=settings.voyage_timeout_seconds,
+            max_retries=settings.voyage_max_retries,
+        )
+        logger.info(
+            "Initialized Voyage AI client (model=%s, timeout=%ss, max_retries=%s)",
+            MODEL, settings.voyage_timeout_seconds, settings.voyage_max_retries,
+        )
     return _client
 
 

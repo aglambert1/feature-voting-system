@@ -57,6 +57,12 @@ class Settings(BaseSettings):
 
     # Embedding API settings (Voyage AI for semantic search)
     voyage_api_key: str = "your-voyage-api-key-here"  # Get key at https://dash.voyageai.com/
+    # Per-request timeout (seconds) for the Voyage client. Without this the
+    # client waits indefinitely, which can block a request worker long enough
+    # that the platform health check fails and the instance is restarted (a 502
+    # to the caller). Keep well under the platform request timeout.
+    voyage_timeout_seconds: float = 20.0
+    voyage_max_retries: int = 2  # Bounded retries for transient Voyage errors
 
     # Search API settings (for competitor research)
     brave_api_key: str = "your-brave-api-key-here"  # Get free key at https://brave.com/search/api/
