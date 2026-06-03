@@ -7,7 +7,7 @@ provides a way to get database sessions for handling requests.
 
 import logging
 from sqlalchemy import create_engine, event, text
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.engine import Engine
 
