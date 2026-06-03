@@ -1533,7 +1533,7 @@ class CompetitorDiscoveryRequest(BaseModel):
 
 class FeatureExtractionRequest(BaseModel):
     """Schema for feature extraction request."""
-    competitor_ids: List[int] = Field(..., min_items=1)
+    competitor_ids: List[int] = Field(..., min_length=1)
     parallel: bool = Field(default=True)
 
 

@@ -5,7 +5,7 @@ These schemas validate voting actions and return vote information.
 """
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class VoteCreate(BaseModel):
@@ -16,9 +16,9 @@ class VoteCreate(BaseModel):
     """
     vote_value: int = Field(..., description="Vote value: must be 1 (upvote)")
 
-    @validator('vote_value')
+    @field_validator('vote_value')
+    @classmethod
     def validate_vote_value(cls, v):
-        """Ensure vote value is 1 (upvote only)."""
         if v != 1:
             raise ValueError('Vote value must be 1 (upvote)')
         return v
