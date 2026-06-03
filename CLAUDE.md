@@ -41,6 +41,7 @@ Common patterns - verify against source if unsure:
   - Use `sa.text('CURRENT_TIMESTAMP')` not `sa.text('now()')`
   - Use `server_default='0'` for booleans, not `server_default=sa.text('false')`
   - Avoid PG-specific syntax (e.g., `CREATE TYPE`, `USING` casts)
+  - In `op.execute`/`sa.text` DML, **never compare boolean columns with integers** (`= 1`, `= 0`, `THEN 1`). PostgreSQL has a strict boolean type and rejects these. Use bare column references (`deep_analysis_enabled`) or `true`/`false` literals instead. SQLite accepts both, so this bug passes locally but fails on prod.
 
 **When to update this section:**
 - Adding/renaming model fields
