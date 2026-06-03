@@ -10,7 +10,7 @@ These schemas define:
 
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # =============================================================================
@@ -211,8 +211,7 @@ class SynthesisRunResponse(BaseModel):
     completed_at: Optional[datetime] = None
     opportunity_count: int = 0
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SynthesizedOpportunityResponse(BaseModel):
@@ -234,8 +233,7 @@ class SynthesizedOpportunityResponse(BaseModel):
     linked_idea_id: Optional[int] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SynthesisResultsResponse(BaseModel):

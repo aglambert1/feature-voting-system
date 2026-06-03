@@ -12,7 +12,7 @@ The difference between a Model and a Schema:
 """
 
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import Optional, List
 
 from app.models.user import UserRole
@@ -61,14 +61,7 @@ class UserResponse(BaseModel):
     has_seen_welcome: bool = False
     created_at: datetime
 
-    class Config:
-        """
-        Pydantic configuration.
-
-        from_attributes=True allows Pydantic to work with SQLAlchemy models.
-        This means you can do: UserResponse.from_orm(db_user)
-        """
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class Token(BaseModel):

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.database import get_db
 from app.models.user import User
@@ -72,8 +72,7 @@ class AgentConfigResponse(BaseModel):
 
     enabled: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentConfigUpdateRequest(BaseModel):
@@ -105,8 +104,7 @@ class CompetitorResponse(BaseModel):
     feature_count: int = 0
     evidence_count: int = 0
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FeatureResponse(BaseModel):
@@ -120,8 +118,7 @@ class FeatureResponse(BaseModel):
     cluster_id: Optional[int] = None
     cluster_name: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CreateIdeasRequest(BaseModel):
@@ -152,8 +149,7 @@ class CompetitorAlertResponse(BaseModel):
     is_read: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PricingAnalysisResponse(BaseModel):
@@ -170,8 +166,7 @@ class PricingAnalysisResponse(BaseModel):
     confidence: float
     analyzed_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PositioningAnalysisResponse(BaseModel):
@@ -187,8 +182,7 @@ class PositioningAnalysisResponse(BaseModel):
     confidence: float
     analyzed_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MomentumAnalysisResponse(BaseModel):
@@ -204,8 +198,7 @@ class MomentumAnalysisResponse(BaseModel):
     confidence: float
     analyzed_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChangeEventResponse(BaseModel):
@@ -221,8 +214,7 @@ class ChangeEventResponse(BaseModel):
     impact_level: str
     detected_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FinancialsAnalysisResponse(BaseModel):
@@ -240,8 +232,7 @@ class FinancialsAnalysisResponse(BaseModel):
     confidence: float
     analyzed_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class JobResponse(BaseModel):
@@ -269,8 +260,7 @@ class FunctionalReportSummary(BaseModel):
     gaps_identified: int = 0
     generated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FunctionalReportDetail(BaseModel):
@@ -287,8 +277,7 @@ class FunctionalReportDetail(BaseModel):
     technical_constraints: Optional[dict] = None
     generated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================================
