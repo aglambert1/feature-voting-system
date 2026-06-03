@@ -797,7 +797,7 @@ export interface CompetitiveAgentConfigUpdate {
 }
 
 /**
- * Competitor with deep analysis status.
+ * Competitor with tracking and audit status.
  */
 export interface AgentCompetitor {
   id: number;
@@ -805,9 +805,9 @@ export interface AgentCompetitor {
   competitor_name: string;
   competitor_url: string | null;
   status: string;
-  deep_analysis_enabled: boolean;
-  deep_analysis_status: string | null;
-  deep_analysis_last_run: string | null;
+  tracked: boolean;
+  audit_status: string | null;
+  audit_last_run: string | null;
   feature_count: number;
   evidence_count: number;
 }
@@ -1387,10 +1387,9 @@ export interface SynthesisCompetitorConfigEntry {
   competitor_id: number;
   competitor_name: string;
   competitor_url?: string | null;
-  audit_enabled: boolean;
+  tracked: boolean;
   audit_status?: string | null;
   audit_last_run?: string | null;
-  synthesis_included: boolean;
   has_report: boolean;
 }
 

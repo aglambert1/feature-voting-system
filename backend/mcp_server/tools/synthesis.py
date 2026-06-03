@@ -256,7 +256,7 @@ def synthesis_get_competitors(product_id: int) -> dict:
                 "competitor_id": c.id,
                 "competitor_name": c.competitor_name,
                 "competitor_url": c.competitor_url,
-                "audit_enabled": bool(c.audit_enabled),
+                "tracked": bool(c.tracked),
                 "audit_status": c.audit_status,
                 "audit_last_run": (
                     c.audit_last_run.isoformat() if c.audit_last_run else None
@@ -264,7 +264,6 @@ def synthesis_get_competitors(product_id: int) -> dict:
                 "has_report": report is not None,
                 "report_version": report.report_version if report else None,
                 "report_generated_at": report.generated_at.isoformat() if report else None,
-                "synthesis_included": bool(c.synthesis_included),
             })
 
         return {"product_id": product_id, "competitors": result}
@@ -274,10 +273,10 @@ def synthesis_get_competitors(product_id: int) -> dict:
 def synthesis_run_unified(product_id: int) -> dict:
     """Trigger a unified synthesis run.
 
-    Auto-triggers missing functional audits for any competitor with
-    synthesis_included=True; if any audits had to be triggered, the
-    synthesis is deferred and the caller should re-run after audits
-    complete (poll those audit jobs via job_get_status).
+    Auto-triggers missing functional audits for any tracked competitor without a
+    report; if any audits had to be triggered, the synthesis is deferred and the
+    caller should re-run after audits complete (poll those audit jobs via
+    job_get_status).
     """
     from app.models.queue import JobType
     from app.services.queue_service import QueueService

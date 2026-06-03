@@ -1,7 +1,7 @@
 """
 Tests for the synthesis competitor endpoints on unified_synthesis.py:
-- GET  /products/{id}/synthesis/competitors    (list with has_report)
-- PATCH /products/{id}/synthesis/competitors/{cid}/synthesis-inclusion
+- GET  /products/{id}/synthesis/competitors    (list with tracked + has_report)
+- PATCH /products/{id}/competitors/{cid}/tracked  (set tracked flag)
 - POST /products/{id}/synthesis/run            (dispatches Celery task)
 """
 
@@ -16,14 +16,13 @@ from conftest import auth_headers
 
 @pytest.fixture
 def test_competitor(db_session, test_product):
-    """A single active competitor on test_product with synthesis_included=False."""
+    """A single active untracked competitor on test_product."""
     competitor = ProductCompetitor(
         product_id=test_product.id,
         competitor_name="Acme Rivals",
         competitor_url="https://acme.example.com",
         status="active",
-        audit_enabled=False,
-        synthesis_included=False,
+        tracked=False,
     )
     db_session.add(competitor)
     db_session.commit()
@@ -31,12 +30,12 @@ def test_competitor(db_session, test_product):
     return competitor
 
 
-# --- GET list ----------------------------------------------------------------
+# --- GET synthesis/competitors ------------------------------------------------
 
 
 class TestGetSynthesisCompetitors:
 
-    def test_list_returns_has_report_false_when_no_report(
+    def test_list_returns_tracked_and_has_report(
         self, client, po_user, test_product, test_competitor
     ):
         resp = client.get(
@@ -49,7 +48,7 @@ class TestGetSynthesisCompetitors:
         assert len(body["competitors"]) == 1
         entry = body["competitors"][0]
         assert entry["competitor_id"] == test_competitor.id
-        assert entry["synthesis_included"] is False
+        assert entry["tracked"] is False
         assert entry["has_report"] is False
 
     def test_list_returns_has_report_true_when_report_exists(
@@ -72,44 +71,81 @@ class TestGetSynthesisCompetitors:
         assert entry["has_report"] is True
 
 
-# --- PATCH synthesis-inclusion -----------------------------------------------
+# --- PATCH tracked ------------------------------------------------------------
 
 
-class TestPatchSynthesisInclusion:
+class TestPatchTracked:
 
-    def test_toggles_flag_on_and_off(
+    def test_sets_tracked_true(
         self, client, po_user, test_product, test_competitor, db_session
     ):
         url = (
-            f"/products/{test_product.id}/synthesis/competitors/"
-            f"{test_competitor.id}/synthesis-inclusion"
+            f"/product-intelligence/agents/{test_product.id}/competitors/"
+            f"{test_competitor.id}/tracked"
         )
-
-        on = client.patch(url, json={"included": True}, headers=auth_headers(po_user))
-        assert on.status_code == 200
-        assert on.json()["synthesis_included"] is True
-
-        db_session.expire_all()
-        refreshed = db_session.query(ProductCompetitor).get(test_competitor.id)
-        assert refreshed.synthesis_included is True
-
-        off = client.patch(url, json={"included": False}, headers=auth_headers(po_user))
-        assert off.status_code == 200
-        assert off.json()["synthesis_included"] is False
-
-    def test_does_not_touch_audit_enabled(
-        self, client, po_user, test_product, test_competitor, db_session
-    ):
-        url = (
-            f"/products/{test_product.id}/synthesis/competitors/"
-            f"{test_competitor.id}/synthesis-inclusion"
-        )
-        resp = client.patch(url, json={"included": True}, headers=auth_headers(po_user))
+        resp = client.patch(url, json={"tracked": True}, headers=auth_headers(po_user))
         assert resp.status_code == 200
+        assert resp.json()["tracked"] is True
 
         db_session.expire_all()
         refreshed = db_session.query(ProductCompetitor).get(test_competitor.id)
-        assert refreshed.audit_enabled is False  # still False
+        assert refreshed.tracked is True
+
+    def test_sets_tracked_false(
+        self, client, po_user, test_product, test_competitor, db_session
+    ):
+        # First track it
+        test_competitor.tracked = True
+        db_session.commit()
+
+        url = (
+            f"/product-intelligence/agents/{test_product.id}/competitors/"
+            f"{test_competitor.id}/tracked"
+        )
+        resp = client.patch(url, json={"tracked": False}, headers=auth_headers(po_user))
+        assert resp.status_code == 200
+        assert resp.json()["tracked"] is False
+
+        db_session.expire_all()
+        refreshed = db_session.query(ProductCompetitor).get(test_competitor.id)
+        assert refreshed.tracked is False
+
+    def test_tracked_competitor_appears_in_synthesis_query(
+        self, client, po_user, test_product, test_competitor, db_session
+    ):
+        # Track it
+        url = (
+            f"/product-intelligence/agents/{test_product.id}/competitors/"
+            f"{test_competitor.id}/tracked"
+        )
+        client.patch(url, json={"tracked": True}, headers=auth_headers(po_user))
+
+        # Verify it shows as tracked in the synthesis competitors list
+        resp = client.get(
+            f"/products/{test_product.id}/synthesis/competitors",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200
+        entry = resp.json()["competitors"][0]
+        assert entry["tracked"] is True
+
+    def test_untracked_competitor_not_in_synthesis_query(
+        self, client, po_user, test_product, test_competitor, db_session
+    ):
+        # Untrack it explicitly
+        url = (
+            f"/product-intelligence/agents/{test_product.id}/competitors/"
+            f"{test_competitor.id}/tracked"
+        )
+        client.patch(url, json={"tracked": False}, headers=auth_headers(po_user))
+
+        resp = client.get(
+            f"/products/{test_product.id}/synthesis/competitors",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200
+        entry = resp.json()["competitors"][0]
+        assert entry["tracked"] is False
 
     def test_forbidden_for_viewer(
         self,
@@ -120,44 +156,11 @@ class TestPatchSynthesisInclusion:
         test_competitor,
     ):
         url = (
-            f"/products/{test_product.id}/synthesis/competitors/"
-            f"{test_competitor.id}/synthesis-inclusion"
+            f"/product-intelligence/agents/{test_product.id}/competitors/"
+            f"{test_competitor.id}/tracked"
         )
-        resp = client.patch(url, json={"included": True}, headers=auth_headers(voter_user))
+        resp = client.patch(url, json={"tracked": True}, headers=auth_headers(voter_user))
         assert resp.status_code == 403
-
-    def test_unknown_competitor_returns_404(
-        self, client, po_user, test_product
-    ):
-        url = (
-            f"/products/{test_product.id}/synthesis/competitors/"
-            f"999999/synthesis-inclusion"
-        )
-        resp = client.patch(url, json={"included": True}, headers=auth_headers(po_user))
-        assert resp.status_code == 404
-
-    def test_competitor_from_other_product_returns_404(
-        self, client, po_user, test_product, second_product, db_session
-    ):
-        # Create a competitor on the SECOND product, then try to patch it
-        # via the first product's URL — should 404, not leak.
-        other = ProductCompetitor(
-            product_id=second_product.id,
-            competitor_name="Other Co",
-            status="active",
-            audit_enabled=False,
-            synthesis_included=False,
-        )
-        db_session.add(other)
-        db_session.commit()
-        db_session.refresh(other)
-
-        url = (
-            f"/products/{test_product.id}/synthesis/competitors/"
-            f"{other.id}/synthesis-inclusion"
-        )
-        resp = client.patch(url, json={"included": True}, headers=auth_headers(po_user))
-        assert resp.status_code == 404
 
 
 # --- POST /synthesis/run -----------------------------------------------------

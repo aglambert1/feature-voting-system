@@ -253,16 +253,10 @@ class ProductCompetitor(Base):
     monitoring_enabled = Column(Boolean, default=False)
     last_monitored_at = Column(DateTime, nullable=True)
 
-    # Deep Analysis fields (new agent-centric architecture)
-    deep_analysis_enabled = Column(Boolean, nullable=False, default=False)  # PO marks for deep analysis
-    deep_analysis_last_run = Column(DateTime, nullable=True)  # Last time deep analysis ran
-    deep_analysis_status = Column(String(50), nullable=True)  # "pending", "running", "completed", "failed"
-
-    # Decoupled audit/synthesis workflow (replaces deep_analysis fields)
-    audit_enabled = Column(Boolean, nullable=False, default=False)
+    # Single tracking flag: tracked = scheduled for audit + included in synthesis
+    tracked = Column(Boolean, nullable=False, default=False)
     audit_status = Column(String(50), nullable=True)  # pending, running, completed, failed
     audit_last_run = Column(DateTime, nullable=True)
-    synthesis_included = Column(Boolean, nullable=False, default=False)
 
     # Cached web research (populated per-competitor, reused across audits within TTL)
     cached_search_results = Column(JSON, nullable=True)

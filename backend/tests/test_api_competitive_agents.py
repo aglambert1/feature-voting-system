@@ -142,12 +142,12 @@ class TestTriggerAnalysis:
 
     @patch("app.api.competitive_agents.send_task")
     def test_trigger_v2_analysis(self, mock_task, client, po_user, test_product, db_session):
-        # Add a competitor with deep analysis enabled
+        # Add a tracked competitor
         competitor = ProductCompetitor(
             product_id=test_product.id,
             competitor_name="Test Rival",
             competitor_url="https://testrival.com",
-            deep_analysis_enabled=True,
+            tracked=True,
         )
         db_session.add(competitor)
         db_session.commit()

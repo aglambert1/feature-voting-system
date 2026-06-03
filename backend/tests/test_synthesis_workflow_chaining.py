@@ -116,14 +116,14 @@ class TestUnifiedSynthesisChordDispatch:
     "deferred")."""
 
     def _make_competitor(self, db_session, product_id: int, name: str,
-                         synthesis_included: bool = True,
+                         tracked: bool = True,
                          audit_status: str | None = None) -> ProductCompetitor:
         c = ProductCompetitor(
             product_id=product_id,
             competitor_name=name,
             competitor_url=f"https://{name.lower()}.example.com",
             status="active",
-            synthesis_included=synthesis_included,
+            tracked=tracked,
         )
         if audit_status:
             c.audit_status = audit_status

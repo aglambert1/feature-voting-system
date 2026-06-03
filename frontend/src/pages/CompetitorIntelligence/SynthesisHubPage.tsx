@@ -14,7 +14,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import Navigation from "../../components/Navigation";
 import SynthesisConfigPanel from "./components/SynthesisConfigPanel";
-import SynthesisCompetitorList from "./components/SynthesisCompetitorList";
 import {
   createIdeaFromOpportunity,
   getJob,
@@ -44,11 +43,6 @@ export default function SynthesisHubPage() {
 
   const [runningJobUuid, setRunningJobUuid] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
-  // Bumped when a synthesis run terminally succeeds so child components that
-  // depend on competitor audit state (SynthesisCompetitorList) re-fetch
-  // without requiring a manual browser refresh.
-  const [competitorReloadKey, setCompetitorReloadKey] = useState(0);
-
   // Persist panel expansion across navigation (e.g., clicking into an idea
   // then hitting back) so the user's collapse choice survives. Matches the
   // sessionStorage pattern established in ProductContext.
@@ -56,17 +50,9 @@ export default function SynthesisHubPage() {
     const stored = sessionStorage.getItem("synthesisHub:configExpanded");
     return stored === null ? true : stored === "true";
   });
-  const [competitorsExpanded, setCompetitorsExpanded] = useState<boolean>(() => {
-    const stored = sessionStorage.getItem("synthesisHub:competitorsExpanded");
-    return stored === null ? false : stored === "true";
-  });
-
   useEffect(() => {
     sessionStorage.setItem("synthesisHub:configExpanded", String(configExpanded));
   }, [configExpanded]);
-  useEffect(() => {
-    sessionStorage.setItem("synthesisHub:competitorsExpanded", String(competitorsExpanded));
-  }, [competitorsExpanded]);
 
   const [modalOpp, setModalOpp] = useState<SynthesisOpportunityDetail | null>(null);
   const [createNotice, setCreateNotice] = useState<{ ideaId: number } | null>(null);
@@ -122,11 +108,6 @@ export default function SynthesisHubPage() {
             setRunError(job.error_message ?? "Synthesis failed.");
           } else if (job.status === JobStatus.SUCCESS) {
             await fetchReport();
-            // Synthesis just finished — any competitors that needed audits
-            // now have CompetitorFunctionalReport rows. Bump so the
-            // SynthesisCompetitorList re-fetches and flips them from
-            // "Audit running" to "Report ready" without a manual reload.
-            setCompetitorReloadKey((k) => k + 1);
           }
         }
       } catch (err) {
@@ -280,39 +261,6 @@ export default function SynthesisHubPage() {
           {configExpanded && Number.isFinite(numProductId) && (
             <div className="mt-3">
               <SynthesisConfigPanel productId={numProductId} />
-            </div>
-          )}
-        </div>
-
-        {/* Competitor inclusion (collapsible, closed by default — takes a lot of room) */}
-        <div className="mb-6">
-          <button
-            type="button"
-            onClick={() => setCompetitorsExpanded((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-3 bg-white rounded-lg shadow text-left hover:bg-gray-50"
-            aria-expanded={competitorsExpanded}
-          >
-            <div>
-              <h2 className="text-base font-semibold text-gray-900">Competitor inclusion</h2>
-              <p className="text-xs text-gray-500">
-                Pick which competitors to include in the next synthesis run.
-              </p>
-            </div>
-            <svg
-              className={`w-5 h-5 text-gray-400 transition-transform ${competitorsExpanded ? "rotate-180" : ""}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-          {competitorsExpanded && Number.isFinite(numProductId) && (
-            <div className="mt-3">
-              <SynthesisCompetitorList
-                productId={numProductId}
-                reloadKey={competitorReloadKey}
-              />
             </div>
           )}
         </div>

@@ -610,30 +610,30 @@ export const triggerCompetitorDiscovery = async (productId: number): Promise<Age
 // --- Competitor Management ---
 
 /**
- * List competitors with deep analysis status
+ * List competitors with tracking and audit status
  */
 export const getAgentCompetitors = async (
   productId: number,
-  deepAnalysisEnabled?: boolean
+  tracked?: boolean
 ): Promise<AgentCompetitor[]> => {
   const response = await api.get<AgentCompetitor[]>(
     `/product-intelligence/agents/${productId}/competitors`,
-    { params: deepAnalysisEnabled !== undefined ? { deep_analysis_enabled: deepAnalysisEnabled } : {} }
+    { params: tracked !== undefined ? { tracked } : {} }
   );
   return response.data;
 };
 
 /**
- * Update competitor selection (enable/disable deep analysis)
+ * Set competitor tracked status
  */
-export const updateCompetitorSelection = async (
+export const updateCompetitorTracked = async (
   productId: number,
   competitorId: number,
-  enabled: boolean
-): Promise<{ message: string }> => {
-  const action = enabled ? 'enable-deep-analysis' : 'disable-deep-analysis';
-  const response = await api.post<{ message: string }>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/${action}`
+  tracked: boolean
+): Promise<AgentCompetitor> => {
+  const response = await api.patch<AgentCompetitor>(
+    `/product-intelligence/agents/${productId}/competitors/${competitorId}/tracked`,
+    { tracked }
   );
   return response.data;
 };
@@ -649,7 +649,7 @@ export const addCompetitorManually = async (
   id: number;
   competitor_name: string;
   competitor_url: string;
-  deep_analysis_enabled: boolean;
+  tracked: boolean;
   message: string;
 }> => {
   const response = await api.post(
@@ -1305,7 +1305,6 @@ import type {
   SynthesisConfigPutRequest,
   SynthesisConfigData,
   SynthesisCompetitorsConfigResponse,
-  SynthesisCompetitorConfigEntry,
 } from '../types';
 
 export const getSynthesisConfig = async (
@@ -1337,19 +1336,6 @@ export const getSynthesisCompetitorsCfg = async (
   return response.data;
 };
 
-export const patchCompetitorSynthesisInclusion = async (
-  productId: number,
-  competitorId: number,
-  included: boolean
-): Promise<Pick<SynthesisCompetitorConfigEntry, 'competitor_id' | 'competitor_name' | 'synthesis_included'> & { message: string }> => {
-  const response = await api.patch<
-    Pick<SynthesisCompetitorConfigEntry, 'competitor_id' | 'competitor_name' | 'synthesis_included'> & { message: string }
-  >(
-    `/products/${productId}/synthesis/competitors/${competitorId}/synthesis-inclusion`,
-    { included }
-  );
-  return response.data;
-};
 
 // Export the axios instance for custom requests
 export default api;

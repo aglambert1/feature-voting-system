@@ -1199,7 +1199,7 @@ class TestCiDeactivateCompetitor:
         # Verify DB state
         db_session.refresh(competitor)
         assert competitor.status == "inactive"
-        assert competitor.deep_analysis_enabled is False
+        assert competitor.tracked is False
 
     def test_already_inactive(self, db_session, product_a, owner, competitor):
         from mcp_server.tools.competitive import ci_deactivate_competitor
@@ -1835,108 +1835,56 @@ class TestProductGetContextIncludesJobMap:
 
 
 # ---------------------------------------------------------------------------
-# ci_set_audit — enable/disable audit with synthesis default
+# ci_set_tracked — single replacement for ci_set_audit/ci_set_synthesis_inclusion
 # ---------------------------------------------------------------------------
 
-class TestCiSetAudit:
-    def test_ci_set_audit_enables_synthesis_by_default(self, db_session, product_a, owner, competitor):
-        from mcp_server.tools.competitive import ci_set_audit
+class TestCiSetTracked:
+    def test_ci_set_tracked_true(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_set_tracked
 
-        # Verify starting state: synthesis_included is False
-        assert competitor.synthesis_included is False
-        assert competitor.audit_enabled is False
+        assert competitor.tracked is False
 
         with _mock_session(db_session), _patch_user(owner.id):
-            result = ci_set_audit(product_a.id, competitor.id, enabled=True)
+            result = ci_set_tracked(product_a.id, competitor.competitor_name, tracked=True)
             assert "error" not in result
-            assert result["audit_enabled"] is True
-            assert result["synthesis_included"] is True
+            assert result["tracked"] is True
 
-        # Verify DB state
         db_session.refresh(competitor)
-        assert competitor.audit_enabled is True
-        assert competitor.deep_analysis_enabled is True  # backward compat
-        assert competitor.synthesis_included is True
+        assert competitor.tracked is True
 
-    def test_ci_set_audit_disable(self, db_session, product_a, owner, competitor):
-        from mcp_server.tools.competitive import ci_set_audit
+    def test_ci_set_tracked_false(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_set_tracked
 
-        competitor.audit_enabled = True
-        competitor.synthesis_included = True
+        competitor.tracked = True
         db_session.commit()
 
         with _mock_session(db_session), _patch_user(owner.id):
-            result = ci_set_audit(product_a.id, competitor.id, enabled=False)
+            result = ci_set_tracked(product_a.id, competitor.competitor_name, tracked=False)
             assert "error" not in result
-            assert result["audit_enabled"] is False
+            assert result["tracked"] is False
 
         db_session.refresh(competitor)
-        assert competitor.audit_enabled is False
-        assert competitor.deep_analysis_enabled is False
-        # synthesis_included stays as-is when disabling audit
-        assert competitor.synthesis_included is True
+        assert competitor.tracked is False
 
     def test_viewer_denied(self, db_session, product_a, viewer, viewer_access, competitor):
-        from mcp_server.tools.competitive import ci_set_audit
+        from mcp_server.tools.competitive import ci_set_tracked
 
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_set_audit(product_a.id, competitor.id, enabled=True)
+            result = ci_set_tracked(product_a.id, competitor.competitor_name, tracked=True)
             assert "error" in result
             assert "EDIT" in result["error"]
 
 
 # ---------------------------------------------------------------------------
-# ci_set_synthesis_inclusion — include/exclude from synthesis
-# ---------------------------------------------------------------------------
-
-class TestCiSetSynthesisInclusion:
-    def test_ci_set_synthesis_inclusion(self, db_session, product_a, owner, competitor):
-        from mcp_server.tools.competitive import ci_set_synthesis_inclusion
-
-        assert competitor.synthesis_included is False
-
-        with _mock_session(db_session), _patch_user(owner.id):
-            result = ci_set_synthesis_inclusion(product_a.id, competitor.id, included=True)
-            assert "error" not in result
-            assert result["synthesis_included"] is True
-
-        db_session.refresh(competitor)
-        assert competitor.synthesis_included is True
-
-    def test_exclude_from_synthesis(self, db_session, product_a, owner, competitor):
-        from mcp_server.tools.competitive import ci_set_synthesis_inclusion
-
-        competitor.synthesis_included = True
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(owner.id):
-            result = ci_set_synthesis_inclusion(product_a.id, competitor.id, included=False)
-            assert "error" not in result
-            assert result["synthesis_included"] is False
-
-        db_session.refresh(competitor)
-        assert competitor.synthesis_included is False
-
-    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access, competitor):
-        from mcp_server.tools.competitive import ci_set_synthesis_inclusion
-
-        with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_set_synthesis_inclusion(product_a.id, competitor.id, included=True)
-            assert "error" in result
-            assert "EDIT" in result["error"]
-
-
-# ---------------------------------------------------------------------------
-# ci_get_competitor_list — shows audit/synthesis status
+# ci_get_competitor_list — shows tracked + audit status
 # ---------------------------------------------------------------------------
 
 class TestCiGetCompetitorListAuditStatus:
-    def test_ci_get_competitor_list_shows_audit_status(self, db_session, product_a, owner, competitor):
+    def test_ci_get_competitor_list_shows_tracked_and_audit_status(self, db_session, product_a, owner, competitor):
         from mcp_server.tools.competitive import ci_get_competitor_list
 
-        competitor.audit_enabled = True
+        competitor.tracked = True
         competitor.audit_status = "completed"
-        competitor.synthesis_included = True
         db_session.commit()
 
         with _mock_session(db_session), _patch_user(owner.id):
@@ -1944,9 +1892,8 @@ class TestCiGetCompetitorListAuditStatus:
             assert "error" not in result
             assert len(result["competitors"]) == 1
             c = result["competitors"][0]
-            assert c["audit_enabled"] is True
+            assert c["tracked"] is True
             assert c["audit_status"] == "completed"
-            assert c["synthesis_included"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -2043,24 +1990,22 @@ class TestSynthesisGetConfig:
 
 
 class TestSynthesisGetCompetitors:
-    def test_shows_inclusion_flags(
+    def test_shows_tracked_flag(
         self, db_session, product_a, owner, competitor
     ):
         from mcp_server.tools.synthesis import synthesis_get_competitors
 
-        competitor.audit_enabled = True
+        competitor.tracked = True
         competitor.audit_status = "completed"
-        competitor.synthesis_included = True
         db_session.commit()
 
-        # Second competitor — not included
+        # Second competitor — untracked
         other = ProductCompetitor(
             product_id=product_a.id,
             competitor_name="Other Co",
             competitor_url="https://other.co",
             status="active",
-            audit_enabled=False,
-            synthesis_included=False,
+            tracked=False,
         )
         db_session.add(other)
         db_session.commit()
@@ -2070,9 +2015,9 @@ class TestSynthesisGetCompetitors:
             assert "error" not in result
             assert len(result["competitors"]) == 2
             by_name = {c["competitor_name"]: c for c in result["competitors"]}
-            assert by_name["Rival Co"]["synthesis_included"] is True
+            assert by_name["Rival Co"]["tracked"] is True
             assert by_name["Rival Co"]["audit_status"] == "completed"
-            assert by_name["Other Co"]["synthesis_included"] is False
+            assert by_name["Other Co"]["tracked"] is False
 
     def test_outsider_denied(self, db_session, product_a, outsider, competitor):
         from mcp_server.tools.synthesis import synthesis_get_competitors

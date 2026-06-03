@@ -32,11 +32,8 @@ def ci_get_competitor_list(product_id: int) -> dict:
                 "competitor_id": c.id,
                 "competitor_name": c.competitor_name,
                 "competitor_url": c.competitor_url,
-                "deep_analysis_enabled": c.deep_analysis_enabled,
-                "deep_analysis_status": c.deep_analysis_status,
-                "audit_enabled": c.audit_enabled,
+                "tracked": c.tracked,
                 "audit_status": c.audit_status,
-                "synthesis_included": c.synthesis_included,
                 "has_report": report is not None,
                 "report_version": report.report_version if report else None,
                 "last_analyzed": report.generated_at.isoformat() if report else None,
@@ -203,7 +200,7 @@ def ci_add_competitor(product_id: int, competitor_name: str, competitor_url: str
             product_id=product_id,
             competitor_name=competitor_name,
             competitor_url=competitor_url,
-            deep_analysis_enabled=True,
+            tracked=True,
             status="active",
         )
         db.add(competitor)
@@ -213,7 +210,7 @@ def ci_add_competitor(product_id: int, competitor_name: str, competitor_url: str
             "competitor_id": competitor.id,
             "competitor_name": competitor.competitor_name,
             "competitor_url": competitor.competitor_url,
-            "deep_analysis_enabled": True,
+            "tracked": True,
             "message": f"Competitor '{competitor_name}' added. Run ci_run_competitor_audit to analyze.",
         }
 
@@ -312,13 +309,6 @@ def ci_run_competitor_audit(
         if conflict:
             return conflict
 
-        # Auditing a competitor implies it should be included in synthesis
-        if not competitor.deep_analysis_enabled:
-            competitor.deep_analysis_enabled = True
-        if not competitor.audit_enabled:
-            competitor.audit_enabled = True
-        if not competitor.synthesis_included:
-            competitor.synthesis_included = True
         db.flush()
 
         queue_service = QueueService(db)
@@ -408,13 +398,13 @@ def ci_refresh_research(product_id: int, competitor_name: str) -> dict:
 
 
 @mcp.tool()
-def ci_set_deep_analysis(product_id: int, competitor_name: str, enabled: bool = True) -> dict:
-    """Enable or disable a competitor for deep analysis and synthesis inclusion.
+def ci_set_tracked(product_id: int, competitor_name: str, tracked: bool) -> dict:
+    """Set whether a competitor is tracked (scheduled for audit + included in synthesis).
 
     Args:
         product_id: The product the competitor belongs to.
         competitor_name: Name (or partial name) of the competitor.
-        enabled: True to include in synthesis, False to exclude.
+        tracked: True to track, False to untrack.
     """
     from app.models.competitor_intelligence import ProductCompetitor
 
@@ -431,89 +421,14 @@ def ci_set_deep_analysis(product_id: int, competitor_name: str, enabled: bool = 
         if not competitor:
             return {"error": f"No competitor matching '{competitor_name}' found for product {product_id}"}
 
-        competitor.deep_analysis_enabled = enabled
+        competitor.tracked = tracked
         db.flush()
 
         return {
             "competitor_id": competitor.id,
             "competitor_name": competitor.competitor_name,
-            "deep_analysis_enabled": competitor.deep_analysis_enabled,
-            "message": f"{'Enabled' if enabled else 'Disabled'} deep analysis for {competitor.competitor_name}.",
-        }
-
-
-@mcp.tool()
-def ci_set_audit(product_id: int, competitor_id: int, enabled: bool) -> dict:
-    """Enable or disable a competitor for functional audit. When enabling, the competitor is also included in synthesis by default.
-
-    Args:
-        product_id: The product.
-        competitor_id: The competitor to configure.
-        enabled: True to enable audit, False to disable.
-    """
-    from app.models.competitor_intelligence import ProductCompetitor
-
-    with get_session() as db:
-        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
-        if denied:
-            return denied
-
-        competitor = db.query(ProductCompetitor).filter(
-            ProductCompetitor.id == competitor_id,
-            ProductCompetitor.product_id == product_id,
-        ).first()
-
-        if not competitor:
-            return {"error": f"Competitor {competitor_id} not found for product {product_id}"}
-
-        competitor.audit_enabled = enabled
-        competitor.deep_analysis_enabled = enabled  # backward compat
-        if enabled and not competitor.synthesis_included:
-            competitor.synthesis_included = True
-        db.flush()
-
-        return {
-            "competitor_id": competitor.id,
-            "competitor_name": competitor.competitor_name,
-            "audit_enabled": competitor.audit_enabled,
-            "synthesis_included": competitor.synthesis_included,
-            "message": f"{'Enabled' if enabled else 'Disabled'} audit for {competitor.competitor_name}."
-                       + (" Also included in synthesis." if enabled and competitor.synthesis_included else ""),
-        }
-
-
-@mcp.tool()
-def ci_set_synthesis_inclusion(product_id: int, competitor_id: int, included: bool) -> dict:
-    """Include or exclude a competitor from synthesis. This is separate from auditing — a competitor can be audited but excluded from synthesis.
-
-    Args:
-        product_id: The product.
-        competitor_id: The competitor to configure.
-        included: True to include in synthesis, False to exclude.
-    """
-    from app.models.competitor_intelligence import ProductCompetitor
-
-    with get_session() as db:
-        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
-        if denied:
-            return denied
-
-        competitor = db.query(ProductCompetitor).filter(
-            ProductCompetitor.id == competitor_id,
-            ProductCompetitor.product_id == product_id,
-        ).first()
-
-        if not competitor:
-            return {"error": f"Competitor {competitor_id} not found for product {product_id}"}
-
-        competitor.synthesis_included = included
-        db.flush()
-
-        return {
-            "competitor_id": competitor.id,
-            "competitor_name": competitor.competitor_name,
-            "synthesis_included": competitor.synthesis_included,
-            "message": f"{'Included' if included else 'Excluded'} {competitor.competitor_name} from synthesis.",
+            "tracked": competitor.tracked,
+            "message": f"{'Tracking' if tracked else 'Untracked'} {competitor.competitor_name}.",
         }
 
 
@@ -664,9 +579,9 @@ def ci_get_competitor_details(product_id: int, competitor_name: str, section: st
         else:  # momentum
             return {
                 **base,
-                "deep_analysis_enabled": competitor.deep_analysis_enabled,
-                "deep_analysis_status": competitor.deep_analysis_status,
-                "deep_analysis_last_run": competitor.deep_analysis_last_run.isoformat() if competitor.deep_analysis_last_run else None,
+                "tracked": competitor.tracked,
+                "audit_status": competitor.audit_status,
+                "audit_last_run": competitor.audit_last_run.isoformat() if competitor.audit_last_run else None,
                 "has_report": report is not None,
                 "report_version": report.report_version if report else None,
                 "generated_at": report.generated_at.isoformat() if report else None,
@@ -698,7 +613,7 @@ def ci_deactivate_competitor(product_id: int, competitor_name: str) -> dict:
             return {"error": f"No active competitor matching '{competitor_name}' found for product {product_id}"}
 
         competitor.status = "inactive"
-        competitor.deep_analysis_enabled = False
+        competitor.tracked = False
         db.flush()
 
         return {

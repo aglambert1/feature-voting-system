@@ -504,8 +504,6 @@ def functional_audit_task(self, job_id: int):
         now = datetime.utcnow()
         competitor.audit_status = "completed"
         competitor.audit_last_run = now
-        competitor.deep_analysis_status = "completed"  # legacy field, keep in sync
-        competitor.deep_analysis_last_run = now  # legacy field
 
         # Update the product-level CompetitiveAgentConfig so the UI "last run"
         # indicator reflects manual audits, not just scheduler runs.
@@ -705,15 +703,15 @@ def run_competitive_analysis_v2(self, job_id: int):
 
         product_id = job.product_id
 
-        # Get competitors enabled for deep analysis (selected by user in Market Discovery)
+        # Get tracked competitors
         competitors = db.query(ProductCompetitor).filter(
             ProductCompetitor.product_id == product_id,
             ProductCompetitor.status == 'active',
-            ProductCompetitor.deep_analysis_enabled == True
+            ProductCompetitor.tracked == True
         ).all()
 
         if not competitors:
-            raise ValueError(f"No competitors enabled for deep analysis. Enable competitors in Market Discovery first.")
+            raise ValueError(f"No tracked competitors. Track competitors in the competitor list first.")
 
         print(f"[run_competitive_analysis_v2] Starting analysis for {len(competitors)} competitors")
 

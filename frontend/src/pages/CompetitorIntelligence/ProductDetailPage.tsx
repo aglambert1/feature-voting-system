@@ -127,7 +127,6 @@ export default function ProductDetailPage() {
   // Modal state
   const [showIdeaTriageSetup, setShowIdeaTriageSetup] = useState(false);
   const [showCompetitiveIntelligenceSetup, setShowCompetitiveIntelligenceSetup] = useState(false);
-  const [showNoCompetitorsWarning, setShowNoCompetitorsWarning] = useState(false);
 
   // Competitive intelligence stats
   const [unreadAlertCount, setUnreadAlertCount] = useState(0);
@@ -360,7 +359,6 @@ export default function ProductDetailPage() {
   const handleRunMarketDiscovery = async () => {
     if (!productId) return;
     setRunningAction('market-discovery');
-    setShowNoCompetitorsWarning(false);
     try {
       await triggerCompetitorDiscovery(parseInt(productId));
       setActionMessage({ type: 'success', text: 'Market Discovery started. Check back shortly for results.' });
@@ -373,26 +371,26 @@ export default function ProductDetailPage() {
     }
   };
 
-  const handleRunAllNow = async () => {
+  const handleRunAuditTracked = async () => {
     if (!productId) return;
 
-    // Check if any competitors are selected for deep analysis
-    const selectedForAnalysis = competitors.filter(c => c.deep_analysis_enabled).length;
-    if (selectedForAnalysis === 0) {
-      setShowNoCompetitorsWarning(true);
+    const trackedCount = competitors.filter(c => c.tracked).length;
+    if (competitors.length === 0) {
+      setActionMessage({ type: 'error', text: 'Run Market Discovery first to find competitors.' });
+      return;
+    }
+    if (trackedCount === 0) {
+      setActionMessage({ type: 'error', text: 'No tracked competitors. Open the competitor list to select which to track.' });
       return;
     }
 
-    // Run full pipeline: discovery → analysis → synthesis
-    setRunningAction('run-all');
+    setRunningAction('audit-tracked');
     try {
-      // First trigger discovery, then analysis (V2 includes synthesis)
-      await triggerCompetitorDiscovery(parseInt(productId));
       await triggerCompetitiveAnalysisV2(parseInt(productId));
-      setActionMessage({ type: 'success', text: 'Full competitive intelligence pipeline started: Discovery → Functional Audits → Landscape Synthesis' });
+      setActionMessage({ type: 'success', text: 'Auditing tracked competitors.' });
       setTimeout(fetchAllData, 2000);
     } catch (err: any) {
-      const errorDetail = err.response?.data?.detail || err.message || 'Failed to start competitive intelligence pipeline';
+      const errorDetail = err.response?.data?.detail || err.message || 'Failed to start audits';
       setActionMessage({ type: 'error', text: errorDetail });
     } finally {
       setRunningAction(null);
@@ -490,7 +488,7 @@ export default function ProductDetailPage() {
 
   // Calculate stats
   const totalCompetitors = competitors.length;
-  const trackingCompetitors = competitors.filter(c => c.deep_analysis_enabled).length;
+  const trackingCompetitors = competitors.filter(c => c.tracked).length;
 
   if (loading) {
     return (
@@ -662,7 +660,7 @@ export default function ProductDetailPage() {
               </div>
 
               <div className="text-sm text-gray-500">
-                {trackingCompetitors} selected for deep analysis
+                {trackingCompetitors} tracked competitors
               </div>
 
               <div className="text-sm text-gray-500">
@@ -681,11 +679,18 @@ export default function ProductDetailPage() {
 
               <div className="flex gap-2">
                 <button
-                  onClick={handleRunAllNow}
-                  disabled={runningAction === 'run-all' || runningAction === 'market-discovery'}
+                  onClick={handleRunMarketDiscovery}
+                  disabled={runningAction === 'market-discovery'}
+                  className="flex-1 px-3 py-2 text-sm border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium disabled:opacity-50"
+                >
+                  {runningAction === 'market-discovery' ? 'Running...' : 'Market Discovery'}
+                </button>
+                <button
+                  onClick={handleRunAuditTracked}
+                  disabled={runningAction === 'audit-tracked'}
                   className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
                 >
-                  {runningAction === 'run-all' || runningAction === 'market-discovery' ? 'Running...' : 'Run All Now'}
+                  {runningAction === 'audit-tracked' ? 'Starting...' : 'Audit Tracked'}
                 </button>
                 <button
                   onClick={() => setShowCompetitiveIntelligenceSetup(true)}
@@ -1350,47 +1355,6 @@ export default function ProductDetailPage() {
         />
       )}
 
-      {/* Warning modal when no competitors selected */}
-      {showNoCompetitorsWarning && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-3">
-              No Competitors Selected
-            </h3>
-            <p className="text-sm text-gray-600 mb-6">
-              No competitors are currently selected for deep analysis. Choose an option:
-            </p>
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={handleRunMarketDiscovery}
-                disabled={runningAction === 'market-discovery'}
-                className="w-full px-4 py-3 text-left bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
-              >
-                <div className="font-medium text-gray-900">Market Discovery Only</div>
-                <div className="text-sm text-gray-500 mt-1">
-                  Find competitors in your market. You can select and analyze them after.
-                </div>
-              </button>
-              <button
-                onClick={handleRunMarketDiscovery}
-                disabled={runningAction === 'market-discovery'}
-                className="w-full px-4 py-3 text-left bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100"
-              >
-                <div className="font-medium text-blue-900">Run Market Discovery & Competitive Analysis for All</div>
-                <div className="text-sm text-blue-700 mt-1">
-                  Discover competitors, then select and run full analysis from the Intelligence Hub.
-                </div>
-              </button>
-              <button
-                onClick={() => setShowNoCompetitorsWarning(false)}
-                className="w-full px-4 py-2 text-gray-500 hover:text-gray-700 font-medium"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
