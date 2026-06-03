@@ -2,7 +2,7 @@
 Document Parsing Service.
 
 Handles parsing various document formats and fetching content from URLs:
-- PDF files (PyPDF2 + pdfplumber fallback)
+- PDF files (pypdf + pdfplumber fallback)
 - DOCX files (python-docx)
 - Text files (TXT, MD with encoding detection)
 - URLs (BeautifulSoup HTML parsing)
@@ -16,7 +16,7 @@ import requests
 from fastapi import UploadFile
 
 # PDF parsing
-import PyPDF2
+import pypdf
 import pdfplumber
 
 # DOCX parsing
@@ -147,8 +147,8 @@ class DocumentParsingService:
         """
         Extract text from PDF file.
 
-        Uses PyPDF2 as primary parser, falls back to pdfplumber
-        if PyPDF2 fails or extracts empty text.
+        Uses pypdf as primary parser, falls back to pdfplumber
+        if pypdf fails or extracts empty text.
 
         Args:
             file_path: Path to PDF file
@@ -161,17 +161,17 @@ class DocumentParsingService:
         """
         text = ""
 
-        # Try PyPDF2 first (faster)
+        # Try pypdf first (faster)
         try:
             with open(file_path, 'rb') as f:
-                reader = PyPDF2.PdfReader(f)
+                reader = pypdf.PdfReader(f)
                 for page in reader.pages:
                     text += page.extract_text() + "\n"
         except Exception as e:
-            print(f"PyPDF2 failed: {e}")
+            print(f"pypdf failed: {e}")
             text = ""
 
-        # If PyPDF2 returned empty or very short text, try pdfplumber
+        # If pypdf returned empty or very short text, try pdfplumber
         if len(text.strip()) < 100:
             try:
                 with pdfplumber.open(file_path) as pdf:
@@ -182,7 +182,7 @@ class DocumentParsingService:
                             text += page_text + "\n"
             except Exception as e:
                 if not text:  # Only raise if we have no text at all
-                    raise Exception(f"PDF parsing failed with both PyPDF2 and pdfplumber: {e}")
+                    raise Exception(f"PDF parsing failed with both pypdf and pdfplumber: {e}")
 
         if not text.strip():
             raise Exception("No text found in PDF. The file may contain only images or be password-protected.")

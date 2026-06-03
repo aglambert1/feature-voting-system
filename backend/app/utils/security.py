@@ -11,8 +11,8 @@ This file handles:
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -23,11 +23,6 @@ from app.models.user import User, UserRole
 from app.schemas.auth import TokenData
 
 
-# Password hashing context
-# This uses bcrypt to hash passwords securely
-# bcrypt is slow on purpose - this makes it harder for attackers to crack passwords
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 # OAuth2 scheme for token authentication
 # tokenUrl="auth/login" tells FastAPI where to get tokens from
 # This is used in the automatic API docs (/docs)
@@ -35,37 +30,11 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 
 def hash_password(password: str) -> str:
-    """
-    Hash a plain text password.
-
-    Args:
-        password: The plain text password
-
-    Returns:
-        The hashed password (safe to store in database)
-
-    Example:
-        hashed = hash_password("my_secret_password")
-        # hashed = "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36..."
-    """
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verify a password against its hash.
-
-    Args:
-        plain_password: The password the user entered
-        hashed_password: The hashed password from the database
-
-    Returns:
-        True if password matches, False otherwise
-
-    Example:
-        is_correct = verify_password("my_password", user.hashed_password)
-    """
-    return pwd_context.verify(plain_password, hashed_password)
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
