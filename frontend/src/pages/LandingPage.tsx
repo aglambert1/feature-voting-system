@@ -45,18 +45,23 @@ const LandingPage = () => {
       <main className="max-w-3xl mx-auto px-6 py-16">
         <section className="mb-16">
           <h1 className="text-4xl md:text-5xl font-bold text-gray-900 leading-tight mb-6">
-            A bet on a new product management workflow.
+            Exploring a new product management workflow.
           </h1>
           <p className="text-lg text-gray-700 leading-relaxed">
-            Most AI-for-PM tools speed up the old workflow. Feature-IQ is a bet on a new one.
+            Most AI-for-PM tools speed up the old workflow - conduct competitive analysis, write a PRD, etc. 
+            Feature-IQ is a focused component of a new approach based on agents analyzing data, triaging customer feedback,
+            analyzing the competitive landscape, recommending features to build, and presenting 
+            use cases and PRDs that are ready for implementation.
             The PM stays in the loop as the strategic judge — what gets built, why, and what to
             ignore. But every step of the workflow around that judgment is transformed by AI agents.
-            Feature-IQ is one focused component of that workflow: a continuous fact-base for
+            Feature-IQ is one step of that workflow: a continuous fact-base for
             market and customer signal, synthesized through a Jobs-to-be-Done spine, with every
             claim traceable back to its source. It's not the only thing a PM uses, and it doesn't
             try to be. It works today and it delivers value today — and it's also an experiment
-            in how AI is changing the practice of product management. When you use it, I want to
-            hear what you think.
+            in how AI is changing the practice of product management. The goal is to strip product 
+            management down to its core - understanding and empathizing with customers' needs - and 
+            remove the administrative and project management overhead. 
+            When you use it, I want to hear what you think.
           </p>
         </section>
 
@@ -64,9 +69,14 @@ const LandingPage = () => {
           <h2 className="text-2xl font-semibold text-gray-900 mb-6">What it does today</h2>
           <ul className="space-y-4 text-gray-700">
             <li className="border-l-2 border-blue-500 pl-4">
-              <span className="font-medium text-gray-900">Audit a competitor in 3 minutes.</span>{' '}
+              <span className="font-medium text-gray-900">Audit a competitor in 3 minutes or on a schedule.</span>{' '}
               Get back a structured comparison across your customers' Jobs-to-be-Done — not a
               bullet list of features.
+            </li>
+            <li className="border-l-2 border-blue-500 pl-4">
+              <span className="font-medium text-gray-900">Triage customer feedback.</span>{' '}
+              Automate triage of customer ideas and feature requests, comparing to existing features and past requests, 
+              eliminating duplicates and associating ideas with a specific job.
             </li>
             <li className="border-l-2 border-blue-500 pl-4">
               <span className="font-medium text-gray-900">Synthesize across signals.</span>{' '}
@@ -75,7 +85,7 @@ const LandingPage = () => {
             </li>
             <li className="border-l-2 border-blue-500 pl-4">
               <span className="font-medium text-gray-900">Ask in plain English.</span>{' '}
-              Connect Claude Desktop via MCP. Ask "what are the top opportunities and which jobs
+              Connect Claude Desktop or other tools via MCP. Ask "what are the top opportunities and which jobs
               do they serve?" — get an answer grounded in your own data.
             </li>
           </ul>
@@ -133,7 +143,7 @@ const LandingPage = () => {
             <div>
               <p className="text-gray-900 font-medium mb-1">Want to try Feature-IQ?</p>
               <p className="text-gray-700 text-sm">
-                Email{' '}
+                Email me at {' '}
                 <a href={`mailto:${FEEDBACK_EMAIL}?subject=Feature-IQ access request`} className="text-blue-600 hover:underline">
                   {FEEDBACK_EMAIL}
                 </a>
@@ -181,9 +191,10 @@ const LandingPage = () => {
         <section className="mb-16">
           <h2 className="text-2xl font-semibold text-gray-900 mb-4">What it isn't</h2>
           <ul className="space-y-2 text-gray-700">
-            <li>— A roadmapping tool. It informs roadmap decisions; it doesn't replace Jira / Linear / Productboard.</li>
-            <li>— A customer-facing portal. Voters are internal stakeholders, not the public.</li>
+            <li>— A roadmapping tool. It informs roadmap decisions; it doesn't replace Jira / Linear / Aha /  Productboard.</li>
+            <li>— A replacement for a customer-facing portal. Voters are internal stakeholders, not the public. Future integrations may change this.</li>
             <li>— A live CRM integration. Internal feedback comes in via import, not real-time sync.</li>
+            <li>If feature-IQ is useful, future integrations may expand its capabilities.</li>
           </ul>
         </section>
       </main>
