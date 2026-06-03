@@ -7,7 +7,7 @@ execution via Celery Beat.
 
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 class TestCalculateNextRun:
@@ -18,8 +18,8 @@ class TestCalculateNextRun:
         from app.queue.scheduled_tasks import _calculate_next_run
 
         with patch('app.queue.scheduled_tasks.datetime') as mock_datetime:
-            mock_now = datetime(2024, 1, 15, 10, 0, 0)
-            mock_datetime.utcnow.return_value = mock_now
+            mock_now = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+            mock_datetime.now.return_value = mock_now
 
             result = _calculate_next_run('daily')
             expected = mock_now + timedelta(days=1)
@@ -30,8 +30,8 @@ class TestCalculateNextRun:
         from app.queue.scheduled_tasks import _calculate_next_run
 
         with patch('app.queue.scheduled_tasks.datetime') as mock_datetime:
-            mock_now = datetime(2024, 1, 15, 10, 0, 0)
-            mock_datetime.utcnow.return_value = mock_now
+            mock_now = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+            mock_datetime.now.return_value = mock_now
 
             result = _calculate_next_run('weekly')
             expected = mock_now + timedelta(weeks=1)
@@ -42,8 +42,8 @@ class TestCalculateNextRun:
         from app.queue.scheduled_tasks import _calculate_next_run
 
         with patch('app.queue.scheduled_tasks.datetime') as mock_datetime:
-            mock_now = datetime(2024, 1, 15, 10, 0, 0)
-            mock_datetime.utcnow.return_value = mock_now
+            mock_now = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+            mock_datetime.now.return_value = mock_now
 
             result = _calculate_next_run('biweekly')
             expected = mock_now + timedelta(weeks=2)
@@ -54,8 +54,8 @@ class TestCalculateNextRun:
         from app.queue.scheduled_tasks import _calculate_next_run
 
         with patch('app.queue.scheduled_tasks.datetime') as mock_datetime:
-            mock_now = datetime(2024, 1, 15, 10, 0, 0)
-            mock_datetime.utcnow.return_value = mock_now
+            mock_now = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+            mock_datetime.now.return_value = mock_now
 
             result = _calculate_next_run('monthly')
             expected = mock_now + timedelta(days=30)
@@ -66,8 +66,8 @@ class TestCalculateNextRun:
         from app.queue.scheduled_tasks import _calculate_next_run
 
         with patch('app.queue.scheduled_tasks.datetime') as mock_datetime:
-            mock_now = datetime(2024, 1, 15, 10, 0, 0)
-            mock_datetime.utcnow.return_value = mock_now
+            mock_now = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+            mock_datetime.now.return_value = mock_now
 
             result = _calculate_next_run('unknown')
             expected = mock_now + timedelta(weeks=1)
@@ -158,7 +158,7 @@ class TestCheckScheduledTasks:
         mock_config.competitor_discovery_mode = AgentMode.MANUAL
         mock_config.deep_analysis_mode = AgentMode.SCHEDULED
         mock_config.deep_analysis_schedule = 'weekly'
-        mock_config.deep_analysis_next_run = datetime.utcnow() - timedelta(hours=1)  # Past due
+        mock_config.deep_analysis_next_run = datetime.now(timezone.utc) - timedelta(hours=1)  # Past due
 
         mock_db.query.return_value.filter.return_value.all.return_value = [mock_config]
 
@@ -192,7 +192,7 @@ class TestCheckScheduledTasks:
         mock_config.product_analysis_mode = AgentMode.MANUAL
         mock_config.competitor_discovery_mode = AgentMode.SCHEDULED
         mock_config.competitor_discovery_schedule = 'weekly'
-        mock_config.competitor_discovery_next_run = datetime.utcnow() - timedelta(hours=1)
+        mock_config.competitor_discovery_next_run = datetime.now(timezone.utc) - timedelta(hours=1)
         mock_config.deep_analysis_mode = AgentMode.MANUAL
 
         mock_db.query.return_value.filter.return_value.all.return_value = [mock_config]
@@ -225,7 +225,7 @@ class TestCheckScheduledTasks:
 
         mock_config.product_analysis_mode = AgentMode.SCHEDULED
         mock_config.product_analysis_schedule = 'daily'
-        mock_config.product_analysis_next_run = datetime.utcnow() - timedelta(hours=1)
+        mock_config.product_analysis_next_run = datetime.now(timezone.utc) - timedelta(hours=1)
         mock_config.competitor_discovery_mode = AgentMode.MANUAL
         mock_config.deep_analysis_mode = AgentMode.MANUAL
 
@@ -257,7 +257,7 @@ class TestCheckScheduledTasks:
         # Scheduled but not due (next_run is in the future)
         mock_config.product_analysis_mode = AgentMode.SCHEDULED
         mock_config.product_analysis_schedule = 'weekly'
-        mock_config.product_analysis_next_run = datetime.utcnow() + timedelta(days=3)
+        mock_config.product_analysis_next_run = datetime.now(timezone.utc) + timedelta(days=3)
         mock_config.competitor_discovery_mode = AgentMode.MANUAL
         mock_config.deep_analysis_mode = AgentMode.MANUAL
 
@@ -288,7 +288,7 @@ class TestCheckScheduledTasks:
         mock_get_db.return_value = mock_db
 
         # All three are scheduled and due
-        past = datetime.utcnow() - timedelta(hours=1)
+        past = datetime.now(timezone.utc) - timedelta(hours=1)
         mock_config.product_analysis_mode = AgentMode.SCHEDULED
         mock_config.product_analysis_schedule = 'weekly'
         mock_config.product_analysis_next_run = past
@@ -329,7 +329,7 @@ class TestCheckScheduledTasks:
         mock_get_db.return_value = mock_db
 
         # Create two configs, both with due deep analysis
-        past = datetime.utcnow() - timedelta(hours=1)
+        past = datetime.now(timezone.utc) - timedelta(hours=1)
 
         config1 = MagicMock()
         config1.product_id = 1
@@ -376,7 +376,7 @@ class TestCheckScheduledTasks:
         config1 = MagicMock()
         config1.product_id = 1
         config1.product_analysis_mode = AgentMode.SCHEDULED
-        config1.product_analysis_next_run = datetime.utcnow() - timedelta(hours=1)
+        config1.product_analysis_next_run = datetime.now(timezone.utc) - timedelta(hours=1)
         # This will cause AttributeError when we access product_analysis_schedule
 
         def raise_error(*args, **kwargs):
@@ -439,7 +439,7 @@ class TestNextRunUpdates:
         config.competitor_discovery_mode = AgentMode.MANUAL
         config.deep_analysis_mode = AgentMode.SCHEDULED
         config.deep_analysis_schedule = 'weekly'
-        config.deep_analysis_next_run = datetime.utcnow() - timedelta(hours=1)
+        config.deep_analysis_next_run = datetime.now(timezone.utc) - timedelta(hours=1)
         config.deep_analysis_last_run = None
 
         mock_db.query.return_value.filter.return_value.all.return_value = [config]
@@ -459,6 +459,6 @@ class TestNextRunUpdates:
 
         # Verify next_run was updated to approximately 1 week from now
         assert config.deep_analysis_next_run is not None
-        time_diff = config.deep_analysis_next_run - datetime.utcnow()
+        time_diff = config.deep_analysis_next_run - datetime.now(timezone.utc)
         # Should be approximately 7 days (allowing for timing variations)
         assert 6 <= time_diff.days <= 7

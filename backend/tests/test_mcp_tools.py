@@ -1057,7 +1057,7 @@ class TestReviewAction:
 
 class TestCiGetCompetitorDetails:
     def _make_report(self, db_session, competitor, product_a):
-        from datetime import datetime
+        from datetime import datetime, timezone
         report = CompetitorFunctionalReport(
             product_competitor_id=competitor.id,
             product_id=product_a.id,
@@ -2164,8 +2164,8 @@ class TestCiRefreshResearch:
         # After the MCP tool calls refresh(), it reads competitor.cached_search_at
         # for the return payload — simulate that the service wrote a timestamp.
         def _set_timestamp(comp, *_args, **_kw):
-            from datetime import datetime
-            comp.cached_search_at = datetime.utcnow()
+            from datetime import datetime, timezone
+            comp.cached_search_at = datetime.now(timezone.utc)
             comp.cached_search_results = fake_results
             return fake_results
         fake_cache.refresh.side_effect = _set_timestamp

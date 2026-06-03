@@ -162,8 +162,8 @@ class Idea(Base):
     job_id_key = Column(String(50), nullable=True, index=True)
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
     submitter = relationship("User", foreign_keys=[submitter_id], back_populates="ideas")

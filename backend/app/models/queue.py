@@ -5,7 +5,7 @@ This module defines the database models for tracking Celery task
 execution, status, and results.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, ForeignKey,
     JSON, Enum, Float
@@ -152,10 +152,10 @@ class QueueJob(Base):
     max_retries = Column(Integer, default=3)
 
     # Timing
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    queued_at = Column(DateTime)
-    started_at = Column(DateTime)
-    completed_at = Column(DateTime)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    queued_at = Column(DateTime(timezone=True))
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
 
     # Relationships
     product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="SET NULL"), index=True)
@@ -186,10 +186,13 @@ class QueueJob(Base):
     @property
     def duration_seconds(self) -> float | None:
         """Calculate job duration in seconds."""
+        def _utc(dt):
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
         if self.started_at and self.completed_at:
-            return (self.completed_at - self.started_at).total_seconds()
+            return (_utc(self.completed_at) - _utc(self.started_at)).total_seconds()
         elif self.started_at:
-            return (datetime.utcnow() - self.started_at).total_seconds()
+            return (datetime.now(timezone.utc) - _utc(self.started_at)).total_seconds()
         return None
 
     def to_dict(self) -> dict:

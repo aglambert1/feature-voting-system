@@ -9,7 +9,7 @@ This module tests the end-to-end flow:
 
 import pytest
 from unittest.mock import MagicMock, patch
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 class TestAgentConfigurationFlow:
@@ -92,7 +92,7 @@ class TestScheduledExecutionIntegration:
         config.competitor_discovery_mode = AgentMode.MANUAL
         config.deep_analysis_mode = AgentMode.SCHEDULED
         config.deep_analysis_schedule = 'weekly'
-        config.deep_analysis_next_run = datetime.utcnow() - timedelta(hours=1)
+        config.deep_analysis_next_run = datetime.now(timezone.utc) - timedelta(hours=1)
 
         mock_db.query.return_value.filter.return_value.all.return_value = [config]
 

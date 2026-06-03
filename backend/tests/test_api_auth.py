@@ -6,7 +6,7 @@ password reset, and password change flows.
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, AsyncMock
 
 from app.models.user import User, UserRole
@@ -504,7 +504,7 @@ class TestPasswordReset:
         token = PasswordResetToken(
             user_id=voter_user.id,
             token="123456",
-            expires_at=datetime.utcnow() - timedelta(minutes=1),  # expired
+            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),  # expired
         )
         db_session.add(token)
         db_session.commit()
@@ -521,7 +521,7 @@ class TestPasswordReset:
         token = PasswordResetToken(
             user_id=voter_user.id,
             token="654321",
-            expires_at=datetime.utcnow() + timedelta(minutes=15),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
             is_used=True,
         )
         db_session.add(token)
@@ -538,7 +538,7 @@ class TestPasswordReset:
         token = PasswordResetToken(
             user_id=voter_user.id,
             token="111111",
-            expires_at=datetime.utcnow() + timedelta(minutes=15),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
         )
         db_session.add(token)
         db_session.commit()
@@ -557,7 +557,7 @@ class TestPasswordReset:
         old_token = PasswordResetToken(
             user_id=voter_user.id,
             token="111111",
-            expires_at=datetime.utcnow() + timedelta(minutes=15),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
         )
         db_session.add(old_token)
         db_session.commit()

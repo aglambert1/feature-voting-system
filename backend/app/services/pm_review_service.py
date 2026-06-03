@@ -13,7 +13,7 @@ It provides:
 - Filtering and prioritization
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, asc
@@ -419,7 +419,7 @@ class PMReviewService:
         # Update queue item
         item.status = ReviewQueueStatus.APPROVED
         item.reviewed_by_user_id = reviewer_user_id
-        item.reviewed_at = datetime.utcnow()
+        item.reviewed_at = datetime.now(timezone.utc)
         item.review_notes = notes
         item.review_action = "approve"
 
@@ -482,7 +482,7 @@ class PMReviewService:
         # Update queue item
         item.status = ReviewQueueStatus.REJECTED
         item.reviewed_by_user_id = reviewer_user_id
-        item.reviewed_at = datetime.utcnow()
+        item.reviewed_at = datetime.now(timezone.utc)
         item.review_notes = notes or reason
         item.review_action = "reject"
 
@@ -545,7 +545,7 @@ class PMReviewService:
 
         item.status = ReviewQueueStatus.DEFERRED
         item.reviewed_by_user_id = reviewer_user_id
-        item.reviewed_at = datetime.utcnow()
+        item.reviewed_at = datetime.now(timezone.utc)
         item.review_notes = notes
         item.review_action = "defer"
         if defer_until:
@@ -616,7 +616,7 @@ class PMReviewService:
         - Monitoring is enabled
         - next_scheduled_at is null or in the past
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         return self.db.query(MonitoringConfig).filter(
             MonitoringConfig.monitoring_enabled == True,

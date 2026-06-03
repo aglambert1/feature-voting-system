@@ -86,7 +86,7 @@ class User(Base):
 
     # When the account was created
     # server_default=func.now() means the database sets this automatically
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # When the account was last updated
     # onupdate=func.now() means this updates automatically when the row changes

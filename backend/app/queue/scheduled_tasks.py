@@ -10,7 +10,7 @@ analysis jobs whenever each product's CompetitiveAgentConfig says they're due.
 
 from typing import Dict, Any
 from celery import shared_task
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.queue import JobType
 from app.services.queue_service import QueueService
@@ -36,7 +36,7 @@ def _calculate_next_run(schedule: str) -> datetime:
     Returns:
         Next run datetime (UTC)
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if schedule == 'daily':
         return now + timedelta(days=1)
     elif schedule == 'weekly':
@@ -69,7 +69,11 @@ def check_scheduled_tasks(self) -> Dict[str, Any]:
     try:
         db = get_db()
         queue_service = QueueService(db)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
+
+        def _as_utc(dt: datetime) -> datetime:
+            """Treat naive datetimes as UTC (SQLite strips tzinfo on read)."""
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
         jobs_queued = {
             'product_analysis': [],
@@ -91,7 +95,7 @@ def check_scheduled_tasks(self) -> Dict[str, Any]:
                 # Check Product Analysis
                 if (config.product_analysis_mode == AgentMode.SCHEDULED
                         and config.product_analysis_next_run
-                        and config.product_analysis_next_run <= now):
+                        and _as_utc(config.product_analysis_next_run) <= now):
                     print(f"[check_scheduled_tasks] Product {product_id}: Product analysis due")
                     job = queue_service.create_job(
                         job_type=JobType.PRODUCT_ANALYSIS,
@@ -119,7 +123,7 @@ def check_scheduled_tasks(self) -> Dict[str, Any]:
                 # Check Competitor Discovery
                 if (config.competitor_discovery_mode == AgentMode.SCHEDULED
                         and config.competitor_discovery_next_run
-                        and config.competitor_discovery_next_run <= now):
+                        and _as_utc(config.competitor_discovery_next_run) <= now):
                     print(f"[check_scheduled_tasks] Product {product_id}: Competitor discovery due")
                     job = queue_service.create_job(
                         job_type=JobType.COMPETITOR_DISCOVERY,
@@ -145,7 +149,7 @@ def check_scheduled_tasks(self) -> Dict[str, Any]:
                 # Check Competitive Analysis (V2 functional audit + landscape synthesis)
                 if (config.deep_analysis_mode == AgentMode.SCHEDULED
                         and config.deep_analysis_next_run
-                        and config.deep_analysis_next_run <= now):
+                        and _as_utc(config.deep_analysis_next_run) <= now):
                     print(f"[check_scheduled_tasks] Product {product_id}: V2 competitive analysis due")
                     job = queue_service.create_job(
                         job_type=JobType.SCHEDULED_DEEP_ANALYSIS,

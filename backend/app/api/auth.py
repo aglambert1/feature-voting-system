@@ -15,7 +15,7 @@ from slowapi.util import get_remote_address
 
 limiter = Limiter(key_func=get_remote_address)
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
@@ -477,7 +477,7 @@ async def request_password_reset(
     from app.utils.otp import generate_otp, get_otp_expiration
     from app.utils.email import email_service
     from app.config import settings
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     # Find user by email
     user = db.query(User).filter(User.email == reset_request.email).first()
@@ -570,7 +570,7 @@ async def confirm_password_reset(
     from app.models.password_reset import PasswordResetToken
     from app.utils.email import email_service
     from app.config import settings
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     # Find user by email
     user = db.query(User).filter(User.email == confirm_request.email).first()
@@ -617,7 +617,7 @@ async def confirm_password_reset(
     # Mark token as used (skip for dev bypass)
     if reset_token:
         reset_token.is_used = True
-        reset_token.used_at = datetime.utcnow()
+        reset_token.used_at = datetime.now(timezone.utc)
 
     db.commit()
 

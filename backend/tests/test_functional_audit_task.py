@@ -9,7 +9,7 @@ patched out. Asserts:
 - Progress milestones hit expected percentages
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -78,7 +78,7 @@ def competitor(db_session, product):
         cached_search_results=[
             {"url": "https://canny.io/features", "title": "Features", "snippet": "x"},
         ],
-        cached_search_at=datetime.utcnow(),
+        cached_search_at=datetime.now(timezone.utc),
     )
     db_session.add(c)
     db_session.commit()

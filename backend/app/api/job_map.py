@@ -6,7 +6,7 @@ target customer profile, and individual jobs.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -181,7 +181,7 @@ def set_job_map(
 
     product.job_map = job_map_data
     product.job_map_version = (product.job_map_version or 0) + 1
-    product.job_map_last_updated = datetime.utcnow()
+    product.job_map_last_updated = datetime.now(timezone.utc)
     db.commit()
 
     return {
@@ -285,7 +285,7 @@ def add_job(
 
     _rebuild_job_map_json(db, product)
     product.job_map_version = (product.job_map_version or 0) + 1
-    product.job_map_last_updated = datetime.utcnow()
+    product.job_map_last_updated = datetime.now(timezone.utc)
     db.commit()
 
     return {
@@ -335,7 +335,7 @@ def edit_job(
 
     _rebuild_job_map_json(db, product)
     product.job_map_version = (product.job_map_version or 0) + 1
-    product.job_map_last_updated = datetime.utcnow()
+    product.job_map_last_updated = datetime.now(timezone.utc)
     db.commit()
 
     return {
@@ -373,7 +373,7 @@ def remove_job(
 
     _rebuild_job_map_json(db, product)
     product.job_map_version = (product.job_map_version or 0) + 1
-    product.job_map_last_updated = datetime.utcnow()
+    product.job_map_last_updated = datetime.now(timezone.utc)
     db.commit()
 
     return {

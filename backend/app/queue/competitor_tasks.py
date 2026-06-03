@@ -13,7 +13,7 @@ Houses the V2 competitive workflow:
 import traceback
 from typing import Dict, Any
 from celery import shared_task
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import SessionLocal
 from app.models.competitor_intelligence import (
@@ -501,7 +501,7 @@ def functional_audit_task(self, job_id: int):
 
         # Mark the competitor as successfully audited (drives synthesis eligibility
         # and the "has been audited" summary in MCP tools)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         competitor.audit_status = "completed"
         competitor.audit_last_run = now
 

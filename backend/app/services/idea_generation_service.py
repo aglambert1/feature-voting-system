@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models.competitor_intelligence import (
     CompetitorAnalysisSession,
@@ -392,7 +392,7 @@ class IdeaGenerationService:
 
         # Mark as edited
         idea.user_edited = True
-        idea.edited_at = datetime.utcnow()
+        idea.edited_at = datetime.now(timezone.utc)
 
         self.db.commit()
 

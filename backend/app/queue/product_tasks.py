@@ -7,7 +7,7 @@ Houses ``analyze_product_task`` (runs ProductAnalyzerAgent) and the trivial
 import traceback
 from typing import Dict, Any
 from celery import shared_task
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models.competitor_intelligence import (
     CIProduct, ProductAnalysisHistory,
@@ -116,7 +116,7 @@ def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
         product.structured_product_data = result
         product.product_category = result.get('product_category', product.product_category)
         product.analysis_version = (product.analysis_version or 0) + 1
-        product.last_analyzed_at = datetime.utcnow()
+        product.last_analyzed_at = datetime.now(timezone.utc)
         product.last_analyzed_by_user_id = user_id
         product.analysis_count = (product.analysis_count or 0) + 1
 
@@ -203,6 +203,6 @@ def health_check(self) -> Dict[str, Any]:
     """
     return {
         'status': 'healthy',
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
         'worker': self.request.hostname if self.request else 'unknown',
     }

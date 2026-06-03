@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.database import get_db
@@ -553,7 +553,7 @@ async def trigger_competitor_discovery(
         result = send_task('discover_competitors_task', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
-        job.queued_at = datetime.utcnow()
+        job.queued_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as e:
         db.rollback()
@@ -614,7 +614,7 @@ def trigger_product_reanalysis(
         result = send_task('analyze_product_task', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
-        job.queued_at = datetime.utcnow()
+        job.queued_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as e:
         db.rollback()
@@ -1191,7 +1191,7 @@ async def trigger_competitive_analysis_v2(
         result = send_task('run_competitive_analysis_v2', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
-        job.queued_at = datetime.utcnow()
+        job.queued_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as e:
         db.rollback()
@@ -1278,7 +1278,7 @@ def trigger_functional_audit(
         result = send_task('functional_audit_task', job.id)
         job.celery_task_id = result.id
         job.status = JobStatus.QUEUED
-        job.queued_at = datetime.utcnow()
+        job.queued_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as e:
         db.rollback()

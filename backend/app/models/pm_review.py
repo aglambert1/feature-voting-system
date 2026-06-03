@@ -117,14 +117,14 @@ class PMReviewQueue(Base):
 
     # Review tracking
     reviewed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    reviewed_at = Column(DateTime, nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
     review_notes = Column(Text, nullable=True)
     review_action = Column(String(50), nullable=True)  # Action taken: "approve", "reject", etc.
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
-    due_by = Column(DateTime, nullable=True)  # Optional due date for prioritization
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    due_by = Column(DateTime(timezone=True), nullable=True)  # Optional due date for prioritization
 
     def __repr__(self):
         return f"<PMReviewQueue(id={self.id}, type={self.queue_type}, status={self.status})>"
@@ -180,7 +180,7 @@ class CompetitorSnapshot(Base):
     )
 
     # Snapshot timing
-    snapshot_date = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    snapshot_date = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
 
     # Snapshot data
     features_json = Column(JSON, nullable=False)
@@ -213,7 +213,7 @@ class CompetitorSnapshot(Base):
     previous_snapshot_id = Column(Integer, ForeignKey("competitor_snapshots.id"), nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     product_competitor = relationship("ProductCompetitor", backref="snapshots")
@@ -271,8 +271,8 @@ class MonitoringConfig(Base):
     # Options: "daily", "weekly", "biweekly", "monthly"
 
     # Last monitoring run
-    last_monitored_at = Column(DateTime, nullable=True)
-    next_scheduled_at = Column(DateTime, nullable=True)
+    last_monitored_at = Column(DateTime(timezone=True), nullable=True)
+    next_scheduled_at = Column(DateTime(timezone=True), nullable=True)
 
     # Alert configuration
     alert_on_new_features = Column(Boolean, nullable=False, default=True)
@@ -291,8 +291,8 @@ class MonitoringConfig(Base):
     # Structure: {"email": true, "slack": false, "webhook_url": null}
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
     product = relationship("CIProduct", backref="monitoring_config", uselist=False)

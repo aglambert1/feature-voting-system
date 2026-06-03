@@ -44,7 +44,7 @@ def internal_discovery_task(self, job_id: int):
     )
     from app.schemas.internal_feedback import InternalDiscoveryOutput
     from app.services.llm_service import LLMService
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     db = None
     try:
@@ -238,7 +238,7 @@ def internal_discovery_task(self, job_id: int):
         import_record.status = "completed"
         import_record.themes_extracted = True
         import_record.analysis_summary = output.analysis_summary
-        import_record.processed_at = datetime.utcnow()
+        import_record.processed_at = datetime.now(timezone.utc)
 
         db.commit()
 
@@ -311,7 +311,7 @@ def activity_insight_task(self, job_id: int):
         SupportActivityInsight
     )
     from app.services.llm_service import LLMService
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     db = None
     try:
@@ -406,7 +406,7 @@ def activity_insight_task(self, job_id: int):
         import_record.top_loss_themes = result.get('top_loss_themes', [])
         import_record.top_win_themes = result.get('top_win_themes', [])
         import_record.competitor_patterns = result.get('competitor_patterns', {})
-        import_record.processed_at = datetime.utcnow()
+        import_record.processed_at = datetime.now(timezone.utc)
 
         db.commit()
 

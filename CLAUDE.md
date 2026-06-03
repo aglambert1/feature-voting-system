@@ -59,6 +59,14 @@ When adding, removing, or changing scripts, migrations, or CLI tools, update the
 - This applies to all changes, including one-line fixes and .gitignore updates
 - Production (Render) deploys from `main`, so treat it as protected
 
+### Branch cleanup
+At the start of each new piece of work, prompt AG to clean up merged local branches:
+1. `git fetch --prune` — removes local refs to remote branches GitHub already deleted
+2. `git branch -vv` — show what's left so AG can decide what to delete
+3. `git branch -D <branch>` — delete branches whose remotes are gone (squash-merge repos always need `-D`)
+
+Don't run cleanup automatically — show AG the branch list and let them confirm.
+
 ## Security (always follow)
 
 **The GitHub repo is PUBLIC.** Every commit is world-readable, forever, including from history.

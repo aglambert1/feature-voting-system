@@ -6,7 +6,7 @@ for connecting external MCP clients (Claude Desktop, Cursor, etc.).
 """
 
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -85,7 +85,7 @@ async def create_api_key(
         key_hash=key_hash,
         key_prefix=prefix,
         name=data.name,
-        expires_at=datetime.utcnow() + timedelta(days=API_KEY_EXPIRY_DAYS),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=API_KEY_EXPIRY_DAYS),
     )
     db.add(api_key)
     db.commit()

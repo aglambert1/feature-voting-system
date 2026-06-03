@@ -48,7 +48,7 @@ class IdeaStatusHistory(Base):
     confidence = Column(Integer, nullable=True)  # Agent confidence (0-100) if automated
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     idea = relationship("Idea", back_populates="status_history")

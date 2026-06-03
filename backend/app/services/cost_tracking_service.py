@@ -6,7 +6,7 @@ by user, operation type, and system-wide.
 """
 
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -79,7 +79,7 @@ class CostTrackingService:
         Returns:
             Dict with total cost, request count, and breakdown by operation
         """
-        since = datetime.utcnow() - timedelta(days=days)
+        since = datetime.now(timezone.utc) - timedelta(days=days)
 
         logs = self.db.query(LLMUsageLog).filter(
             LLMUsageLog.user_id == user_id,
@@ -127,7 +127,7 @@ class CostTrackingService:
         Returns:
             Dict with totals, breakdown by operation, and top users
         """
-        since = datetime.utcnow() - timedelta(days=days)
+        since = datetime.now(timezone.utc) - timedelta(days=days)
 
         # Total costs
         result = self.db.query(
@@ -209,7 +209,7 @@ class CostTrackingService:
         Returns:
             Dict with total cost and breakdown by operation
         """
-        since = datetime.utcnow() - timedelta(days=days)
+        since = datetime.now(timezone.utc) - timedelta(days=days)
 
         logs = self.db.query(LLMUsageLog).filter(
             LLMUsageLog.product_id == product_id,
@@ -248,7 +248,7 @@ class CostTrackingService:
         Returns:
             True if daily spending exceeds the limit
         """
-        today = datetime.utcnow().date()
+        today = datetime.now(timezone.utc).date()
 
         total = self.db.query(
             func.sum(LLMUsageLog.estimated_cost_usd)
@@ -265,7 +265,7 @@ class CostTrackingService:
         Returns:
             Today's total estimated cost in USD
         """
-        today = datetime.utcnow().date()
+        today = datetime.now(timezone.utc).date()
 
         total = self.db.query(
             func.sum(LLMUsageLog.estimated_cost_usd)

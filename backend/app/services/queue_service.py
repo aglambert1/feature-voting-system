@@ -6,7 +6,7 @@ and managing background jobs. It bridges the gap between the API
 layer and Celery task execution.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
@@ -184,7 +184,7 @@ class QueueService:
             job.error_traceback = error_traceback
 
         # Update timestamps based on status
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if status == JobStatus.QUEUED:
             job.queued_at = now
         elif status == JobStatus.RUNNING:
@@ -381,9 +381,12 @@ class QueueService:
         Returns:
             Number of jobs marked as failed
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         pending_threshold = now - timedelta(minutes=STALE_PENDING_THRESHOLD_MINUTES)
         running_threshold = now - timedelta(minutes=STALE_RUNNING_THRESHOLD_MINUTES)
+
+        def _as_utc(dt: datetime) -> datetime:
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
         # Find stale jobs
         query = self.db.query(QueueJob).filter(
@@ -400,19 +403,19 @@ class QueueService:
 
             if job.status == JobStatus.PENDING:
                 # PENDING jobs without celery_task_id that are old
-                if not job.celery_task_id and job.created_at < pending_threshold:
+                if not job.celery_task_id and _as_utc(job.created_at) < pending_threshold:
                     is_stale = True
                     reason = "Job stuck in PENDING state without being dispatched to Celery"
 
             elif job.status == JobStatus.QUEUED:
                 # QUEUED jobs that never started
-                if not job.started_at and job.queued_at and job.queued_at < pending_threshold:
+                if not job.started_at and job.queued_at and _as_utc(job.queued_at) < pending_threshold:
                     is_stale = True
                     reason = "Job stuck in QUEUED state without starting"
 
             elif job.status == JobStatus.RUNNING:
                 # RUNNING jobs that have been running too long
-                if job.started_at and job.started_at < running_threshold:
+                if job.started_at and _as_utc(job.started_at) < running_threshold:
                     is_stale = True
                     reason = f"Job running for more than {STALE_RUNNING_THRESHOLD_MINUTES} minutes"
 
