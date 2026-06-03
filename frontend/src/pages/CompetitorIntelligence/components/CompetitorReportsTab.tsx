@@ -22,7 +22,7 @@ import {
   getAgentCompetitors,
   getAgentConfig,
   triggerCompetitorDiscovery,
-  updateCompetitorSelection,
+  updateCompetitorTracked,
   deactivateCompetitor,
   triggerCompetitiveAnalysisV2,
   getCompetitorAlerts,
@@ -43,6 +43,187 @@ import { JobType, JobStatus } from '../../../types';
 import AgentJobStatus from '../../../components/AgentJobStatus';
 import AddCompetitorModal from './AddCompetitorModal';
 import CompetitorEvidencePanel from './CompetitorEvidencePanel';
+
+interface CompetitorRowProps {
+  competitor: AgentCompetitor;
+  report: FunctionalReportSummary | undefined;
+  auditJob: QueueJob | undefined;
+  actionLoading: string | null;
+  detailLoading: boolean;
+  confirmRemove: number | null;
+  onToggleTracked: (id: number, current: boolean) => void;
+  onViewReport: (id: number) => void;
+  onRunAudit: (id: number, name: string) => void;
+  onConfirmRemove: (id: number | null) => void;
+  onRemoveCompetitor: (id: number) => void;
+  productId: number;
+}
+
+function CompetitorRow({
+  competitor, report, auditJob, actionLoading, detailLoading,
+  confirmRemove, onToggleTracked, onViewReport, onRunAudit,
+  onConfirmRemove, onRemoveCompetitor, productId,
+}: CompetitorRowProps) {
+  const hasReport = !!report;
+  const isAuditActive = auditJob && (
+    auditJob.status === JobStatus.PENDING ||
+    auditJob.status === JobStatus.QUEUED ||
+    auditJob.status === JobStatus.RUNNING
+  );
+
+  return (
+    <div className="p-4 hover:bg-gray-50">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          {/* Tracked checkbox */}
+          <input
+            type="checkbox"
+            checked={competitor.tracked}
+            onChange={() => onToggleTracked(competitor.id, competitor.tracked)}
+            disabled={actionLoading === `toggle-${competitor.id}`}
+            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            title="Track this competitor"
+          />
+
+          <div>
+            <div className="flex items-center gap-2">
+              <h4 className="font-medium text-gray-900">{competitor.competitor_name}</h4>
+              {/* Status badges */}
+              {hasReport && !isAuditActive && (
+                <span className="px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded">
+                  Report Ready
+                </span>
+              )}
+              {competitor.tracked && !hasReport && !isAuditActive && (
+                <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded">
+                  Tracked
+                </span>
+              )}
+              {!competitor.tracked && hasReport && !isAuditActive && (
+                <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 rounded">
+                  Report ready
+                </span>
+              )}
+              {!competitor.tracked && !hasReport && !isAuditActive && (
+                <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500 rounded">
+                  Untracked
+                </span>
+              )}
+              {/* Audit job status badge */}
+              {isAuditActive && (
+                <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded flex items-center gap-1">
+                  <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+                  {auditJob.status === JobStatus.RUNNING
+                    ? 'Auditing...'
+                    : auditJob.status === JobStatus.QUEUED
+                    ? 'Queued'
+                    : 'Starting...'}
+                </span>
+              )}
+            </div>
+            {/* Audit progress bar */}
+            {isAuditActive && auditJob.status === JobStatus.RUNNING && (
+              <div className="mt-1 flex items-center gap-2">
+                <div className="w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      auditJob.progress_percent > 0 ? 'bg-blue-500' : 'bg-blue-400 animate-pulse'
+                    }`}
+                    style={{ width: auditJob.progress_percent > 0 ? `${auditJob.progress_percent}%` : '100%' }}
+                  />
+                </div>
+                {auditJob.progress_message && (
+                  <span className="text-xs text-gray-500 truncate max-w-48">
+                    {auditJob.progress_message}
+                  </span>
+                )}
+              </div>
+            )}
+            {competitor.competitor_url && (
+              <a
+                href={competitor.competitor_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 hover:text-blue-800"
+              >
+                {competitor.competitor_url}
+              </a>
+            )}
+          </div>
+        </div>
+
+        {/* Stats and Actions */}
+        <div className="flex items-center gap-4">
+          {hasReport && (
+            <>
+              <div className="text-center">
+                <div className="text-lg font-semibold text-gray-900">{report.features_compared}</div>
+                <div className="text-xs text-gray-500">Features</div>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-semibold text-gray-900">{report.gaps_identified}</div>
+                <div className="text-xs text-gray-500">Gaps</div>
+              </div>
+            </>
+          )}
+
+          <div className="flex gap-2">
+            {hasReport && (
+              <button
+                onClick={() => onViewReport(competitor.id)}
+                disabled={detailLoading}
+                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                View
+              </button>
+            )}
+            <button
+              onClick={() => onRunAudit(competitor.id, competitor.competitor_name)}
+              disabled={actionLoading === `audit-${competitor.id}` || !!isAuditActive}
+              className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-50"
+            >
+              {actionLoading === `audit-${competitor.id}` ? 'Starting...' : isAuditActive ? 'In Progress' : 'Audit'}
+            </button>
+            {confirmRemove === competitor.id ? (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => onRemoveCompetitor(competitor.id)}
+                  disabled={actionLoading === `remove-${competitor.id}`}
+                  className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                >
+                  {actionLoading === `remove-${competitor.id}` ? '...' : 'Confirm'}
+                </button>
+                <button
+                  onClick={() => onConfirmRemove(null)}
+                  className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => onConfirmRemove(competitor.id)}
+                className="px-2 py-1.5 text-sm text-gray-400 hover:text-red-600 rounded hover:bg-red-50"
+                title="Remove competitor"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Evidence panel */}
+      <CompetitorEvidencePanel
+        productId={productId}
+        competitorId={competitor.id}
+        competitorName={competitor.competitor_name}
+      />
+    </div>
+  );
+}
 
 interface Props {
   productId: number;
@@ -75,9 +256,14 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Untracked section expanded state — initialized once on mount
+  const [untrackedExpanded, setUntrackedExpanded] = useState(false);
+
   // Audit job tracking: map competitor_id -> job status
   const [auditJobs, setAuditJobs] = useState<Map<number, QueueJob>>(new Map());
   const prevAuditJobCount = useRef(0);
+
+  const initialUntrackedExpandedSet = useRef(false);
 
   const fetchAllData = useCallback(async () => {
     try {
@@ -93,6 +279,13 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
       setAgentConfig(configData);
       setAlerts(alertsData);
       setError(null);
+      // Initialize untracked section expansion once on first load
+      if (!initialUntrackedExpandedSet.current) {
+        initialUntrackedExpandedSet.current = true;
+        const trackedCount = competitorsData.filter(c => c.tracked).length;
+        const untrackedCount = competitorsData.filter(c => !c.tracked).length;
+        setUntrackedExpanded(trackedCount === 0 && untrackedCount > 0);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to load data');
     } finally {
@@ -201,39 +394,16 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     }
   };
 
-  // Competitor selection toggle (for deep analysis)
-  const handleToggleDeepAnalysis = async (competitorId: number, currentEnabled: boolean) => {
+  // Toggle tracked status for a competitor
+  const handleToggleTracked = async (competitorId: number, currentTracked: boolean) => {
     try {
       setActionLoading(`toggle-${competitorId}`);
-      await updateCompetitorSelection(productId, competitorId, !currentEnabled);
-      // Update local state
+      const updated = await updateCompetitorTracked(productId, competitorId, !currentTracked);
       setCompetitors(prev =>
-        prev.map(c =>
-          c.id === competitorId ? { ...c, deep_analysis_enabled: !currentEnabled } : c
-        )
+        prev.map(c => c.id === competitorId ? { ...c, tracked: updated.tracked } : c)
       );
     } catch (err: any) {
       setError(err.message || 'Failed to update competitor');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  // Select/Deselect all competitors for deep analysis
-  const handleSelectAllCompetitors = async () => {
-    const allSelected = competitors.every(c => c.deep_analysis_enabled);
-    const targetState = !allSelected;
-
-    try {
-      setActionLoading('select-all');
-      await Promise.all(
-        competitors
-          .filter(c => c.deep_analysis_enabled !== targetState)
-          .map(c => updateCompetitorSelection(productId, c.id, targetState))
-      );
-      setCompetitors(prev => prev.map(c => ({ ...c, deep_analysis_enabled: targetState })));
-    } catch (err: any) {
-      setError(err.message || 'Failed to update competitors');
     } finally {
       setActionLoading(null);
     }
@@ -312,17 +482,17 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     }
   };
 
-  const handleRunAuditsAndSynthesize = async () => {
-    const selectedForAnalysis = competitors.filter(c => c.deep_analysis_enabled);
-    if (selectedForAnalysis.length === 0) {
-      setError('No competitors selected for deep analysis');
+  const handleRunAuditTracked = async () => {
+    const tracked = competitors.filter(c => c.tracked);
+    if (tracked.length === 0) {
+      setError('No tracked competitors. Toggle the checkbox next to a competitor to track it.');
       return;
     }
 
     try {
       setActionLoading('batch-audit');
       await triggerCompetitiveAnalysisV2(productId);
-      setSuccessMessage(`Audits started for ${selectedForAnalysis.length} competitors. Run synthesis separately from the Synthesis Hub when audits finish.`);
+      setSuccessMessage(`Auditing ${tracked.length} tracked competitor${tracked.length !== 1 ? 's' : ''}. Run synthesis from the Synthesis Hub when audits finish.`);
       checkAuditJobs();
     } catch (err: any) {
       setError(err.message || 'Failed to start analysis');
@@ -432,7 +602,9 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
 
   // Stats
   const totalCompetitors = competitors.length;
-  const selectedForAnalysis = competitors.filter(c => c.deep_analysis_enabled).length;
+  const trackedCompetitors = competitors.filter(c => c.tracked);
+  const untrackedCompetitors = competitors.filter(c => !c.tracked);
+  const trackedCount = trackedCompetitors.length;
   const competitorsWithReports = reports.length;
   const activeAuditCount = Array.from(auditJobs.values()).filter(
     (j) =>
@@ -784,21 +956,8 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
             </div>
             <div className="flex items-center gap-4">
               <span className="text-sm text-gray-500">
-                {totalCompetitors} total | {competitorsWithReports} with reports | {selectedForAnalysis} selected
+                {totalCompetitors} total | {competitorsWithReports} with reports | {trackedCount} tracked
               </span>
-              {totalCompetitors > 0 && (
-                <button
-                  onClick={handleSelectAllCompetitors}
-                  disabled={actionLoading === 'select-all'}
-                  className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50"
-                >
-                  {actionLoading === 'select-all'
-                    ? 'Updating...'
-                    : competitors.every(c => c.deep_analysis_enabled)
-                    ? 'Deselect All'
-                    : 'Select All'}
-                </button>
-              )}
             </div>
           </div>
 
@@ -811,15 +970,15 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
               Add Competitor
             </button>
             <button
-              onClick={handleRunAuditsAndSynthesize}
-              disabled={actionLoading === 'batch-audit' || selectedForAnalysis === 0 || activeAuditCount > 0}
+              onClick={handleRunAuditTracked}
+              disabled={actionLoading === 'batch-audit' || trackedCount === 0 || activeAuditCount > 0}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm disabled:opacity-50"
             >
               {actionLoading === 'batch-audit'
                 ? 'Starting...'
                 : activeAuditCount > 0
                 ? `Audits Running (${activeAuditCount})`
-                : `Run Audits on Selected (${selectedForAnalysis})`}
+                : `Audit Tracked Competitors (${trackedCount})`}
             </button>
           </div>
         </div>
@@ -840,165 +999,77 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
             </button>
           </div>
         ) : (
-          <div className="divide-y divide-gray-200">
-            {competitors.map((competitor) => {
-              const report = getReportForCompetitor(competitor.id);
-              const hasReport = !!report;
-              const auditJob = auditJobs.get(competitor.id);
-              const isAuditActive = auditJob && (
-                auditJob.status === JobStatus.PENDING ||
-                auditJob.status === JobStatus.QUEUED ||
-                auditJob.status === JobStatus.RUNNING
-              );
-
-              return (
-                <div key={competitor.id} className="p-4 hover:bg-gray-50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      {/* Selection for deep analysis */}
-                      <input
-                        type="checkbox"
-                        checked={competitor.deep_analysis_enabled}
-                        onChange={() => handleToggleDeepAnalysis(competitor.id, competitor.deep_analysis_enabled)}
-                        disabled={actionLoading === `toggle-${competitor.id}`}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                        title="Enable for deep analysis"
-                      />
-
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-medium text-gray-900">{competitor.competitor_name}</h4>
-                          {/* Status badges */}
-                          {hasReport && !isAuditActive && (
-                            <span className="px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded">
-                              Report Available
-                            </span>
-                          )}
-                          {competitor.deep_analysis_enabled && !hasReport && !isAuditActive && (
-                            <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded">
-                              Selected for Analysis
-                            </span>
-                          )}
-                          {!competitor.deep_analysis_enabled && !isAuditActive && (
-                            <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 rounded">
-                              Not Selected
-                            </span>
-                          )}
-                          {/* Audit job status badge */}
-                          {isAuditActive && (
-                            <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded flex items-center gap-1">
-                              <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-                              {auditJob.status === JobStatus.RUNNING
-                                ? 'Auditing...'
-                                : auditJob.status === JobStatus.QUEUED
-                                ? 'Queued'
-                                : 'Starting...'}
-                            </span>
-                          )}
-                        </div>
-                        {/* Audit progress bar */}
-                        {isAuditActive && auditJob.status === JobStatus.RUNNING && (
-                          <div className="mt-1 flex items-center gap-2">
-                            <div className="w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                              <div
-                                className={`h-full rounded-full transition-all duration-300 ${
-                                  auditJob.progress_percent > 0 ? 'bg-blue-500' : 'bg-blue-400 animate-pulse'
-                                }`}
-                                style={{ width: auditJob.progress_percent > 0 ? `${auditJob.progress_percent}%` : '100%' }}
-                              />
-                            </div>
-                            {auditJob.progress_message && (
-                              <span className="text-xs text-gray-500 truncate max-w-48">
-                                {auditJob.progress_message}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        {competitor.competitor_url && (
-                          <a
-                            href={competitor.competitor_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:text-blue-800"
-                          >
-                            {competitor.competitor_url}
-                          </a>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Stats and Actions */}
-                    <div className="flex items-center gap-4">
-                      {hasReport && (
-                        <>
-                          <div className="text-center">
-                            <div className="text-lg font-semibold text-gray-900">{report.features_compared}</div>
-                            <div className="text-xs text-gray-500">Features</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-lg font-semibold text-gray-900">{report.gaps_identified}</div>
-                            <div className="text-xs text-gray-500">Gaps</div>
-                          </div>
-                        </>
-                      )}
-
-                      <div className="flex gap-2">
-                        {hasReport && (
-                          <button
-                            onClick={() => handleViewReport(competitor.id)}
-                            disabled={detailLoading}
-                            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-                          >
-                            View
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleRunAudit(competitor.id, competitor.competitor_name)}
-                          disabled={actionLoading === `audit-${competitor.id}` || !!isAuditActive}
-                          className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-50"
-                        >
-                          {actionLoading === `audit-${competitor.id}` ? 'Starting...' : isAuditActive ? 'In Progress' : 'Audit'}
-                        </button>
-                        {confirmRemove === competitor.id ? (
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => handleRemoveCompetitor(competitor.id)}
-                              disabled={actionLoading === `remove-${competitor.id}`}
-                              className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-                            >
-                              {actionLoading === `remove-${competitor.id}` ? '...' : 'Confirm'}
-                            </button>
-                            <button
-                              onClick={() => setConfirmRemove(null)}
-                              className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setConfirmRemove(competitor.id)}
-                            className="px-2 py-1.5 text-sm text-gray-400 hover:text-red-600 rounded hover:bg-red-50"
-                            title="Remove competitor"
-                          >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Evidence panel */}
-                  <CompetitorEvidencePanel
-                    productId={productId}
-                    competitorId={competitor.id}
-                    competitorName={competitor.competitor_name}
-                  />
+          <div>
+            {/* Tracked section */}
+            <div className="border-b border-gray-100">
+              <div className="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Tracked Competitors ({trackedCount})
+              </div>
+              {trackedCompetitors.length === 0 ? (
+                <div className="p-4 text-sm text-gray-500 italic">
+                  No tracked competitors yet. Check a competitor below to start tracking it.
                 </div>
-              );
-            })}
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {trackedCompetitors.map((competitor) => (
+                    <CompetitorRow
+                      key={competitor.id}
+                      competitor={competitor}
+                      report={getReportForCompetitor(competitor.id)}
+                      auditJob={auditJobs.get(competitor.id)}
+                      actionLoading={actionLoading}
+                      detailLoading={detailLoading}
+                      confirmRemove={confirmRemove}
+                      onToggleTracked={handleToggleTracked}
+                      onViewReport={handleViewReport}
+                      onRunAudit={handleRunAudit}
+                      onConfirmRemove={setConfirmRemove}
+                      onRemoveCompetitor={handleRemoveCompetitor}
+                      productId={productId}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Untracked section */}
+            {untrackedCompetitors.length > 0 && (
+              <div>
+                <button
+                  onClick={() => setUntrackedExpanded(v => !v)}
+                  className="w-full px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center justify-between hover:bg-gray-100"
+                >
+                  <span>Untracked Competitors ({untrackedCompetitors.length})</span>
+                  <svg
+                    className={`w-4 h-4 transition-transform ${untrackedExpanded ? 'rotate-180' : ''}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {untrackedExpanded && (
+                  <div className="divide-y divide-gray-100">
+                    {untrackedCompetitors.map((competitor) => (
+                      <CompetitorRow
+                        key={competitor.id}
+                        competitor={competitor}
+                        report={getReportForCompetitor(competitor.id)}
+                        auditJob={auditJobs.get(competitor.id)}
+                        actionLoading={actionLoading}
+                        detailLoading={detailLoading}
+                        confirmRemove={confirmRemove}
+                        onToggleTracked={handleToggleTracked}
+                        onViewReport={handleViewReport}
+                        onRunAudit={handleRunAudit}
+                        onConfirmRemove={setConfirmRemove}
+                        onRemoveCompetitor={handleRemoveCompetitor}
+                        productId={productId}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

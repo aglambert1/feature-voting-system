@@ -99,9 +99,9 @@ class CompetitorResponse(BaseModel):
     competitor_name: str
     competitor_url: Optional[str]
     status: str
-    deep_analysis_enabled: bool
-    deep_analysis_status: Optional[str]
-    deep_analysis_last_run: Optional[datetime]
+    tracked: bool
+    audit_status: Optional[str]
+    audit_last_run: Optional[datetime]
     feature_count: int = 0
     evidence_count: int = 0
 
@@ -650,7 +650,7 @@ def trigger_product_reanalysis(
 @router.get("/{product_id}/competitors", response_model=List[CompetitorResponse])
 def list_competitors(
     product_id: int,
-    deep_analysis_enabled: Optional[bool] = Query(None, description="Filter by deep analysis enabled"),
+    tracked: Optional[bool] = Query(None, description="Filter by tracked status"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
@@ -662,8 +662,8 @@ def list_competitors(
         ProductCompetitor.status == 'active'
     )
 
-    if deep_analysis_enabled is not None:
-        query = query.filter(ProductCompetitor.deep_analysis_enabled == deep_analysis_enabled)
+    if tracked is not None:
+        query = query.filter(ProductCompetitor.tracked == tracked)
 
     competitors = query.all()
 
@@ -691,9 +691,9 @@ def list_competitors(
             competitor_name=comp.competitor_name,
             competitor_url=comp.competitor_url,
             status=comp.status,
-            deep_analysis_enabled=comp.deep_analysis_enabled or False,
-            deep_analysis_status=comp.deep_analysis_status,
-            deep_analysis_last_run=comp.deep_analysis_last_run,
+            tracked=comp.tracked or False,
+            audit_status=comp.audit_status,
+            audit_last_run=comp.audit_last_run,
             feature_count=feature_count,
             evidence_count=evidence_counts.get(comp.id, 0),
         ))
@@ -701,38 +701,46 @@ def list_competitors(
     return result
 
 
-@router.post("/{product_id}/competitors/{competitor_id}/enable-deep-analysis")
-def enable_deep_analysis(
+class CompetitorTrackedPatch(BaseModel):
+    tracked: bool
+
+
+@router.patch("/{product_id}/competitors/{competitor_id}/tracked", response_model=CompetitorResponse)
+def patch_competitor_tracked(
     product_id: int,
     competitor_id: int,
-    current_user: User = Depends(get_product_owner_or_admin),
+    payload: CompetitorTrackedPatch,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Mark a competitor for deep analysis."""
+    """Set or unset a competitor's tracked status."""
     verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
     competitor = get_competitor_or_404(db, product_id, competitor_id)
 
-    competitor.deep_analysis_enabled = True
+    competitor.tracked = payload.tracked
     db.commit()
+    db.refresh(competitor)
 
-    return {"message": f"Deep analysis enabled for competitor {competitor_id}"}
+    from app.models.competitive_reports import CompetitorFunctionalReport
+    from app.services.evidence_service import get_evidence_count_by_competitor
+    report = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_competitor_id == competitor.id
+    ).order_by(CompetitorFunctionalReport.report_version.desc()).first()
+    feature_count = len(report.functional_comparison) if report and report.functional_comparison else 0
+    evidence_counts = get_evidence_count_by_competitor(db, product_id)
 
-
-@router.post("/{product_id}/competitors/{competitor_id}/disable-deep-analysis")
-def disable_deep_analysis(
-    product_id: int,
-    competitor_id: int,
-    current_user: User = Depends(get_product_owner_or_admin),
-    db: Session = Depends(get_db)
-):
-    """Remove a competitor from deep analysis."""
-    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
-    competitor = get_competitor_or_404(db, product_id, competitor_id)
-
-    competitor.deep_analysis_enabled = False
-    db.commit()
-
-    return {"message": f"Deep analysis disabled for competitor {competitor_id}"}
+    return CompetitorResponse(
+        id=competitor.id,
+        product_id=competitor.product_id,
+        competitor_name=competitor.competitor_name,
+        competitor_url=competitor.competitor_url,
+        status=competitor.status,
+        tracked=competitor.tracked,
+        audit_status=competitor.audit_status,
+        audit_last_run=competitor.audit_last_run,
+        feature_count=feature_count,
+        evidence_count=evidence_counts.get(competitor.id, 0),
+    )
 
 
 @router.post("/{product_id}/competitors/{competitor_id}/deactivate")
@@ -747,7 +755,7 @@ def deactivate_competitor(
     competitor = get_competitor_or_404(db, product_id, competitor_id)
 
     competitor.status = 'inactive'
-    competitor.deep_analysis_enabled = False
+    competitor.tracked = False
     db.commit()
 
     return {"message": f"Competitor {competitor_id} removed from list"}
@@ -795,7 +803,7 @@ def add_competitor_manually(
         competitor_name=request.competitor_name,
         competitor_url=request.competitor_url,
         competitor_description=f"Manually added by {current_user.email}",
-        deep_analysis_enabled=True,  # Auto-enable for manually added
+        tracked=True,  # Auto-track manually added competitors
         status='active'
     )
     db.add(competitor)
@@ -806,7 +814,7 @@ def add_competitor_manually(
         "id": competitor.id,
         "competitor_name": competitor.competitor_name,
         "competitor_url": competitor.competitor_url,
-        "deep_analysis_enabled": competitor.deep_analysis_enabled,
+        "tracked": competitor.tracked,
         "message": f"Competitor '{competitor.competitor_name}' added successfully"
     }
 

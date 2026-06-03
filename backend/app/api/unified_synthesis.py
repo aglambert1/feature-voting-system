@@ -80,10 +80,9 @@ class SynthesisCompetitorEntry(BaseModel):
     competitor_id: int
     competitor_name: str
     competitor_url: Optional[str] = None
-    audit_enabled: bool
+    tracked: bool
     audit_status: Optional[str] = None
     audit_last_run: Optional[str] = None
-    synthesis_included: bool
     # True if a CompetitorFunctionalReport exists. This is what unified
     # synthesis checks — missing reports auto-trigger audits, deferring the
     # run. More reliable than audit_status alone (older reports predate it).
@@ -93,10 +92,6 @@ class SynthesisCompetitorEntry(BaseModel):
 class SynthesisCompetitorsResponse(BaseModel):
     product_id: int
     competitors: List[SynthesisCompetitorEntry]
-
-
-class SynthesisInclusionPatch(BaseModel):
-    included: bool
 
 
 class OpportunityCreateIdeaRequest(BaseModel):
@@ -498,58 +493,17 @@ async def get_synthesis_competitors(
                 competitor_id=c.id,
                 competitor_name=c.competitor_name,
                 competitor_url=c.competitor_url,
-                audit_enabled=bool(c.audit_enabled),
+                tracked=bool(c.tracked),
                 audit_status=c.audit_status,
                 audit_last_run=(
                     c.audit_last_run.isoformat() if c.audit_last_run else None
                 ),
-                synthesis_included=bool(c.synthesis_included),
                 has_report=c.id in reported_ids,
             )
             for c in competitors
         ],
     )
 
-
-@router.patch(
-    "/{product_id}/synthesis/competitors/{competitor_id}/synthesis-inclusion"
-)
-async def patch_competitor_synthesis_inclusion(
-    product_id: int,
-    competitor_id: int,
-    payload: SynthesisInclusionPatch,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """Include or exclude a competitor from unified synthesis (EDIT required).
-
-    Mirrors the `ci_set_synthesis_inclusion` MCP tool. Decoupled from
-    `audit_enabled`; synthesis auto-triggers missing audits for any
-    competitor whose `synthesis_included` is True.
-    """
-    _verify_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
-
-    competitor = db.query(ProductCompetitor).filter(
-        ProductCompetitor.id == competitor_id,
-        ProductCompetitor.product_id == product_id,
-    ).first()
-    if not competitor:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Competitor {competitor_id} not found for product {product_id}",
-        )
-
-    competitor.synthesis_included = bool(payload.included)
-    db.commit()
-
-    verb = "Included" if payload.included else "Excluded"
-    preposition = "in" if payload.included else "from"
-    return {
-        "competitor_id": competitor.id,
-        "competitor_name": competitor.competitor_name,
-        "synthesis_included": bool(competitor.synthesis_included),
-        "message": f"{verb} {competitor.competitor_name} {preposition} synthesis.",
-    }
 
 
 @router.post(

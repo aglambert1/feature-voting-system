@@ -26,7 +26,6 @@ import {
   markAllAlertsRead,
   getAgentCompetitors,
   triggerCompetitiveAnalysisV2,
-  triggerCompetitorDiscovery,
 } from '../services/api';
 import type { CompetitorAlert } from '../services/api';
 import type { PMReviewQueueStats, MonitoringConfig, QueueJob, ApiError, TriageSettings, IdeaFunnelData, AgentCompetitor } from '../types';
@@ -56,7 +55,6 @@ const ProductDashboardPage = () => {
   // Competitive analysis state
   const [runningAnalysis, setRunningAnalysis] = useState(false);
   const [analysisMessage, setAnalysisMessage] = useState('');
-  const [showAnalysisModal, setShowAnalysisModal] = useState(false);
 
   const numProductId = productId ? parseInt(productId) : null;
 
@@ -181,53 +179,18 @@ const ProductDashboardPage = () => {
     setAnalysisMessage('');
     try {
       const competitors = await getAgentCompetitors(numProductId);
-      const selectedCompetitors = competitors.filter((c: AgentCompetitor) => c.deep_analysis_enabled);
+      const trackedCompetitors = competitors.filter((c: AgentCompetitor) => c.tracked);
 
-      if (selectedCompetitors.length > 0) {
-        // Competitors selected — run V2 analysis immediately
+      if (trackedCompetitors.length > 0) {
         await triggerCompetitiveAnalysisV2(numProductId);
-        setAnalysisMessage(`Competitive analysis started for ${selectedCompetitors.length} selected competitors`);
-        // Refresh jobs
+        setAnalysisMessage(`Auditing tracked competitors.`);
         const jobsData = await getProductJobs(numProductId, 5);
         setRecentJobs(jobsData);
       } else {
-        // No competitors selected — show modal with options
-        setShowAnalysisModal(true);
+        setAnalysisMessage('No tracked competitors. Track competitors in the Intelligence Hub first.');
       }
     } catch (err) {
       setError((err as ApiError).message || 'Failed to start analysis');
-    } finally {
-      setRunningAnalysis(false);
-    }
-  };
-
-  const handleDiscoveryOnly = async () => {
-    if (!numProductId) return;
-    setShowAnalysisModal(false);
-    setRunningAnalysis(true);
-    try {
-      await triggerCompetitorDiscovery(numProductId);
-      setAnalysisMessage('Market discovery started. New competitors will appear in the Intelligence Hub.');
-      const jobsData = await getProductJobs(numProductId, 5);
-      setRecentJobs(jobsData);
-    } catch (err) {
-      setError((err as ApiError).message || 'Failed to start discovery');
-    } finally {
-      setRunningAnalysis(false);
-    }
-  };
-
-  const handleDiscoveryAndAnalysis = async () => {
-    if (!numProductId) return;
-    setShowAnalysisModal(false);
-    setRunningAnalysis(true);
-    try {
-      await triggerCompetitorDiscovery(numProductId);
-      setAnalysisMessage('Market discovery started. After discovery, select competitors and run analysis from the Intelligence Hub.');
-      const jobsData = await getProductJobs(numProductId, 5);
-      setRecentJobs(jobsData);
-    } catch (err) {
-      setError((err as ApiError).message || 'Failed to start discovery');
     } finally {
       setRunningAnalysis(false);
     }
@@ -701,48 +664,6 @@ const ProductDashboardPage = () => {
               </div>
             </div>
 
-            {/* Analysis Options Modal (shown when no competitors selected) */}
-            {showAnalysisModal && (
-              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-                  <div className="p-6">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                      No Competitors Selected
-                    </h3>
-                    <p className="text-sm text-gray-600 mb-6">
-                      No competitors are currently selected for deep analysis. Choose an option:
-                    </p>
-
-                    <div className="space-y-3">
-                      <button
-                        onClick={handleDiscoveryOnly}
-                        className="w-full px-4 py-3 text-left bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
-                      >
-                        <div className="font-medium text-gray-900">Market Discovery Only</div>
-                        <div className="text-sm text-gray-500 mt-1">
-                          Find competitors in your market. You can select and analyze them after.
-                        </div>
-                      </button>
-                      <button
-                        onClick={handleDiscoveryAndAnalysis}
-                        className="w-full px-4 py-3 text-left bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100"
-                      >
-                        <div className="font-medium text-blue-900">Run Market Discovery and Competitive Analysis for All</div>
-                        <div className="text-sm text-blue-700 mt-1">
-                          Discover competitors, then select and run full analysis from the Intelligence Hub.
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => setShowAnalysisModal(false)}
-                        className="w-full px-4 py-2 text-gray-500 hover:text-gray-700 font-medium"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
           </>
         )}
       </main>

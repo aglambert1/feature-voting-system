@@ -205,11 +205,11 @@ def unified_synthesis_task(self, job_id: int):
         )
         included_set = {s.lower() for s in included_sources}
 
-        # Step 2: Load included competitors (synthesis_included == True)
+        # Step 2: Load tracked competitors (tracked == True)
         included_competitors = db.query(ProductCompetitor).filter(
             ProductCompetitor.product_id == product_id,
             ProductCompetitor.status == "active",
-            ProductCompetitor.synthesis_included == True,  # noqa: E712
+            ProductCompetitor.tracked == True,  # noqa: E712
         ).all()
 
         # Step 3: Auto-trigger missing audits for synthesis_included competitors.
@@ -395,7 +395,7 @@ def _run_unified_synthesis_post_audits(db, queue_service, job_id: int) -> Dict[s
     included_competitors = db.query(ProductCompetitor).filter(
         ProductCompetitor.product_id == product_id,
         ProductCompetitor.status == "active",
-        ProductCompetitor.synthesis_included == True,  # noqa: E712
+        ProductCompetitor.tracked == True,  # noqa: E712
     ).all()
 
     queue_service.update_progress(job_id, 15.0, "Loading product context...")
