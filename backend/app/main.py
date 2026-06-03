@@ -7,7 +7,7 @@ It sets up the app, configures CORS, includes routes, and initializes the databa
 
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,13 +68,11 @@ class SlidingSessionMiddleware(BaseHTTPMiddleware):
             if not exp_timestamp:
                 return response
 
-            # Calculate when token was issued (exp - token_lifetime)
-            # Use utcfromtimestamp to match utcnow() for consistent comparison
-            exp_time = datetime.utcfromtimestamp(exp_timestamp)
+            exp_time = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
             issued_at = exp_time - timedelta(minutes=settings.access_token_expire_minutes)
 
             # Check if token is older than refresh threshold
-            token_age = datetime.utcnow() - issued_at
+            token_age = datetime.now(timezone.utc) - issued_at
             if token_age > timedelta(minutes=TOKEN_REFRESH_THRESHOLD_MINUTES):
                 # Issue a new token with the same claims
                 username = payload.get("sub")
