@@ -39,8 +39,8 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             "UPDATE product_competitors SET tracked = CASE "
-            "WHEN deep_analysis_enabled = 1 OR synthesis_included = 1 THEN 1 "
-            "ELSE 0 END"
+            "WHEN deep_analysis_enabled OR synthesis_included THEN true "
+            "ELSE false END"
         )
     )
 
