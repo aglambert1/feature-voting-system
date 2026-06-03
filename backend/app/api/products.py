@@ -25,9 +25,8 @@ from app.models.competitor_intelligence import ProductPermissionLevel, CIProduct
 from app.models.queue import QueueJob, JobType, JobStatus
 from app.services.product_service import ProductService
 from app.services.queue_service import QueueService
-from app.services.llm_service import llm_service, set_llm_context, clear_llm_context
+from app.services.llm_service import llm_service
 from app.services.document_parsing_service import DocumentParsingService
-from app.models.cost_tracking import OperationType
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
 
 # Thread-safe task dispatch (see app/utils/celery_utils.py for explanation)
@@ -479,18 +478,23 @@ def query_product_features(
     else:
         confidence = 0.0
 
-    # Generate conversational response using LLM
+    # Collect everything needed before the DB session is used by the LLM call.
+    # _generate_feature_query_response makes a synchronous Claude API call that
+    # can take 5-30s. Passing db here would hold the connection open for that
+    # entire duration, risking pool exhaustion under concurrent requests.
+    product_name = product.product_name
+    product_category = product.structured_product_data.get('product_category', '')
+    db.close()
+
+    # Generate conversational response using LLM (no DB session held)
     response_text = _generate_feature_query_response(
-        product_name=product.product_name,
-        product_category=product.structured_product_data.get('product_category', ''),
+        product_name=product_name,
+        product_category=product_category,
         query=request.query,
         feature_exists=feature_exists,
         confidence=confidence,
         matched_features=matched_features,
         similar_features=similar_features,
-        db=db,
-        user_id=current_user.id,
-        product_id=product_id
     )
 
     return FeatureQueryResponse(
@@ -511,9 +515,6 @@ def _generate_feature_query_response(
     confidence: float,
     matched_features: List[MatchedFeature],
     similar_features: List[MatchedFeature],
-    db: Session = None,
-    user_id: int = None,
-    product_id: int = None
 ) -> str:
     """
     Generate a conversational response for the feature query.
@@ -560,26 +561,14 @@ Confidence: {confidence:.0%}
 Provide a helpful response about whether this feature exists in {product_name}."""
 
     try:
-        # Set LLM context for cost tracking
-        if db and user_id:
-            set_llm_context(
-                operation_type=OperationType.PRODUCT_ANALYSIS,
-                user_id=user_id,
-                product_id=product_id,
-                db=db,
-            )
-
-        try:
-            result = llm_service.call_agent(
-                agent_name="feature_query_responder",
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                temperature=0.3,  # Lower temperature for more consistent responses
-                max_tokens=300
-            )
-            return result["content"].strip()
-        finally:
-            clear_llm_context()
+        result = llm_service.call_agent(
+            agent_name="feature_query_responder",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.3,
+            max_tokens=300
+        )
+        return result["content"].strip()
     except Exception as e:
         print(f"[API] Error generating feature query response: {e}")
         # Fallback to simple response if LLM fails
