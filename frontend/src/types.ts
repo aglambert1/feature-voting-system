@@ -357,6 +357,8 @@ export enum JobType {
   SCHEDULED_DEEP_ANALYSIS = 'scheduled_deep_analysis',
   // Three-source synthesis
   OPPORTUNITY_SYNTHESIS = 'opportunity_synthesis',
+  // JTBD job map extraction
+  JOB_MAP_EXTRACTION = 'job_map_extraction',
 }
 
 export enum JobStatus {

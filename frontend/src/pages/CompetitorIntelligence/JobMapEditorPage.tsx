@@ -17,11 +17,13 @@ import { format } from 'date-fns';
 import {
   addJob,
   deleteJob,
+  extractJobMap,
   getJobMap,
   updateJob,
   updateTargetCustomer,
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
+import AgentJobStatus from '../../components/AgentJobStatus';
 import type {
   JobCategory,
   JobCreateRequest,
@@ -30,9 +32,11 @@ import type {
   JtbdJob,
   TargetCustomerProfile,
 } from '../../types';
+import { JobType } from '../../types';
 import TargetCustomerCard from './components/TargetCustomerCard';
 import JobRow from './components/JobRow';
 import AddJobForm from './components/AddJobForm';
+import GenerateJobMapDialog from './components/GenerateJobMapDialog';
 
 interface ActionMessage {
   type: 'success' | 'error';
@@ -103,6 +107,8 @@ export default function JobMapEditorPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<ActionMessage | null>(null);
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const fetchJobMap = useCallback(async () => {
     if (!Number.isFinite(numProductId)) return;
@@ -151,6 +157,20 @@ export default function JobMapEditorPage() {
     await deleteJob(numProductId, jobIdKey);
     setActionMessage({ type: 'success', text: `Deleted ${jobIdKey}.` });
     await fetchJobMap();
+  };
+
+  const handleGenerateConfirm = async (guidance: string) => {
+    setIsGenerating(true);
+    try {
+      await extractJobMap(numProductId, guidance || undefined);
+      setShowGenerateDialog(false);
+      setActionMessage({ type: 'success', text: 'Job map generation queued. The map will update when complete.' });
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err?.message ?? 'Failed to queue job map generation.' });
+      setShowGenerateDialog(false);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   if (loading) {
@@ -203,13 +223,27 @@ export default function JobMapEditorPage() {
           >
             ← Back to {data.product_name}
           </Link>
-          <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
+          <div className="mt-2 flex flex-wrap items-start justify-between gap-2">
             <h1 className="text-2xl font-bold text-gray-900">Jobs-to-be-Done Map</h1>
-            <div className="text-xs text-gray-500 flex items-center gap-3">
-              <span>
-                Version <strong>{data.job_map_version}</strong>
-              </span>
-              {lastUpdated && <span>Last updated {lastUpdated}</span>}
+            <div className="flex flex-col items-end gap-1">
+              <button
+                type="button"
+                onClick={() => setShowGenerateDialog(true)}
+                className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700"
+              >
+                Generate from product info
+              </button>
+              <div className="flex items-center gap-3 text-xs text-gray-500">
+                <AgentJobStatus
+                  productId={numProductId}
+                  jobTypes={[JobType.JOB_MAP_EXTRACTION]}
+                  onJobComplete={fetchJobMap}
+                />
+                <span>
+                  Version <strong>{data.job_map_version}</strong>
+                </span>
+                {lastUpdated && <span>Last updated {lastUpdated}</span>}
+              </div>
             </div>
           </div>
           <p className="text-sm text-gray-600 mt-1">
@@ -268,6 +302,15 @@ export default function JobMapEditorPage() {
           onDeleteJob={handleDeleteJob}
         />
       </div>
+
+      {showGenerateDialog && (
+        <GenerateJobMapDialog
+          hasExistingMap={data.jobs.length > 0}
+          onConfirm={handleGenerateConfirm}
+          onCancel={() => setShowGenerateDialog(false)}
+          isSubmitting={isGenerating}
+        />
+      )}
     </div>
   );
 }
