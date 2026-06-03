@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User, UserRole
 from app.models.api_key import UserAPIKey
-from app.utils.security import get_current_active_user, pwd_context
+from app.utils.security import get_current_active_user, hash_password
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
@@ -78,7 +78,7 @@ async def create_api_key(
 ) -> APIKeyCreateResponse:
     """Generate a new API key. The full key is returned only once."""
     full_key, prefix = _generate_api_key()
-    key_hash = pwd_context.hash(full_key)
+    key_hash = hash_password(full_key)
 
     api_key = UserAPIKey(
         user_id=current_user.id,
