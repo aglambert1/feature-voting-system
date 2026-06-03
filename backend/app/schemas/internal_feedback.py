@@ -9,7 +9,7 @@ These schemas define:
 
 from typing import List, Optional, Literal
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # =============================================================================
@@ -213,8 +213,7 @@ class InternalFeedbackImportResponse(BaseModel):
     themes_extracted: bool
     error_message: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class WinLossThemeResponse(BaseModel):
@@ -229,8 +228,7 @@ class WinLossThemeResponse(BaseModel):
     sample_reasons: List[str]
     feature_keywords: List[str]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SupportThemeResponse(BaseModel):
@@ -244,8 +242,7 @@ class SupportThemeResponse(BaseModel):
     feature_keywords: List[str]
     urgency_indicator: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ThemesResponse(BaseModel):
