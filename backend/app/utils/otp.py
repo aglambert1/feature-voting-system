@@ -4,7 +4,7 @@ OTP (One-Time Password) generation utilities.
 
 import secrets
 import string
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def generate_otp(length: int = 6) -> str:
@@ -32,4 +32,4 @@ def get_otp_expiration(minutes: int = 15) -> datetime:
     Returns:
         Datetime when OTP expires
     """
-    return datetime.utcnow() + timedelta(minutes=minutes)
+    return datetime.now(timezone.utc) + timedelta(minutes=minutes)

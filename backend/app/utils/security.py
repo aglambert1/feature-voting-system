@@ -8,7 +8,7 @@ This file handles:
 4. Verifying JWT tokens from requests
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from jose import JWTError, jwt
@@ -89,10 +89,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
     # Set expiration time
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
         # Default expiration from settings (usually 30 minutes)
-        expire = datetime.utcnow() + timedelta(
+        expire = datetime.now(timezone.utc) + timedelta(
             minutes=settings.access_token_expire_minutes
         )
 
