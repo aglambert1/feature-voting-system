@@ -12,7 +12,7 @@ from datetime import datetime
 from fastmcp.server.auth import TokenVerifier, AccessToken
 
 from app.models.api_key import UserAPIKey
-from app.utils.security import pwd_context
+from app.utils.security import verify_password
 from mcp_server.db import get_session
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class APIKeyAuthProvider(TokenVerifier):
                 )
 
                 for candidate in candidates:
-                    if pwd_context.verify(token, candidate.key_hash):
+                    if verify_password(token, candidate.key_hash):
                         candidate.last_used_at = datetime.utcnow()
                         user_id = candidate.user_id
                         logger.info(
