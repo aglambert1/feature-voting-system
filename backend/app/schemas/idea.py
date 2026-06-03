@@ -5,7 +5,7 @@ These schemas validate incoming data and serialize outgoing data.
 """
 
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional
 
 from app.models.idea import SourceType, IdeaStatus
@@ -60,8 +60,7 @@ class IdeaResponse(BaseModel):
     # User's vote on this idea (if authenticated)
     user_vote: Optional[int] = Field(None, description="Current user's vote: 1 or null")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class IdeaListItem(BaseModel):
@@ -101,8 +100,7 @@ class IdeaListItem(BaseModel):
     user_vote: Optional[int] = None
     user_vote_timestamp: Optional[datetime] = None  # When user voted (if they did)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class IdeaListResponse(BaseModel):
@@ -133,5 +131,4 @@ class SimilarIdeaResponse(BaseModel):
         description="Similarity score (0.0 to 1.0, where 1.0 is identical)"
     )
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -5,7 +5,7 @@ These schemas validate incoming data and serialize outgoing data for the CI API.
 """
 
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Dict, Any
 
 
@@ -44,8 +44,7 @@ class ProductResponse(ProductBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProductListResponse(BaseModel):
@@ -93,8 +92,7 @@ class SessionResponse(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SessionDetailResponse(SessionResponse):
@@ -136,8 +134,7 @@ class SessionCompetitorResponse(BaseModel):
     status_change: Optional[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CompetitorUpdateSelection(BaseModel):
@@ -181,8 +178,7 @@ class CompetitorFeatureResponse(BaseModel):
     expanded_description: Optional[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FeatureUpdateSelection(BaseModel):
@@ -235,8 +231,7 @@ class GeneratedIdeaResponse(GeneratedIdeaBase):
     created_at: datetime
     edited_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class IdeaApprovalUpdate(BaseModel):
@@ -280,8 +275,7 @@ class AgentLogResponse(BaseModel):
     error_message: Optional[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================================
