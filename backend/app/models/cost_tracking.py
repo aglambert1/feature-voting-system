@@ -64,7 +64,7 @@ class LLMUsageLog(Base):
     job_id = Column(String(36), nullable=True, index=True)  # Link to QueueJob.job_uuid if applicable
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     # Relationships
     user = relationship("User", backref="llm_usage_logs")

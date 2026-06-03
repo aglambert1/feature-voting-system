@@ -82,8 +82,8 @@ class ActivityImport(Base):
     job_uuid = Column(String(36), nullable=True, index=True)
 
     # Timestamps
-    imported_at = Column(DateTime, server_default=func.now(), nullable=False)
-    processed_at = Column(DateTime, nullable=True)
+    imported_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     deal_insights = relationship(
@@ -163,7 +163,7 @@ class DealActivityInsight(Base):
     embedding = Column(JSON, nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     import_record = relationship(
@@ -224,7 +224,7 @@ class SupportActivityInsight(Base):
     embedding = Column(JSON, nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     import_record = relationship(

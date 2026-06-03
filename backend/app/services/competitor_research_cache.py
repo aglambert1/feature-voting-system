@@ -27,7 +27,7 @@ Typical usage from `functional_audit_task`:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -62,7 +62,10 @@ class CompetitorResearchCache:
         """
         if not competitor.cached_search_at or not competitor.cached_search_results:
             return None
-        age = datetime.utcnow() - competitor.cached_search_at
+        cached_at = competitor.cached_search_at
+        if cached_at.tzinfo is None:
+            cached_at = cached_at.replace(tzinfo=timezone.utc)
+        age = datetime.now(timezone.utc) - cached_at
         if age > timedelta(hours=self.ttl_hours):
             return None
         return competitor.cached_search_results
@@ -105,7 +108,7 @@ class CompetitorResearchCache:
                 merged.append(r)
 
         competitor.cached_search_results = merged
-        competitor.cached_search_at = datetime.utcnow()
+        competitor.cached_search_at = datetime.now(timezone.utc)
         self.db.commit()
         return merged
 

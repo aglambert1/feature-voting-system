@@ -1,6 +1,6 @@
 """Tests for CompetitorResearchCache — TTL logic, refresh, dedupe."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 import pytest
@@ -89,7 +89,7 @@ def test_get_fresh_returns_none_when_cached_at_missing(db_session, competitor, m
 
 def test_get_fresh_returns_none_when_cache_stale(db_session, competitor, mock_search):
     competitor.cached_search_results = [{"url": "https://a.com", "title": "a", "snippet": "x"}]
-    competitor.cached_search_at = datetime.utcnow() - timedelta(hours=48)
+    competitor.cached_search_at = datetime.now(timezone.utc) - timedelta(hours=48)
     db_session.commit()
     cache = CompetitorResearchCache(db_session, search_service=mock_search)
     cache.ttl_hours = 24  # Explicit so this test is independent of settings
@@ -99,7 +99,7 @@ def test_get_fresh_returns_none_when_cache_stale(db_session, competitor, mock_se
 def test_get_fresh_returns_cached_when_within_ttl(db_session, competitor, mock_search):
     payload = [{"url": "https://a.com", "title": "a", "snippet": "x"}]
     competitor.cached_search_results = payload
-    competitor.cached_search_at = datetime.utcnow() - timedelta(hours=1)
+    competitor.cached_search_at = datetime.now(timezone.utc) - timedelta(hours=1)
     db_session.commit()
     cache = CompetitorResearchCache(db_session, search_service=mock_search)
     cache.ttl_hours = 24
@@ -112,15 +112,18 @@ def test_refresh_writes_results_and_timestamp(db_session, competitor, mock_searc
     ]
     cache = CompetitorResearchCache(db_session, search_service=mock_search)
 
-    before = datetime.utcnow()
+    before = datetime.now(timezone.utc)
     results = cache.refresh(competitor, {"product_name": "VoteFlow"})
-    after = datetime.utcnow()
+    after = datetime.now(timezone.utc)
 
     # Refreshed payload persisted on the competitor row
     db_session.refresh(competitor)
     assert competitor.cached_search_results == results
     assert len(results) > 0
-    assert before <= competitor.cached_search_at <= after
+    cached_at = competitor.cached_search_at
+    if cached_at.tzinfo is None:
+        cached_at = cached_at.replace(tzinfo=timezone.utc)
+    assert before <= cached_at <= after
 
 
 def test_refresh_dedupes_by_url(db_session, competitor, mock_search):

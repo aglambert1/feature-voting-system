@@ -271,7 +271,7 @@ class DocumentParsingService:
             ValueError: If URL is invalid or blocked
             Exception: If fetch fails
         """
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         # Validate URL format
         parsed_url = urllib.parse.urlparse(url)
@@ -361,7 +361,7 @@ class DocumentParsingService:
             'url': response.url,  # Final URL after redirects
             'title': title or parsed_url.hostname,
             'extracted_text': extracted_text,
-            'fetch_timestamp': datetime.utcnow().isoformat() + 'Z'
+            'fetch_timestamp': datetime.now(timezone.utc).isoformat() + 'Z'
         }
 
     def _extract_meta_tags(self, soup: BeautifulSoup) -> dict:
@@ -407,7 +407,7 @@ class DocumentParsingService:
                 'source': 'meta_tags'
             }
         """
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         # Validate URL format
         parsed_url = urllib.parse.urlparse(url)
@@ -474,7 +474,7 @@ class DocumentParsingService:
             'url': response.url,
             'title': title or parsed_url.hostname,
             'extracted_text': extracted_text,
-            'fetch_timestamp': datetime.utcnow().isoformat() + 'Z',
+            'fetch_timestamp': datetime.now(timezone.utc).isoformat() + 'Z',
             'source': 'meta_tags'
         }
 

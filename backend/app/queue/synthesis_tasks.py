@@ -17,7 +17,7 @@ Houses the unified synthesis pipeline:
 import traceback
 from typing import Dict, Any, List
 from celery import shared_task
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import SessionLocal
 from app.models.queue import JobType
@@ -645,7 +645,7 @@ def _run_unified_synthesis_post_audits(db, queue_service, job_id: int) -> Dict[s
         source_snapshot=source_stats,
         analysis_summary=result.get("analysis_summary"),
         job_uuid=job.job_uuid,
-        completed_at=datetime.utcnow(),
+        completed_at=datetime.now(timezone.utc),
     )
     db.add(backing_run)
     db.flush()

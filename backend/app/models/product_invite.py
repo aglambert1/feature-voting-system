@@ -6,7 +6,7 @@ Voters redeem codes during registration or via /join/:code to gain product acces
 """
 
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Enum
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -33,9 +33,9 @@ class ProductInviteCode(Base):
     max_uses = Column(Integer, nullable=True)  # null = unlimited
     current_uses = Column(Integer, default=0, nullable=False)
     permission_level = Column(Enum(ProductPermissionLevel), default=ProductPermissionLevel.VIEW, nullable=False)
-    expires_at = Column(DateTime, nullable=True)  # null = no expiration
+    expires_at = Column(DateTime(timezone=True), nullable=True)  # null = no expiration
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     product = relationship("CIProduct")
@@ -50,7 +50,10 @@ class ProductInviteCode(Base):
         """Check if this code has expired."""
         if self.expires_at is None:
             return False
-        return datetime.utcnow() > self.expires_at
+        expires = self.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) > expires
 
     def is_at_max_uses(self) -> bool:
         """Check if this code has reached its usage limit."""

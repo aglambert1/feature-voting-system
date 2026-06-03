@@ -5,7 +5,7 @@ Tests database relationships, constraints, and basic CRUD operations.
 """
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
@@ -575,7 +575,7 @@ def test_product_competitor_research_cache_columns_default_null(db_session, test
     competitor.cached_search_results = [
         {"url": "https://acme.com/f", "title": "Features", "snippet": "x"},
     ]
-    competitor.cached_search_at = datetime.utcnow()
+    competitor.cached_search_at = datetime.now(timezone.utc)
     db_session.commit()
     db_session.refresh(competitor)
 

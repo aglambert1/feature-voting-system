@@ -107,8 +107,8 @@ class SynthesisRun(Base):
     job_uuid = Column(String(36), nullable=True, index=True)
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     opportunities = relationship(
@@ -271,7 +271,7 @@ class SynthesizedOpportunity(Base):
     job_satisfaction_delta = Column(Float, nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     synthesis_run = relationship(
@@ -381,7 +381,7 @@ class SynthesisConfig(Base):
     # Product-specific scoring overrides (merges with scoring_defaults.py)
     scoring_weight_overrides = Column(JSON, nullable=True)
 
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime,
         server_default=func.now(),
@@ -462,7 +462,7 @@ class SynthesisReport(Base):
 
     # Job tracking
     queue_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
-    generated_at = Column(DateTime, server_default=func.now(), nullable=False)
+    generated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     product = relationship("CIProduct", backref="synthesis_reports")

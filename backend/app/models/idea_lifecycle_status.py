@@ -27,7 +27,7 @@ class IdeaLifecycleStatus(Base):
     position = Column(Integer, nullable=False, default=0)         # display ordering
     is_default = Column(Boolean, nullable=False, default=False)   # shipped with system
     is_active = Column(Boolean, nullable=False, default=True)     # can be disabled
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     def __repr__(self):
         return f"<IdeaLifecycleStatus(id={self.id}, name='{self.name}', slug='{self.slug}')>"

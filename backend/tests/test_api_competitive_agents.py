@@ -295,7 +295,7 @@ class TestRefreshCompetitorResearch:
     def test_po_refreshes_cache(
         self, client, po_user, db_session, test_product, test_competitor
     ):
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         fake_results = [
             {"url": "https://rival.co/features", "title": "Features", "snippet": "x"},
@@ -304,7 +304,7 @@ class TestRefreshCompetitorResearch:
         fake_cache = MagicMock()
 
         def _set_timestamp(comp, *_args, **_kwargs):
-            comp.cached_search_at = datetime.utcnow()
+            comp.cached_search_at = datetime.now(timezone.utc)
             comp.cached_search_results = fake_results
             return fake_results
 

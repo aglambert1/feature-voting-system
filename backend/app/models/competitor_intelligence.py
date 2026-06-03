@@ -72,7 +72,7 @@ class CIProduct(Base):
 
     # Analysis versioning
     analysis_version = Column(Integer, default=0)
-    last_analyzed_at = Column(DateTime)
+    last_analyzed_at = Column(DateTime(timezone=True))
     analysis_count = Column(Integer, default=0)
 
     # Source change tracking
@@ -95,11 +95,11 @@ class CIProduct(Base):
     target_customer_profile = Column(JSON, nullable=True)  # Structured persona
     job_map = Column(JSON, nullable=True)  # Hierarchical JTBD map
     job_map_version = Column(Integer, default=0, nullable=False)
-    job_map_last_updated = Column(DateTime, nullable=True)
+    job_map_last_updated = Column(DateTime(timezone=True), nullable=True)
 
     status = Column(String(50), default="active", index=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
     sessions = relationship("CompetitorAnalysisSession", back_populates="product", cascade="all, delete-orphan")
@@ -173,8 +173,8 @@ class ProductJob(Base):
     statement_embedding = Column(JSON, nullable=True)  # 1024-dim Voyage AI embedding
 
     status = Column(String(50), default="active", index=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
     product = relationship("CIProduct", back_populates="jobs")
@@ -217,9 +217,9 @@ class CompetitorAnalysisSession(Base):
     product_source_hash = Column(String(64))  # SHA-256 hash for change detection
 
     status = Column(String(50), nullable=False, default="active", index=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
-    completed_at = Column(DateTime)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    completed_at = Column(DateTime(timezone=True))
 
     # Relationships
     product = relationship("CIProduct", back_populates="sessions")
@@ -251,20 +251,20 @@ class ProductCompetitor(Base):
     first_discovered_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
     # Monitoring fields (legacy - kept for backward compatibility)
     monitoring_enabled = Column(Boolean, default=False)
-    last_monitored_at = Column(DateTime, nullable=True)
+    last_monitored_at = Column(DateTime(timezone=True), nullable=True)
 
     # Single tracking flag: tracked = scheduled for audit + included in synthesis
     tracked = Column(Boolean, nullable=False, default=False)
     audit_status = Column(String(50), nullable=True)  # pending, running, completed, failed
-    audit_last_run = Column(DateTime, nullable=True)
+    audit_last_run = Column(DateTime(timezone=True), nullable=True)
 
     # Cached web research (populated per-competitor, reused across audits within TTL)
     cached_search_results = Column(JSON, nullable=True)
-    cached_search_at = Column(DateTime, nullable=True)
+    cached_search_at = Column(DateTime(timezone=True), nullable=True)
 
     status = Column(String(50), nullable=False, default="active", index=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
     product = relationship("CIProduct", back_populates="competitors")
@@ -299,7 +299,7 @@ class SessionCompetitor(Base):
     selected_by_user = Column(Boolean, default=False, index=True)
     discovery_rank = Column(Integer)
     status_change = Column(String(50))
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     session = relationship("CompetitorAnalysisSession", back_populates="session_competitors")
@@ -334,11 +334,11 @@ class ProductCompetitorFeature(Base):
     # Queue job reference for queue-based workflows
     first_discovered_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
     # Tracking fields
-    first_seen_at = Column(DateTime, server_default=func.now())
-    last_seen_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    first_seen_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     status = Column(String(50), nullable=False, default="active", index=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
     competitor = relationship("ProductCompetitor", back_populates="features")
@@ -372,7 +372,7 @@ class CompetitorFeature(Base):
     selected_by_user = Column(Boolean, default=False, index=True)
     detail_requested = Column(Boolean, default=False)
     expanded_description = Column(Text)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     session_competitor = relationship("SessionCompetitor", back_populates="features")
@@ -405,8 +405,8 @@ class CompetitorGeneratedIdea(Base):
     user_approved = Column(Boolean, default=False)
     submitted_to_ideas = Column(Boolean, default=False, index=True)
     final_idea_id = Column(Integer, ForeignKey("ideas.id"))
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    edited_at = Column(DateTime)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    edited_at = Column(DateTime(timezone=True))
 
     # Relationships
     feature = relationship("CompetitorFeature", back_populates="generated_idea")
@@ -436,7 +436,7 @@ class AgentExecutionLog(Base):
     execution_time_ms = Column(Integer)
     status = Column(String(50), nullable=False, index=True)
     error_message = Column(Text)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     session = relationship("CompetitorAnalysisSession", back_populates="agent_logs")
@@ -460,7 +460,7 @@ class ProductPermission(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     permission_level = Column(Enum(ProductPermissionLevel), nullable=False)
     granted_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    granted_at = Column(DateTime, server_default=func.now(), nullable=False)
+    granted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     product = relationship("CIProduct", back_populates="permissions")
@@ -491,7 +491,7 @@ class ProductAnalysisHistory(Base):
     product_source_data = Column(JSON)
     analyzed_structure = Column(JSON)
     tokens_used = Column(Integer)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     product = relationship("CIProduct", back_populates="analysis_history")
@@ -529,8 +529,8 @@ class ProductFeature(Base):
 
     # Metadata
     status = Column(String(50), nullable=False, default="active", index=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
     analysis_history = relationship("ProductAnalysisHistory", back_populates="detailed_features")

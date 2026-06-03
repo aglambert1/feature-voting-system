@@ -88,7 +88,7 @@ class CompetitorFunctionalReport(Base):
     changes_from_previous = Column(JSON, nullable=True)
 
     # Timestamps
-    generated_at = Column(DateTime, server_default=func.now(), nullable=False)
+    generated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Queue job reference
     queue_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
@@ -158,7 +158,7 @@ class CompetitorAlert(Base):
     is_read = Column(Boolean, nullable=False, default=False)
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     product = relationship("CIProduct", backref="competitor_alerts")

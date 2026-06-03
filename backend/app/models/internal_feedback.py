@@ -83,8 +83,8 @@ class InternalFeedbackImport(Base):
     job_uuid = Column(String(36), nullable=True, index=True)
 
     # Timestamps
-    imported_at = Column(DateTime, server_default=func.now(), nullable=False)
-    processed_at = Column(DateTime, nullable=True)
+    imported_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     winloss_themes = relationship(
@@ -153,7 +153,7 @@ class WinLossTheme(Base):
     job_id_key = Column(String(50), nullable=True, index=True)
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     import_record = relationship(
@@ -220,7 +220,7 @@ class SupportTheme(Base):
     job_id_key = Column(String(50), nullable=True, index=True)
 
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     import_record = relationship(

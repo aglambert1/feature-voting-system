@@ -3,7 +3,7 @@
 import time
 import pytest
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -168,7 +168,7 @@ class TestTokenExchange:
             redirect_uri_provided_explicitly=True,
             scopes=["mcp"],
             code_challenge="challenge",
-            expires_at=datetime.utcnow() + timedelta(minutes=5),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
             consumed=False,
         ))
         db_session.commit()
@@ -201,7 +201,7 @@ class TestTokenExchange:
             redirect_uri_provided_explicitly=True,
             scopes=["mcp"],
             code_challenge="challenge",
-            expires_at=datetime.utcnow() + timedelta(minutes=5),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
             consumed=True,
         ))
         db_session.commit()
@@ -243,7 +243,7 @@ class TestRefreshToken:
             client_id="test-client-123",
             user_id=test_user.id,
             scopes=["mcp"],
-            expires_at=datetime.utcnow() + timedelta(days=30),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=30),
             is_revoked=False,
         ))
         db_session.commit()
@@ -261,7 +261,7 @@ class TestRefreshToken:
             client_id="test-client-123",
             user_id=test_user.id,
             scopes=["mcp"],
-            expires_at=datetime.utcnow() + timedelta(days=30),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=30),
             is_revoked=True,
         ))
         db_session.commit()

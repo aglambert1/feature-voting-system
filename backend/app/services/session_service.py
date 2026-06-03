@@ -9,7 +9,7 @@ Product creation and analysis are now independent operations handled by ProductS
 """
 
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -279,7 +279,7 @@ class SessionService:
         session.status = status
 
         if status == "completed":
-            session.completed_at = datetime.utcnow()
+            session.completed_at = datetime.now(timezone.utc)
 
         self.db.commit()
         return True

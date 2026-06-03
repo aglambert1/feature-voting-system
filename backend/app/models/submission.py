@@ -39,7 +39,7 @@ class Submission(Base):
     structuring_time_seconds = Column(Integer, nullable=True)  # How long AI took to structure
 
     # Timestamps
-    submitted_at = Column(DateTime, server_default=func.now(), nullable=False)
+    submitted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Metadata
     ip_address = Column(String(45), nullable=True)  # IPv4 or IPv6

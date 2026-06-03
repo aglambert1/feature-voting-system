@@ -53,14 +53,14 @@ class CompetitiveAgentConfig(Base):
     # === Product Analysis Settings ===
     product_analysis_mode = Column(Enum(AgentMode), nullable=False, default=AgentMode.MANUAL)
     product_analysis_schedule = Column(String(50), nullable=True)  # "daily", "weekly", "monthly"
-    product_analysis_next_run = Column(DateTime, nullable=True)
-    product_analysis_last_run = Column(DateTime, nullable=True)
+    product_analysis_next_run = Column(DateTime(timezone=True), nullable=True)
+    product_analysis_last_run = Column(DateTime(timezone=True), nullable=True)
 
     # === Competitor Discovery Settings ===
     competitor_discovery_mode = Column(Enum(AgentMode), nullable=False, default=AgentMode.MANUAL)
     competitor_discovery_schedule = Column(String(50), nullable=True)
-    competitor_discovery_next_run = Column(DateTime, nullable=True)
-    competitor_discovery_last_run = Column(DateTime, nullable=True)
+    competitor_discovery_next_run = Column(DateTime(timezone=True), nullable=True)
+    competitor_discovery_last_run = Column(DateTime(timezone=True), nullable=True)
     alert_on_new_competitors = Column(Boolean, nullable=False, default=True)
     alert_on_disappeared_competitors = Column(Boolean, nullable=False, default=True)
 
@@ -68,8 +68,8 @@ class CompetitiveAgentConfig(Base):
     # Deep analysis runs for all competitors marked with deep_analysis_enabled=True
     deep_analysis_mode = Column(Enum(AgentMode), nullable=False, default=AgentMode.MANUAL)
     deep_analysis_schedule = Column(String(50), nullable=True)
-    deep_analysis_next_run = Column(DateTime, nullable=True)
-    deep_analysis_last_run = Column(DateTime, nullable=True)
+    deep_analysis_next_run = Column(DateTime(timezone=True), nullable=True)
+    deep_analysis_last_run = Column(DateTime(timezone=True), nullable=True)
 
     # === General ===
     # Auto-idea-generation settings used to live here as `intensity_*` columns.
@@ -77,8 +77,8 @@ class CompetitiveAgentConfig(Base):
     # (auto_generate_ideas + idea_priority_threshold), and those columns were
     # dropped in n4o5p6q7r8s9.
     enabled = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationship
     product = relationship("CIProduct", back_populates="competitive_agent_config")

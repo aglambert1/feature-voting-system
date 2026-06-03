@@ -27,9 +27,9 @@ class UserAPIKey(Base):
     key_hash = Column(String, nullable=False)
     key_prefix = Column(String(12), nullable=False, index=True)
     name = Column(String(100), nullable=False)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    expires_at = Column(DateTime, nullable=False)
-    last_used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
     is_revoked = Column(Boolean, default=False, nullable=False)
 
     user = relationship("User", backref="api_keys")

@@ -4,7 +4,7 @@ Password reset token model for database.
 This stores OTP (One-Time Password) tokens for password reset functionality.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -37,23 +37,26 @@ class PasswordResetToken(Base):
     token = Column(String, nullable=False, index=True)
 
     # When the token expires (typically 10-15 minutes)
-    expires_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
 
     # Has this token been used already?
     is_used = Column(Boolean, default=False, nullable=False)
 
     # When was this token created
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # When was this token used (if at all)
-    used_at = Column(DateTime, nullable=True)
+    used_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationship to user
     user = relationship("User")
 
     def is_expired(self) -> bool:
         """Check if this token has expired."""
-        return datetime.utcnow() > self.expires_at
+        expires = self.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) > expires
 
     def is_valid(self) -> bool:
         """Check if this token is valid (not used and not expired)."""

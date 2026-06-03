@@ -9,7 +9,7 @@ Covers:
 - Permission checks (PO vs voter vs admin vs unauthenticated)
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.product_invite import ProductInviteCode
 from app.models.competitor_intelligence import ProductPermission, ProductPermissionLevel
@@ -50,7 +50,7 @@ class TestCreateInviteCode:
         assert resp.json()["max_uses"] == 5
 
     def test_create_with_expiration(self, client, po_user, test_product):
-        expires = (datetime.utcnow() + timedelta(days=7)).isoformat()
+        expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
         resp = client.post(
             f"/products/{test_product.id}/invite-codes",
             json={"expires_at": expires},
@@ -287,7 +287,7 @@ class TestRedeemInviteCode:
         assert "deactivated" in resp.json()["detail"].lower()
 
     def test_redeem_expired_code(self, client, db_session, voter_user, test_invite_code):
-        test_invite_code.expires_at = datetime.utcnow() - timedelta(hours=1)
+        test_invite_code.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
         db_session.commit()
 
         resp = client.post(
@@ -350,7 +350,7 @@ class TestInviteInfo:
         assert resp.json()["valid"] is False
 
     def test_expired_code_shows_invalid(self, client, db_session, test_invite_code):
-        test_invite_code.expires_at = datetime.utcnow() - timedelta(hours=1)
+        test_invite_code.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
         db_session.commit()
 
         resp = client.get(f"/invites/{test_invite_code.code}/info")

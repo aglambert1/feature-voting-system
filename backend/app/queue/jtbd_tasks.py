@@ -8,7 +8,7 @@ statement_embedding populated for semantic linkage).
 import traceback
 from typing import Dict, Any
 from celery import shared_task
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.services.queue_service import QueueService
 from app.services.llm_service import LLMService
@@ -113,7 +113,7 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
         job_map_data = result.get("job_map")
         product.job_map = job_map_data
         product.job_map_version = (product.job_map_version or 0) + 1
-        product.job_map_last_updated = datetime.utcnow()
+        product.job_map_last_updated = datetime.now(timezone.utc)
 
         # Create/update ProductJob records
         db.query(ProductJob).filter(ProductJob.product_id == product_id).delete()

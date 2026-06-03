@@ -33,8 +33,8 @@ class Vote(Base):
     vote_value = Column(Integer, nullable=False)
 
     # Timestamps
-    voted_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    voted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
     idea = relationship("Idea", back_populates="votes")
