@@ -33,8 +33,7 @@ class CompetitorResearchOutput(BaseModel):
     competitors: List[CompetitorResult] = Field(
         default=[],
         description="List of discovered competitors (empty if none found)",
-        min_items=0,
-        max_items=15
+        max_length=15
     )
 
     @field_validator('competitors', mode='before')
