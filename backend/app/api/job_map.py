@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.utils.celery_utils import send_celery_task as send_task
 from app.models.user import User
 from app.models.competitor_intelligence import (
     CIProduct, ProductJob, JobType, JobImportance,
@@ -235,8 +236,7 @@ def extract_job_map(
         user_id=current_user.id,
     )
 
-    from app.queue.jtbd_tasks import extract_job_map_task
-    extract_job_map_task.delay(job.id)
+    send_task('extract_job_map_task', job.id)
 
     return {
         "job_id": job.id,
