@@ -263,7 +263,7 @@ def get_analysis_history(
                 "product_source_data": h.product_source_data,
                 "analyzed_structure": h.analyzed_structure,
                 "tokens_used": h.tokens_used,
-                "created_at": h.created_at.isoformat() + 'Z' if h.created_at else None
+                "created_at": h.created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ') if h.created_at else None
             }
             for h in history
         ]
@@ -345,7 +345,7 @@ def get_detailed_features(
             "feature_category": f.feature_category,
             "extraction_confidence": float(f.extraction_confidence) if f.extraction_confidence else None,
             "source_reference": f.source_reference,
-            "created_at": f.created_at.isoformat() + 'Z' if f.created_at else None
+            "created_at": f.created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ') if f.created_at else None
         }
         for f in features
     ]

@@ -361,7 +361,7 @@ class DocumentParsingService:
             'url': response.url,  # Final URL after redirects
             'title': title or parsed_url.hostname,
             'extracted_text': extracted_text,
-            'fetch_timestamp': datetime.now(timezone.utc).isoformat() + 'Z'
+            'fetch_timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
         }
 
     def _extract_meta_tags(self, soup: BeautifulSoup) -> dict:
@@ -474,7 +474,7 @@ class DocumentParsingService:
             'url': response.url,
             'title': title or parsed_url.hostname,
             'extracted_text': extracted_text,
-            'fetch_timestamp': datetime.now(timezone.utc).isoformat() + 'Z',
+            'fetch_timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
             'source': 'meta_tags'
         }
 
