@@ -7,7 +7,7 @@ This module provides two AI agents:
 """
 
 from typing import Dict, Any, Type, List
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 from app.agents.base_agent import BaseAgent
 from app.services.search_service import get_search_service
 from app.utils.url import extract_domain
@@ -15,8 +15,8 @@ from app.utils.url import extract_domain
 
 class CompetitorResult(BaseModel):
     """Single competitor discovery result"""
-    name: str = Field(..., description="Competitor product name", validation_alias="product_name")
-    url: HttpUrl = Field(default="https://example.com", description="Primary website URL", validation_alias="website")
+    name: str = Field(..., description="Competitor product name")
+    url: HttpUrl = Field(default="https://example.com", description="Primary website URL")
     summary: str = Field(default="Competitive product", description="2-3 sentence summary of what they do")
     relevance_score: float = Field(
         ...,
@@ -24,8 +24,6 @@ class CompetitorResult(BaseModel):
         le=1.0,
         description="How directly they compete (0.0-1.0)"
     )
-
-    model_config = ConfigDict(populate_by_name=True)
 
 
 class CompetitorResearchOutput(BaseModel):
