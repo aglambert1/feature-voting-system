@@ -41,15 +41,14 @@ export default function AgentJobStatus({
   const [lastCompletedJob, setLastCompletedJob] = useState<QueueJob | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Use ref to track previous active state for completion detection
+  // Track previous active state and last job UUID we fired onJobComplete for.
   const wasActiveRef = useRef(false);
+  const lastFiredJobUuidRef = useRef<string | null>(null);
 
   const fetchJobs = useCallback(async () => {
     try {
-      // Fetch jobs filtered by job type to ensure we get relevant results
       const jobs = await getProductJobs(productId, 10, jobTypes);
 
-      // Jobs are already filtered by the API, but double-check
       const relevantJobs = jobs.filter(j =>
         jobTypes.includes(j.job_type as JobType)
       );
@@ -67,19 +66,26 @@ export default function AgentJobStatus({
         j.status === JobStatus.FAILURE
       );
 
-      // Check if job just completed
-      const isNowComplete = !active && wasActiveRef.current;
-
       setActiveJob(active || null);
       setLastCompletedJob(completed || null);
 
-      // Update ref for next check
-      wasActiveRef.current = !!active;
+      // Fire onJobComplete when:
+      // 1. Transition: was active last poll, now complete (normal case), OR
+      // 2. Initial load: page loaded after job already finished — no active job,
+      //    completed SUCCESS job exists, and we haven't fired for it yet.
+      const justCompleted = !active && wasActiveRef.current;
+      const loadedAfterComplete =
+        !active &&
+        !wasActiveRef.current &&
+        completed?.status === JobStatus.SUCCESS &&
+        completed.job_uuid !== lastFiredJobUuidRef.current;
 
-      // Trigger callback if job just completed
-      if (isNowComplete && onJobComplete) {
+      if ((justCompleted || loadedAfterComplete) && onJobComplete) {
+        lastFiredJobUuidRef.current = completed?.job_uuid ?? null;
         onJobComplete();
       }
+
+      wasActiveRef.current = !!active;
     } catch (err) {
       console.error('Failed to fetch job status:', err);
     } finally {
