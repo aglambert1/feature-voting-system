@@ -1,10 +1,10 @@
 /**
  * JobMapEditorPage
  *
- * View and edit a product's JTBD job map:
+ * View and edit a product's customer need map:
  * - Target customer profile (single form card)
- * - Hierarchical jobs by category (functional / emotional / social)
- * - Add / edit / delete individual jobs
+ * - Flat list of customer needs (no JTBD category grouping)
+ * - Add / edit / delete individual needs
  *
  * Mutation strategy: after every successful write we re-fetch the whole map
  * so `job_map_version`, `job_map_last_updated`, and `has_embedding` stay in
@@ -25,11 +25,9 @@ import {
 import Navigation from '../../components/Navigation';
 import AgentJobStatus from '../../components/AgentJobStatus';
 import type {
-  JobCategory,
   JobCreateRequest,
   JobMapResponse,
   JobUpdateRequest,
-  JtbdJob,
   TargetCustomerProfile,
 } from '../../types';
 import { JobType } from '../../types';
@@ -41,62 +39,6 @@ import GenerateJobMapDialog from './components/GenerateJobMapDialog';
 interface ActionMessage {
   type: 'success' | 'error';
   text: string;
-}
-
-interface JobCategorySectionProps {
-  category: JobCategory;
-  title: string;
-  subtitle: string;
-  jobs: JtbdJob[];
-  onAddJob: (body: JobCreateRequest) => Promise<void>;
-  onSaveJob: (jobIdKey: string, patch: JobUpdateRequest) => Promise<void>;
-  onDeleteJob: (jobIdKey: string) => Promise<void>;
-}
-
-function JobCategorySection({
-  category,
-  title,
-  subtitle,
-  jobs,
-  onAddJob,
-  onSaveJob,
-  onDeleteJob,
-}: JobCategorySectionProps) {
-  const isEmpty = jobs.length === 0;
-  return (
-    <section className="bg-white rounded-lg shadow p-6 mb-6">
-      <header className="mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
-        <p className="text-sm text-gray-500">{subtitle}</p>
-      </header>
-
-      {isEmpty && (
-        <p className="text-sm text-gray-500 italic mb-3">
-          No {category} jobs yet. Add the first one below.
-        </p>
-      )}
-
-      {!isEmpty && (
-        <div className="space-y-3 mb-3">
-          {jobs.map((job) => (
-            <JobRow
-              key={job.job_id_key}
-              job={job}
-              onSave={onSaveJob}
-              onDelete={onDeleteJob}
-            />
-          ))}
-        </div>
-      )}
-
-      <AddJobForm
-        category={category}
-        existingJobs={jobs}
-        alwaysExpanded={isEmpty}
-        onAdd={onAddJob}
-      />
-    </section>
-  );
 }
 
 export default function JobMapEditorPage() {
@@ -127,7 +69,6 @@ export default function JobMapEditorPage() {
     fetchJobMap();
   }, [fetchJobMap]);
 
-  // Auto-clear action messages
   useEffect(() => {
     if (actionMessage) {
       const timer = setTimeout(() => setActionMessage(null), 5000);
@@ -164,9 +105,9 @@ export default function JobMapEditorPage() {
     try {
       await extractJobMap(numProductId, guidance || undefined);
       setShowGenerateDialog(false);
-      setActionMessage({ type: 'success', text: 'Job map generation queued. The map will update when complete.' });
+      setActionMessage({ type: 'success', text: 'Need map generation queued. The map will update when complete.' });
     } catch (err: any) {
-      setActionMessage({ type: 'error', text: err?.message ?? 'Failed to queue job map generation.' });
+      setActionMessage({ type: 'error', text: err?.message ?? 'Failed to queue need map generation.' });
       setShowGenerateDialog(false);
     } finally {
       setIsGenerating(false);
@@ -203,10 +144,6 @@ export default function JobMapEditorPage() {
 
   if (!data) return null;
 
-  const functionalJobs = data.jobs.filter((j) => j.job_type === 'functional');
-  const emotionalJobs = data.jobs.filter((j) => j.job_type === 'emotional');
-  const socialJobs = data.jobs.filter((j) => j.job_type === 'social');
-
   const lastUpdated = data.job_map_last_updated
     ? format(new Date(data.job_map_last_updated), 'MMM d, yyyy h:mm a')
     : null;
@@ -224,7 +161,7 @@ export default function JobMapEditorPage() {
             ← Back to {data.product_name}
           </Link>
           <div className="mt-2 flex flex-wrap items-start justify-between gap-2">
-            <h1 className="text-2xl font-bold text-gray-900">Jobs-to-be-Done Map</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Customer Need Map</h1>
             <div className="flex flex-col items-end gap-1">
               <button
                 type="button"
@@ -247,8 +184,8 @@ export default function JobMapEditorPage() {
             </div>
           </div>
           <p className="text-sm text-gray-600 mt-1">
-            Define who this product is for and the functional, emotional, and social jobs they
-            hire it to do. Jobs are used by competitive analysis, idea triage, and synthesis.
+            Define what your customers are trying to accomplish. Each need is used by competitive
+            analysis, idea triage, and synthesis to surface evidence and gaps.
           </p>
         </div>
 
@@ -271,36 +208,41 @@ export default function JobMapEditorPage() {
           onSave={handleSaveTargetCustomer}
         />
 
-        {/* Jobs by category */}
-        <JobCategorySection
-          category="functional"
-          title="Functional Jobs"
-          subtitle="The practical tasks customers want to accomplish."
-          jobs={functionalJobs}
-          onAddJob={handleAddJob}
-          onSaveJob={handleSaveJob}
-          onDeleteJob={handleDeleteJob}
-        />
+        {/* Customer needs — flat list */}
+        <section className="bg-white rounded-lg shadow p-6 mb-6">
+          <header className="mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Customer Needs</h2>
+            <p className="text-sm text-gray-500">
+              What your customers are trying to accomplish, and why it matters to them.
+              Signal count reflects ideas, evidence, and feedback linked to each need.
+            </p>
+          </header>
 
-        <JobCategorySection
-          category="emotional"
-          title="Emotional Jobs"
-          subtitle="How customers want to feel as they do the job."
-          jobs={emotionalJobs}
-          onAddJob={handleAddJob}
-          onSaveJob={handleSaveJob}
-          onDeleteJob={handleDeleteJob}
-        />
+          {data.jobs.length === 0 && (
+            <p className="text-sm text-gray-500 italic mb-3">
+              No needs defined yet. Add the first one below, or generate from product info.
+            </p>
+          )}
 
-        <JobCategorySection
-          category="social"
-          title="Social Jobs"
-          subtitle="How customers want to be perceived by others."
-          jobs={socialJobs}
-          onAddJob={handleAddJob}
-          onSaveJob={handleSaveJob}
-          onDeleteJob={handleDeleteJob}
-        />
+          {data.jobs.length > 0 && (
+            <div className="space-y-3 mb-3">
+              {data.jobs.map((job) => (
+                <JobRow
+                  key={job.job_id_key}
+                  job={job}
+                  onSave={handleSaveJob}
+                  onDelete={handleDeleteJob}
+                />
+              ))}
+            </div>
+          )}
+
+          <AddJobForm
+            existingJobs={data.jobs}
+            alwaysExpanded={data.jobs.length === 0}
+            onAdd={handleAddJob}
+          />
+        </section>
       </div>
 
       {showGenerateDialog && (

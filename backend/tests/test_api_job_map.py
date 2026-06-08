@@ -248,3 +248,51 @@ class TestDeleteJob:
             headers=auth_headers(po_user),
         )
         assert resp.status_code == 404
+
+
+# --- Signal count + defaults --------------------------------------------------
+
+
+class TestSignalCountAndDefaults:
+
+    def test_get_job_map_includes_signal_count_and_updated_at(
+        self, client, po_user, test_product
+    ):
+        with patch(EMBED_PATCH_PATH, return_value=_mock_embedding()):
+            client.post(
+                f"/product-intelligence/products/{test_product.id}/jobs",
+                json={
+                    "job_id": "j1",
+                    "statement": "When I need insight, I want data.",
+                    "desired_outcomes": [],
+                    "importance": "medium",
+                },
+                headers=auth_headers(po_user),
+            )
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-map",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200
+        job = resp.json()["jobs"][0]
+        assert "signal_count" in job
+        assert job["signal_count"] == 0
+        assert "updated_at" in job
+        assert job["updated_at"] is not None
+
+    def test_add_job_defaults_job_type_to_functional(
+        self, client, po_user, test_product
+    ):
+        with patch(EMBED_PATCH_PATH, return_value=_mock_embedding()):
+            resp = client.post(
+                f"/product-intelligence/products/{test_product.id}/jobs",
+                json={
+                    "job_id": "j1",
+                    "statement": "Need without explicit job_type",
+                    "desired_outcomes": [],
+                    "importance": "medium",
+                },
+                headers=auth_headers(po_user),
+            )
+        assert resp.status_code == 200
+        assert resp.json()["job_type"] == "functional"

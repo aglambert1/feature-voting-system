@@ -1169,18 +1169,18 @@ def product_set_target_customer(
 def product_add_job(
     product_id: int,
     job_id: str,
-    job_type: str,
     statement: str,
     desired_outcomes_json: str = "[]",
     importance: str = "medium",
+    job_type: str = "functional",
 ) -> dict:
     """Add a single job to the product's JTBD job map.
 
     Args:
         product_id: The product to add the job to.
-        job_id: Unique key for this job within the product (e.g. 'j1', 'je1', 'js1').
-        job_type: One of: functional, emotional, social.
+        job_id: Unique key for this job within the product (e.g. 'j1', 'j2', 'j3').
         statement: Job statement, ideally: 'When [situation], I want to [action], so I can [outcome]'.
+        job_type: One of: functional, emotional, social (default: functional).
         desired_outcomes_json: JSON array of desired outcome strings (optional).
         importance: One of: critical, high, medium, low (default medium).
     """

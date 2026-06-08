@@ -86,7 +86,7 @@ class JobMapExtractionOutput(BaseModel):
 class JobCreateRequest(BaseModel):
     """Request to add a single job to the map."""
     job_id: str = Field(description="Unique key, e.g. 'j4'")
-    job_type: Literal["functional", "emotional", "social"]
+    job_type: Literal["functional", "emotional", "social"] = "functional"
     statement: str
     desired_outcomes: List[str] = Field(default=[])
     importance: Literal["critical", "high", "medium", "low"] = "medium"
@@ -108,6 +108,8 @@ class JobResponse(BaseModel):
     desired_outcomes: Optional[list] = None
     importance: str
     has_embedding: bool = False
+    signal_count: int = 0
+    updated_at: Optional[str] = None
 
 
 class JobMapResponse(BaseModel):

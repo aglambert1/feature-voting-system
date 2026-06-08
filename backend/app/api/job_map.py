@@ -15,10 +15,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.utils.celery_utils import send_celery_task as send_task
 from app.models.user import User
+from sqlalchemy import func as sa_func
 from app.models.competitor_intelligence import (
     CIProduct, ProductJob, JobType, JobImportance,
     ProductPermissionLevel,
 )
+from app.models.idea import Idea
+from app.models.evidence import Evidence
+from app.models.internal_feedback import WinLossTheme, SupportTheme
 from app.models.queue import JobType as QueueJobType
 from app.schemas.job_map import (
     JobCreateRequest, JobUpdateRequest, JobResponse, JobMapResponse,
@@ -101,6 +105,26 @@ def _rebuild_job_map_json(db: Session, product: CIProduct):
 # Endpoints
 # ============================================================================
 
+def _get_signal_counts(db: Session, product_id: int) -> dict[str, int]:
+    """Count signals per job_id_key from all four signal sources."""
+    counts: dict[str, int] = {}
+
+    for model in (Idea, Evidence, WinLossTheme, SupportTheme):
+        rows = (
+            db.query(model.job_id_key, sa_func.count(model.id))
+            .filter(
+                model.product_id == product_id,
+                model.job_id_key.isnot(None),
+            )
+            .group_by(model.job_id_key)
+            .all()
+        )
+        for key, cnt in rows:
+            counts[key] = counts.get(key, 0) + cnt
+
+    return counts
+
+
 @router.get("/{product_id}/job-map")
 def get_job_map(
     product_id: int,
@@ -114,6 +138,8 @@ def get_job_map(
         ProductJob.product_id == product_id,
         ProductJob.status == "active",
     ).all()
+
+    signal_counts = _get_signal_counts(db, product_id)
 
     return {
         "product_id": product_id,
@@ -131,6 +157,8 @@ def get_job_map(
                 "desired_outcomes": j.desired_outcomes or [],
                 "importance": j.importance.value,
                 "has_embedding": j.statement_embedding is not None,
+                "signal_count": signal_counts.get(j.job_id_key, 0),
+                "updated_at": j.updated_at.isoformat() if j.updated_at else None,
             }
             for j in jobs
         ],
