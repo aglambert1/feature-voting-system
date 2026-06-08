@@ -1,34 +1,19 @@
 /**
  * AddJobForm
  *
- * Inline add-job form shown under each category section.
- * Always expanded when the category is empty; collapsed-by-button otherwise.
- *
- * `job_id_key` is auto-generated from category + next-available index and
- * displayed read-only — POs never edit it.
+ * Inline add-job form. `job_id_key` is auto-generated as j{n} (next available
+ * index across all jobs) and displayed read-only — POs never edit it.
  */
 
 import { useState } from 'react';
-import type {
-  JobCategory,
-  JobCreateRequest,
-  JobImportance,
-  JtbdJob,
-} from '../../../types';
+import type { JobCreateRequest, JobImportance, JtbdJob } from '../../../types';
 
 interface AddJobFormProps {
-  category: JobCategory;
   existingJobs: JtbdJob[];
   /** When true, the form is rendered expanded; when false, starts collapsed behind a button. */
   alwaysExpanded: boolean;
   onAdd: (body: JobCreateRequest) => Promise<void>;
 }
-
-const CATEGORY_PREFIX: Record<JobCategory, string> = {
-  functional: 'j',
-  emotional: 'je',
-  social: 'js',
-};
 
 const IMPORTANCE_OPTIONS: { value: JobImportance; label: string; classes: string }[] = [
   { value: 'critical', label: 'Critical', classes: 'bg-red-100 text-red-800 border-red-300' },
@@ -38,30 +23,21 @@ const IMPORTANCE_OPTIONS: { value: JobImportance; label: string; classes: string
 ];
 
 /**
- * Compute the next available job_id_key for a category.
- * Keys that can't be parsed (e.g. legacy IDs) are ignored for sequencing.
- * Deletions leave gaps on purpose — external references (evidence, ideas)
- * may still cite a removed key.
+ * Compute the next available job_id_key across all existing jobs.
+ * Keys that can't be parsed are ignored. Deletions leave gaps on purpose —
+ * external references (evidence, ideas) may still cite a removed key.
  */
-function nextJobIdKey(category: JobCategory, existing: JtbdJob[]): string {
-  const prefix = CATEGORY_PREFIX[category];
-  const prefixRegex = new RegExp(`^${prefix}(\\d+)$`);
+function nextJobIdKey(existing: JtbdJob[]): string {
   const maxIndex = existing
-    .filter((j) => j.job_type === category)
     .map((j) => {
-      const m = j.job_id_key.match(prefixRegex);
+      const m = j.job_id_key.match(/^j(\d+)$/);
       return m && m[1] ? parseInt(m[1], 10) : 0;
     })
     .reduce((a, b) => Math.max(a, b), 0);
-  return `${prefix}${maxIndex + 1}`;
+  return `j${maxIndex + 1}`;
 }
 
-export default function AddJobForm({
-  category,
-  existingJobs,
-  alwaysExpanded,
-  onAdd,
-}: AddJobFormProps) {
+export default function AddJobForm({ existingJobs, alwaysExpanded, onAdd }: AddJobFormProps) {
   const [isOpen, setIsOpen] = useState(alwaysExpanded);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,9 +55,7 @@ export default function AddJobForm({
 
   const handleCancel = () => {
     resetForm();
-    if (!alwaysExpanded) {
-      setIsOpen(false);
-    }
+    if (!alwaysExpanded) setIsOpen(false);
   };
 
   const handleAdd = async () => {
@@ -97,17 +71,14 @@ export default function AddJobForm({
         .map((o) => o.trim())
         .filter((o) => o.length > 0);
       const body: JobCreateRequest = {
-        job_id: nextJobIdKey(category, existingJobs),
-        job_type: category,
+        job_id: nextJobIdKey(existingJobs),
         statement: statement.trim(),
         desired_outcomes: desiredOutcomes,
         importance,
       };
       await onAdd(body);
       resetForm();
-      if (!alwaysExpanded) {
-        setIsOpen(false);
-      }
+      if (!alwaysExpanded) setIsOpen(false);
     } catch (err: any) {
       setError(err?.message ?? 'Failed to add job.');
     } finally {
@@ -121,22 +92,20 @@ export default function AddJobForm({
         onClick={() => setIsOpen(true)}
         className="w-full text-sm text-blue-600 hover:text-blue-800 font-medium border border-dashed border-gray-300 hover:border-blue-400 rounded-md py-2 transition"
       >
-        + Add {category} job
+        + Add need
       </button>
     );
   }
 
-  const nextId = nextJobIdKey(category, existingJobs);
+  const nextId = nextJobIdKey(existingJobs);
 
   return (
     <div className="bg-blue-50/40 border border-blue-200 rounded-md p-4">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono text-gray-600 bg-white border border-gray-200 px-2 py-0.5 rounded">
-            {nextId}
-          </span>
-          <span className="text-sm font-medium text-gray-700">New {category} job</span>
-        </div>
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-xs font-mono text-gray-600 bg-white border border-gray-200 px-2 py-0.5 rounded">
+          {nextId}
+        </span>
+        <span className="text-sm font-medium text-gray-700">New customer need</span>
       </div>
 
       {error && (
@@ -208,7 +177,7 @@ export default function AddJobForm({
             disabled={saving || !statement.trim()}
             className="px-4 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
           >
-            {saving ? 'Adding…' : 'Add job'}
+            {saving ? 'Adding…' : 'Add need'}
           </button>
         </div>
       </div>

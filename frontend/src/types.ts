@@ -1331,6 +1331,8 @@ export interface JtbdJob {
   desired_outcomes: string[];
   importance: JobImportance;
   has_embedding: boolean;
+  signal_count: number;
+  updated_at: string | null;
 }
 
 export interface JobMapResponse {
@@ -1345,7 +1347,6 @@ export interface JobMapResponse {
 
 export interface JobCreateRequest {
   job_id: string;
-  job_type: JobCategory;
   statement: string;
   desired_outcomes: string[];
   importance: JobImportance;

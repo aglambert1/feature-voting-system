@@ -6,6 +6,7 @@
  */
 
 import { useState } from 'react';
+import { differenceInDays, parseISO } from 'date-fns';
 import type { JobImportance, JtbdJob, JobUpdateRequest } from '../../../types';
 
 interface JobRowProps {
@@ -126,10 +127,13 @@ export default function JobRow({ job, onSave, onDelete }: JobRowProps) {
     }
   };
 
+  const staleDays = job.updated_at ? differenceInDays(new Date(), parseISO(job.updated_at)) : null;
+  const isStale = staleDays !== null && staleDays >= 90;
+
   return (
     <div className="bg-white border border-gray-200 rounded-md p-4">
       <div className="flex items-start justify-between gap-3 mb-2">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
             {job.job_id_key}
           </span>
@@ -140,6 +144,16 @@ export default function JobRow({ job, onSave, onDelete }: JobRowProps) {
               )}`}
             >
               {importanceLabel(job.importance)}
+            </span>
+          )}
+          {!isEditing && (
+            <span className="text-xs text-gray-400">
+              {job.signal_count > 0 ? `${job.signal_count} signal${job.signal_count === 1 ? '' : 's'}` : 'No signals'}
+            </span>
+          )}
+          {!isEditing && isStale && (
+            <span className="text-xs text-amber-600" title={`Last updated ${staleDays} days ago`}>
+              ● Stale
             </span>
           )}
         </div>
