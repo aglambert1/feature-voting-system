@@ -15,7 +15,7 @@ from celery import shared_task
 
 from app.database import SessionLocal
 from app.services.queue_service import QueueService
-from app.queue.helpers import _cosine_similarity
+from app.queue.helpers import _cosine_similarity, _maybe_suggest_need
 
 
 # =============================================================================
@@ -136,6 +136,8 @@ def internal_discovery_task(self, job_id: int):
             return best_key
 
         # Store win/loss themes
+        winloss_db_themes = []
+        winloss_db_embs = []
         for theme in output.winloss_themes:
             jtbd_emb = winloss_embs.get(theme.jtbd_statement) if theme.jtbd_statement else None
             matched_job_key = _match_job_for_jtbd(jtbd_emb)
@@ -153,8 +155,12 @@ def internal_discovery_task(self, job_id: int):
                 job_id_key=matched_job_key,
             )
             db.add(db_theme)
+            winloss_db_themes.append(db_theme)
+            winloss_db_embs.append(jtbd_emb)
 
         # Store support themes
+        support_db_themes = []
+        support_db_embs = []
         for theme in output.support_themes:
             jtbd_emb = support_embs.get(theme.jtbd_statement) if theme.jtbd_statement else None
             matched_job_key = _match_job_for_jtbd(jtbd_emb)
@@ -171,6 +177,30 @@ def internal_discovery_task(self, job_id: int):
                 job_id_key=matched_job_key,
             )
             db.add(db_theme)
+            support_db_themes.append(db_theme)
+            support_db_embs.append(jtbd_emb)
+
+        db.flush()  # Get IDs before creating suggestions
+
+        # Surface unmatched/weak-match themes as need map suggestions
+        for db_theme, jtbd_emb in zip(winloss_db_themes, winloss_db_embs):
+            _maybe_suggest_need(
+                db,
+                product_id=import_record.product_id,
+                signal_type="win_loss_theme",
+                signal_id=db_theme.id,
+                signal_content=db_theme.theme_name,
+                jtbd_embedding=jtbd_emb,
+            )
+        for db_theme, jtbd_emb in zip(support_db_themes, support_db_embs):
+            _maybe_suggest_need(
+                db,
+                product_id=import_record.product_id,
+                signal_type="support_theme",
+                signal_id=db_theme.id,
+                signal_content=db_theme.theme_name,
+                jtbd_embedding=jtbd_emb,
+            )
 
         # Bridge themes to evidence factbase
         from app.models.evidence import EvidenceType

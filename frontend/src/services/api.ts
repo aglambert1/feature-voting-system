@@ -1281,7 +1281,8 @@ export const updateJob = async (
 
 export const deleteJob = async (
   productId: number,
-  jobIdKey: string
+  jobIdKey: string,
+  relink: boolean = true
 ): Promise<{ product_id: number; removed_job_id: string; job_map_version: number; message: string }> => {
   const response = await api.delete<{
     product_id: number;
@@ -1289,7 +1290,108 @@ export const deleteJob = async (
     job_map_version: number;
     message: string;
   }>(
-    `/product-intelligence/products/${productId}/jobs/${jobIdKey}`
+    `/product-intelligence/products/${productId}/jobs/${jobIdKey}?relink=${relink}`
+  );
+  return response.data;
+};
+
+export const getJobMapComparison = async (
+  productId: number
+): Promise<import('../types').JobMapComparison> => {
+  const response = await api.get<import('../types').JobMapComparison>(
+    `/product-intelligence/products/${productId}/job-map/pending-comparison`
+  );
+  return response.data;
+};
+
+export const applyPendingJobMap = async (
+  productId: number,
+  selections: Array<{
+    pair_id: string;
+    choice: 'old' | 'new' | 'drop';
+    old_job_id_key?: string;
+    new_job_data?: import('../types').JobMapJobEntry;
+    statement?: string;
+    desired_outcomes?: string[];
+    importance?: string;
+  }>
+): Promise<{ product_id: number; job_map_version: number; message: string }> => {
+  const response = await api.post<{ product_id: number; job_map_version: number; message: string }>(
+    `/product-intelligence/products/${productId}/job-map/apply-pending`,
+    { selections }
+  );
+  return response.data;
+};
+
+export const discardPendingJobMap = async (
+  productId: number
+): Promise<{ product_id: number; message: string }> => {
+  const response = await api.delete<{ product_id: number; message: string }>(
+    `/product-intelligence/products/${productId}/job-map/pending`
+  );
+  return response.data;
+};
+
+export const getJobSignals = async (
+  productId: number,
+  jobIdKey: string
+): Promise<import('../types').JobSignals> => {
+  const response = await api.get<import('../types').JobSignals>(
+    `/product-intelligence/products/${productId}/jobs/${jobIdKey}/signals`
+  );
+  return response.data;
+};
+
+export const linkIdeaToJob = async (
+  ideaId: number,
+  jobIdKey: string | null
+): Promise<{ idea_id: number; job_id_key: string | null; job_statement: string | null }> => {
+  const response = await api.post<{ idea_id: number; job_id_key: string | null; job_statement: string | null }>(
+    `/ideas/${ideaId}/link-job`,
+    { job_id_key: jobIdKey }
+  );
+  return response.data;
+};
+
+export const setMainJob = async (
+  productId: number,
+  mainJob: string
+): Promise<{ product_id: number; main_job: string; job_map_version: number }> => {
+  const response = await api.put<{ product_id: number; main_job: string; job_map_version: number }>(
+    `/product-intelligence/products/${productId}/main-job`,
+    { main_job: mainJob }
+  );
+  return response.data;
+};
+
+export const getNeedSuggestions = async (
+  productId: number
+): Promise<{ product_id: number; suggestions: import('../types').NeedSuggestion[]; count: number }> => {
+  const response = await api.get<{ product_id: number; suggestions: import('../types').NeedSuggestion[]; count: number }>(
+    `/product-intelligence/products/${productId}/need-suggestions`
+  );
+  return response.data;
+};
+
+export const approveNeedSuggestion = async (
+  productId: number,
+  suggestionId: number,
+  body: { statement: string; desired_outcomes?: string[]; importance?: string }
+): Promise<{ new_job_id_key: string; statement: string; job_map_version: number }> => {
+  const response = await api.post<{ new_job_id_key: string; statement: string; job_map_version: number }>(
+    `/product-intelligence/products/${productId}/need-suggestions/${suggestionId}/approve`,
+    body
+  );
+  return response.data;
+};
+
+export const dismissNeedSuggestion = async (
+  productId: number,
+  suggestionId: number
+): Promise<{ suggestion_id: number; status: string }> => {
+  const response = await api.post<{ suggestion_id: number; status: string }>(
+    `/product-intelligence/products/${productId}/need-suggestions/${suggestionId}/dismiss`,
+    {}
   );
   return response.data;
 };

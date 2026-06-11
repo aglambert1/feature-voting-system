@@ -698,6 +698,22 @@ def _run_unified_synthesis_post_audits(db, queue_service, job_id: int) -> Dict[s
     db.commit()
     db.refresh(synthesis_report)
 
+    # Surface synthesis opportunities with no job match as need map suggestions
+    try:
+        from app.queue.helpers import _maybe_suggest_need
+        for db_opp in opp_rows_by_name.values():
+            if db_opp.job_id_key is None and db_opp.jtbd_embedding:
+                _maybe_suggest_need(
+                    db,
+                    product_id=product_id,
+                    signal_type="synthesized_opportunity",
+                    signal_id=db_opp.id,
+                    signal_content=f"{db_opp.opportunity_name}: {db_opp.opportunity_summary or ''}",
+                    jtbd_embedding=db_opp.jtbd_embedding,
+                )
+    except Exception as exc:
+        print(f"[synthesis_task] Warning: need suggestion creation failed: {exc}")
+
     # Increment citation counts for evidence referenced in this synthesis report
     try:
         from app.services.evidence_service import increment_evidence_citations

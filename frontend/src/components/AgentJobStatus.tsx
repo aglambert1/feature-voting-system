@@ -44,6 +44,11 @@ export default function AgentJobStatus({
   // Track previous active state and last job UUID we fired onJobComplete for.
   const wasActiveRef = useRef(false);
   const lastFiredJobUuidRef = useRef<string | null>(null);
+  // Keep onJobComplete in a ref so fetchJobs never needs it as a dependency,
+  // preventing the infinite loop where onJobComplete identity changes → fetchJobs
+  // identity changes → polling effect restarts → onJobComplete fires → re-render → repeat.
+  const onJobCompleteRef = useRef(onJobComplete);
+  useEffect(() => { onJobCompleteRef.current = onJobComplete; }, [onJobComplete]);
 
   const fetchJobs = useCallback(async () => {
     try {
@@ -69,20 +74,11 @@ export default function AgentJobStatus({
       setActiveJob(active || null);
       setLastCompletedJob(completed || null);
 
-      // Fire onJobComplete when:
-      // 1. Transition: was active last poll, now complete (normal case), OR
-      // 2. Initial load: page loaded after job already finished — no active job,
-      //    completed SUCCESS job exists, and we haven't fired for it yet.
+      // Fire onJobComplete on genuine active→complete transition only.
       const justCompleted = !active && wasActiveRef.current;
-      const loadedAfterComplete =
-        !active &&
-        !wasActiveRef.current &&
-        completed?.status === JobStatus.SUCCESS &&
-        completed.job_uuid !== lastFiredJobUuidRef.current;
-
-      if ((justCompleted || loadedAfterComplete) && onJobComplete) {
+      if (justCompleted && onJobCompleteRef.current) {
         lastFiredJobUuidRef.current = completed?.job_uuid ?? null;
-        onJobComplete();
+        onJobCompleteRef.current();
       }
 
       wasActiveRef.current = !!active;
@@ -91,7 +87,7 @@ export default function AgentJobStatus({
     } finally {
       setLoading(false);
     }
-  }, [productId, jobTypes, onJobComplete]);
+  }, [productId, jobTypes]);
 
   useEffect(() => {
     fetchJobs();

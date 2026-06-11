@@ -1754,6 +1754,17 @@ def get_triage_recommendation(
             'created_at': record.created_at.isoformat() if record.created_at else None,
         })
 
+    # Resolve job linkage — look up the statement for the linked job (including inactive,
+    # since soft-deleted jobs retain valid references on ideas)
+    job_statement = None
+    if idea.job_id_key:
+        from app.models.competitor_intelligence import ProductJob
+        pj = db.query(ProductJob).filter(
+            ProductJob.product_id == idea.product_id,
+            ProductJob.job_id_key == idea.job_id_key,
+        ).first()
+        job_statement = pj.statement if pj else None
+
     return {
         'idea_id': idea.id,
         'has_recommendation': idea.triage_recommendation is not None,
@@ -1761,8 +1772,14 @@ def get_triage_recommendation(
         'confidence': idea.triage_confidence,
         'suggested_comment': idea.auto_response_text,
         'reasoning': idea.triage_reasoning,
+        'jtbd_statement': idea.jtbd_statement,
         'duplicate_of_idea_id': idea.duplicate_of_idea_id,
         'similar_ideas': similar_ideas,
+        # Job linkage — which customer need this idea was matched to
+        'job_linkage': {
+            'job_id_key': idea.job_id_key,
+            'job_statement': job_statement,
+        } if idea.job_id_key else None,
         # Source summary for PO context
         'source_summary': {
             'vote_count': len(votes),
@@ -1784,6 +1801,62 @@ def get_triage_recommendation(
         } if current_status else None,
         # Status history for audit trail
         'status_history': status_history,
+    }
+
+
+@router.post("/{idea_id}/link-job")
+def link_idea_to_job(
+    idea_id: int,
+    body: dict,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Directly set or clear the customer need linkage for an idea (PM override of triage auto-link)."""
+    idea = db.query(Idea).filter(Idea.id == idea_id).first()
+    if not idea:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Idea {idea_id} not found")
+
+    if not can_respond_to_idea(db, current_user, idea):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the product owner or admin can update job linkage")
+
+    new_job_id_key = body.get("job_id_key")  # None to unlink
+
+    if new_job_id_key:
+        from app.models.competitor_intelligence import ProductJob
+        pj = db.query(ProductJob).filter(
+            ProductJob.product_id == idea.product_id,
+            ProductJob.job_id_key == new_job_id_key,
+            ProductJob.status == "active",
+        ).first()
+        if not pj:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{new_job_id_key}' not found for this product")
+        job_statement = pj.statement
+    else:
+        job_statement = None
+
+    idea.job_id_key = new_job_id_key
+
+    # Dismiss any pending NEED_SUGGESTION for this idea — PM has resolved it
+    if new_job_id_key:
+        from app.models.pm_review import PMReviewQueue, ReviewQueueType, ReviewQueueStatus
+        pending = db.query(PMReviewQueue).filter(
+            PMReviewQueue.queue_type == ReviewQueueType.NEED_SUGGESTION,
+            PMReviewQueue.status.in_([ReviewQueueStatus.PENDING, ReviewQueueStatus.IN_REVIEW]),
+            PMReviewQueue.item_type == "need_suggestion",
+            PMReviewQueue.item_id == idea_id,
+        ).all()
+        for item in pending:
+            meta = item.item_metadata or {}
+            if meta.get("signal_type") == "idea":
+                item.status = ReviewQueueStatus.APPROVED
+                item.reviewed_by_user_id = current_user.id
+
+    db.commit()
+
+    return {
+        "idea_id": idea_id,
+        "job_id_key": new_job_id_key,
+        "job_statement": job_statement,
     }
 
 

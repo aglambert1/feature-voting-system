@@ -95,8 +95,45 @@ def _cosine_similarity(a: list, b: list) -> float:
         return 0.0
 
 
-def _link_idea_to_job(db, idea, similarity_threshold: float = 0.5) -> Optional[str]:
+# Similarity thresholds for job linkage.
+# Domain-specific ideas cluster at 0.80–0.86 even when conceptually unrelated,
+# so a simple 0.5 cutoff produces many false matches within the same domain.
+_AUTO_LINK_THRESHOLD = 0.88    # link directly — high confidence
+_LLM_VALIDATE_THRESHOLD = 0.75  # validate with LLM before linking
+
+
+def _llm_validate_job_match(llm_service, idea_title: str, jtbd_statement: str, job_statement: str) -> bool:
+    """Ask the LLM whether an idea addresses a specific customer need. Returns True if yes."""
+    try:
+        prompt = (
+            f"Does this idea address the following customer need?\n\n"
+            f"Idea: {idea_title}\n"
+            f"Idea JTBD: {jtbd_statement}\n"
+            f"Customer need: {job_statement}\n\n"
+            f"Answer YES or NO only."
+        )
+        response = llm_service.call_agent(
+            agent_name="job_match_validator",
+            system_prompt="You are a product analyst. Answer with YES or NO only.",
+            user_prompt=prompt,
+            temperature=0.0,
+            max_tokens=5,
+            model="claude-haiku-4-5",
+        )
+        answer = (response.get("content") or "").strip().upper()
+        return answer.startswith("YES")
+    except Exception as e:
+        print(f"[_llm_validate_job_match] Warning: LLM validation failed: {e}")
+        return False
+
+
+def _link_idea_to_job(db, idea, llm_service=None) -> Optional[str]:
     """Link an idea to its best-matching ProductJob via JTBD embedding similarity.
+
+    Thresholds:
+      ≥ 0.88  → auto-link (high confidence)
+      0.75–0.88 → LLM validation (if llm_service provided, else skip)
+      < 0.75  → no link
 
     Mutates idea.job_id_key in place and returns the matched key (or None).
     Caller is responsible for committing.
@@ -119,14 +156,127 @@ def _link_idea_to_job(db, idea, similarity_threshold: float = 0.5) -> Optional[s
         if not job.statement_embedding:
             continue
         sim = _cosine_similarity(idea.jtbd_embedding, job.statement_embedding)
-        if sim > best_sim and sim > similarity_threshold:
+        if sim > best_sim:
             best_sim = sim
             best_job = job
 
-    if best_job:
+    if not best_job:
+        return None
+
+    if best_sim >= _AUTO_LINK_THRESHOLD:
         idea.job_id_key = best_job.job_id_key
         return best_job.job_id_key
+
+    if best_sim >= _LLM_VALIDATE_THRESHOLD and llm_service is not None:
+        confirmed = _llm_validate_job_match(
+            llm_service,
+            idea_title=idea.title or "",
+            jtbd_statement=idea.jtbd_statement or "",
+            job_statement=best_job.statement,
+        )
+        if confirmed:
+            idea.job_id_key = best_job.job_id_key
+            return best_job.job_id_key
+
     return None
+
+
+def _maybe_suggest_need(
+    db,
+    product_id: int,
+    signal_type: str,
+    signal_id: int,
+    signal_content: str,
+    jtbd_embedding: Optional[List],
+) -> None:
+    """Create a NEED_SUGGESTION review queue item when a signal doesn't match any job.
+
+    Called after job-linkage attempts across all signal ingestion paths.
+    Never raises — failures are logged and swallowed so the parent task isn't affected.
+
+    Thresholds:
+      < 0.5  → no_match  → NEED_SUGGESTION (priority NORMAL)
+      0.5–0.75 → weak_match → NEED_SUGGESTION (priority HIGH)
+      ≥ 0.75 → confident match — no action
+    """
+    NO_MATCH_THRESHOLD = _LLM_VALIDATE_THRESHOLD   # 0.75
+    WEAK_MATCH_THRESHOLD = _AUTO_LINK_THRESHOLD      # 0.88
+
+    try:
+        if not jtbd_embedding:
+            return
+
+        from app.models.competitor_intelligence import ProductJob
+        from app.models.pm_review import PMReviewQueue, ReviewQueueType, ReviewQueueStatus, ReviewQueuePriority
+
+        jobs = db.query(ProductJob).filter(
+            ProductJob.product_id == product_id,
+            ProductJob.status == "active",
+        ).all()
+
+        best_job = None
+        best_sim = 0.0
+        for job in jobs:
+            if not job.statement_embedding:
+                continue
+            sim = _cosine_similarity(jtbd_embedding, job.statement_embedding)
+            if sim > best_sim:
+                best_sim = sim
+                best_job = job
+
+        if best_sim >= WEAK_MATCH_THRESHOLD:
+            return  # Confident match — already linked, no suggestion needed
+
+        match_type = "no_match" if best_sim < NO_MATCH_THRESHOLD else "weak_match"
+        priority = ReviewQueuePriority.HIGH if match_type == "weak_match" else ReviewQueuePriority.NORMAL
+
+        # Dedup: skip if a pending/in-review suggestion already exists for this signal
+        existing = db.query(PMReviewQueue).filter(
+            PMReviewQueue.queue_type == ReviewQueueType.NEED_SUGGESTION,
+            PMReviewQueue.status.in_([ReviewQueueStatus.PENDING, ReviewQueueStatus.IN_REVIEW]),
+            PMReviewQueue.item_type == "need_suggestion",
+            PMReviewQueue.item_id == signal_id,
+        ).first()
+        # item_type+item_id doesn't distinguish signal_type, so also check metadata
+        if existing:
+            meta = existing.item_metadata or {}
+            if meta.get("signal_type") == signal_type and meta.get("signal_id") == signal_id:
+                return
+
+        metadata = {
+            "signal_type": signal_type,
+            "signal_id": signal_id,
+            "signal_content": signal_content[:500],
+            "match_type": match_type,
+            "matched_job_id": best_job.job_id_key if best_job else None,
+            "matched_job_statement": best_job.statement if best_job else None,
+            "matched_similarity": round(best_sim, 3) if best_job else None,
+            "product_id": product_id,
+        }
+
+        title = f"Need candidate: {signal_content[:80]}{'…' if len(signal_content) > 80 else ''}"
+        summary = (
+            f"Weak match to {best_job.job_id_key} (similarity {best_sim:.2f}). Confirm or add as new need."
+            if match_type == "weak_match"
+            else "No existing need matched this signal. Consider adding a new need."
+        )
+
+        item = PMReviewQueue(
+            queue_type=ReviewQueueType.NEED_SUGGESTION,
+            status=ReviewQueueStatus.PENDING,
+            priority=priority,
+            product_id=product_id,
+            item_type="need_suggestion",
+            item_id=signal_id,
+            title=title,
+            summary=summary,
+            item_metadata=metadata,
+        )
+        db.add(item)
+        db.commit()
+
+    except Exception as exc:
+        print(f"[_maybe_suggest_need] Warning: failed to create suggestion: {exc}")
 
 
 def _bump_parent_synthesis_progress(db, parent_job_id: int) -> None:
@@ -208,3 +358,61 @@ def _sanitize_existing_feature_info(info):
     elif url is not None:
         sanitized['source_url'] = None
     return sanitized
+
+
+def _relink_all_signals(db, product_id: int, active_job_keys_after_apply: set) -> None:
+    """Re-link orphaned signals to the best-matching active job after a map change.
+
+    Only processes signals whose job_id_key is NOT in active_job_keys_after_apply
+    (i.e., the job was removed or replaced). Signals on kept jobs are untouched.
+    """
+    from app.models.competitor_intelligence import ProductJob
+    from app.models.idea import Idea
+    from app.models.evidence import Evidence
+    from app.models.synthesis import SynthesizedOpportunity
+
+    jobs = db.query(ProductJob).filter(
+        ProductJob.product_id == product_id,
+        ProductJob.status == "active",
+    ).all()
+    active_jobs = [j for j in jobs if j.statement_embedding]
+
+    if not active_jobs:
+        return
+
+    def _relink_table(model, embedding_attr):
+        rows = db.query(model).filter(
+            model.product_id == product_id,
+        ).all()
+        changed = 0
+        for row in rows:
+            current_key = row.job_id_key
+            # Skip signals already on a still-active job
+            if current_key and current_key in active_job_keys_after_apply:
+                continue
+            emb = getattr(row, embedding_attr, None)
+            if not emb:
+                row.job_id_key = None
+                changed += 1
+                continue
+            best_job = None
+            best_sim = 0.0
+            for job in active_jobs:
+                sim = _cosine_similarity(emb, job.statement_embedding)
+                if sim > best_sim:
+                    best_sim = sim
+                    best_job = job
+            if best_job and best_sim >= _LLM_VALIDATE_THRESHOLD:
+                row.job_id_key = best_job.job_id_key
+            else:
+                row.job_id_key = None
+            changed += 1
+        if changed:
+            db.flush()
+
+    _relink_table(Idea, 'jtbd_embedding')
+    _relink_table(Evidence, 'jtbd_embedding')
+    _relink_table(SynthesizedOpportunity, 'jtbd_embedding')
+    # WinLossTheme and SupportTheme have no jtbd_embedding column — they re-link
+    # naturally via the suggestion pipeline when new evidence is processed.
+    db.commit()

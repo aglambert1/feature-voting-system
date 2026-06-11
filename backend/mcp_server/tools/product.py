@@ -969,7 +969,8 @@ def product_extract_job_map(product_id: int, guidance: str = "") -> dict:
         if not product:
             return {"error": f"Product {product_id} not found"}
 
-        input_data = {"product_id": product_id}
+        # MCP always commits directly — no pending review state for programmatic use
+        input_data = {"product_id": product_id, "skip_review": True}
         if guidance:
             input_data["guidance"] = guidance
 

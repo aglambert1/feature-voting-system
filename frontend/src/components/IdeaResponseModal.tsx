@@ -9,7 +9,7 @@
  * - Comment textarea with agent suggestion pre-fill
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   IdeaResponseStatus,
   TriageRecommendation,
@@ -55,11 +55,14 @@ export default function IdeaResponseModal({
   // Similar ideas for duplicate selection
   const [similarIdeas, setSimilarIdeas] = useState<SimilarIdea[]>([]);
   const [loadingSimilar, setLoadingSimilar] = useState(false);
+  const similarFetchedRef = useRef(false);
 
   // Source summary drill-down toggles
   const [showVoters, setShowVoters] = useState(false);
   const [showCompetitors, setShowCompetitors] = useState(false);
   const [showExistingFeature, setShowExistingFeature] = useState(false);
+  // Default expanded when no linkage exists (needs PM attention); collapsed when linked
+  const [needExpanded, setNeedExpanded] = useState(false);
 
   // Track if the current form values match the AI recommendation
   const [isUsingAiRecommendation, setIsUsingAiRecommendation] = useState(false);
@@ -72,6 +75,8 @@ export default function IdeaResponseModal({
         // Fetch agent recommendation (also includes current response if already responded)
         const rec = await getTriageRecommendation(ideaId);
         setRecommendation(rec);
+        // Expand by default only when no linkage — needs PM attention
+        setNeedExpanded(!rec.job_linkage);
 
         // If already responded, show the current response in the form
         if (rec.current_response && rec.current_response.status) {
@@ -122,7 +127,8 @@ export default function IdeaResponseModal({
 
   // Fetch similar ideas when status changes to 'duplicate'
   useEffect(() => {
-    if (selectedStatus === 'duplicate' && similarIdeas.length === 0) {
+    if (selectedStatus === 'duplicate' && !similarFetchedRef.current) {
+      similarFetchedRef.current = true;
       const fetchSimilar = async () => {
         setLoadingSimilar(true);
         try {
@@ -136,7 +142,7 @@ export default function IdeaResponseModal({
       };
       fetchSimilar();
     }
-  }, [selectedStatus, ideaTitle, productId, ideaId, similarIdeas.length]);
+  }, [selectedStatus, ideaTitle, productId, ideaId]);
 
   const handleSubmit = async () => {
     if (!selectedStatus) {
@@ -485,6 +491,54 @@ export default function IdeaResponseModal({
                     )}
                   </div>
                 )}
+
+                {/* Customer Need linkage — collapsible */}
+                <div className="mb-6 border border-gray-200 rounded-lg overflow-hidden">
+                  {/* Collapsed header — always visible */}
+                  <button
+                    type="button"
+                    onClick={() => setNeedExpanded(e => !e)}
+                    className="w-full flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50 hover:bg-gray-100 text-left transition"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex-shrink-0">Customer Need</span>
+                      {recommendation?.job_linkage ? (
+                        <>
+                          <span className="text-xs font-mono bg-white border border-gray-200 text-gray-600 px-1.5 py-0.5 rounded flex-shrink-0">
+                            {recommendation.job_linkage.job_id_key}
+                          </span>
+                          <span className="text-xs text-gray-500 truncate">
+                            {recommendation.job_linkage.job_statement ?? ''}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-xs text-amber-600 font-medium">No match — review needed</span>
+                      )}
+                    </div>
+                    <span className="text-gray-400 text-xs flex-shrink-0">{needExpanded ? '▲' : '▼'}</span>
+                  </button>
+
+                  {/* Expanded detail */}
+                  {needExpanded && (
+                    <div className="px-4 py-3 bg-white border-t border-gray-200">
+                      {recommendation?.job_linkage ? (
+                        <p className="text-sm text-gray-800 mb-3">
+                          {recommendation.job_linkage.job_statement ?? recommendation.job_linkage.job_id_key}
+                        </p>
+                      ) : (
+                        <p className="text-sm text-gray-500 italic mb-3">
+                          No customer need matched this idea. Visit the Job Map to assign one or add a new need.
+                        </p>
+                      )}
+                      <a
+                        href={`/product-intelligence/products/${productId}/job-map?returnTo=idea/${ideaId}`}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                      >
+                        {recommendation?.job_linkage ? 'Review in Job Map →' : 'Open Job Map →'}
+                      </a>
+                    </div>
+                  )}
+                </div>
 
                 {/* AI Agent Recommendation Banner - visible when form is pre-filled with AI recommendation */}
                 {isUsingAiRecommendation && recommendation?.has_recommendation && (
