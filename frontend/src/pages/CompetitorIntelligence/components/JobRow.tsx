@@ -400,34 +400,39 @@ export default function JobRow({ job, productId, returnIdeaId, onSave, onDelete 
           )}
 
           {signals && (() => {
-            const sections: { label: string; items: { id: number; primary: string; badge?: string }[] }[] = [];
+            const sections: { label: string; total: number; items: { id: number; primary: string; badge?: string }[] }[] = [];
 
-            if (signals.ideas.length > 0) sections.push({
+            if (signals.totals.ideas > 0) sections.push({
               label: 'Ideas',
+              total: signals.totals.ideas,
               items: signals.ideas.slice(0, SIGNAL_LIMIT).map(i => ({
                 id: i.id, primary: i.title, badge: i.status ?? undefined,
               })),
             });
-            if (signals.evidence.length > 0) sections.push({
+            if (signals.totals.evidence > 0) sections.push({
               label: 'Evidence',
+              total: signals.totals.evidence,
               items: signals.evidence.slice(0, SIGNAL_LIMIT).map(e => ({
                 id: e.id, primary: e.title, badge: e.evidence_type ?? undefined,
               })),
             });
-            if (signals.win_loss_themes.length > 0) sections.push({
+            if (signals.totals.win_loss_themes > 0) sections.push({
               label: 'Win/Loss',
+              total: signals.totals.win_loss_themes,
               items: signals.win_loss_themes.slice(0, SIGNAL_LIMIT).map(t => ({
                 id: t.id, primary: t.theme_name, badge: t.outcome ?? undefined,
               })),
             });
-            if (signals.support_themes.length > 0) sections.push({
+            if (signals.totals.support_themes > 0) sections.push({
               label: 'Support',
+              total: signals.totals.support_themes,
               items: signals.support_themes.slice(0, SIGNAL_LIMIT).map(t => ({
                 id: t.id, primary: t.theme_name, badge: t.category ?? undefined,
               })),
             });
-            if (signals.synthesis_opportunities.length > 0) sections.push({
+            if (signals.totals.synthesis_opportunities > 0) sections.push({
               label: 'Opportunities',
+              total: signals.totals.synthesis_opportunities,
               items: signals.synthesis_opportunities.slice(0, SIGNAL_LIMIT).map(o => ({
                 id: o.id, primary: o.opportunity_name, badge: o.investment_tier ?? undefined,
               })),
@@ -442,7 +447,7 @@ export default function JobRow({ job, productId, returnIdeaId, onSave, onDelete 
                 {sections.map(section => (
                   <div key={section.label}>
                     <div className="text-xs font-medium text-gray-500 mb-1">
-                      {section.label} ({section.items.length}{section.items.length === SIGNAL_LIMIT ? '+' : ''})
+                      {section.label} ({section.items.length < section.total ? `${section.items.length} of ${section.total}` : section.total})
                     </div>
                     <ul className="space-y-1">
                       {section.items.map(item => (

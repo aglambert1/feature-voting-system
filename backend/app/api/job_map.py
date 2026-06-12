@@ -23,6 +23,7 @@ from app.models.competitor_intelligence import (
 from app.models.idea import Idea
 from app.models.evidence import Evidence
 from app.models.internal_feedback import WinLossTheme, SupportTheme
+from app.models.synthesis import SynthesizedOpportunity
 from app.models.queue import JobType as QueueJobType
 from app.models.pm_review import PMReviewQueue, ReviewQueueType, ReviewQueueStatus
 from app.schemas.job_map import (
@@ -107,10 +108,24 @@ def _rebuild_job_map_json(db: Session, product: CIProduct):
 # ============================================================================
 
 def _get_signal_counts(db: Session, product_id: int) -> dict[str, int]:
-    """Count signals per job_id_key from all four signal sources."""
+    """Count active signals per job_id_key from all four signal sources."""
     counts: dict[str, int] = {}
 
-    for model in (Idea, Evidence, WinLossTheme, SupportTheme):
+    # Ideas: only count active rows (inactive = soft-deleted)
+    idea_rows = (
+        db.query(Idea.job_id_key, sa_func.count(Idea.id))
+        .filter(
+            Idea.product_id == product_id,
+            Idea.job_id_key.isnot(None),
+            Idea.is_active == True,
+        )
+        .group_by(Idea.job_id_key)
+        .all()
+    )
+    for key, cnt in idea_rows:
+        counts[key] = counts.get(key, 0) + cnt
+
+    for model in (Evidence, WinLossTheme, SupportTheme, SynthesizedOpportunity):
         rows = (
             db.query(model.job_id_key, sa_func.count(model.id))
             .filter(
@@ -416,16 +431,14 @@ def remove_job(
 
     if not relink:
         # Clear linkages on all signals pointing to this job
-        from app.models.idea import Idea
-        from app.models.evidence import Evidence
-        from app.models.synthesis import SynthesizedOpportunity
-        for model in (Idea, Evidence, SynthesizedOpportunity):
+        for model in (Idea, Evidence, SynthesizedOpportunity, WinLossTheme, SupportTheme):
             db.query(model).filter(
                 model.product_id == product_id,
                 model.job_id_key == job_id,
             ).update({"job_id_key": None})
     else:
-        # Re-link orphaned signals to their best remaining active job
+        # Re-link embedding-capable signals to their best remaining active job;
+        # themes have no jtbd_embedding so just clear their stale linkage.
         from app.queue.helpers import _relink_all_signals
         remaining_active = {
             j.job_id_key for j in db.query(ProductJob).filter(
@@ -434,6 +447,11 @@ def remove_job(
             ).all()
         }
         _relink_all_signals(db, product_id, remaining_active)
+        for model in (WinLossTheme, SupportTheme):
+            db.query(model).filter(
+                model.product_id == product_id,
+                model.job_id_key == job_id,
+            ).update({"job_id_key": None})
 
     _rebuild_job_map_json(db, product)
     product.job_map_version = (product.job_map_version or 0) + 1
@@ -623,7 +641,6 @@ def get_job_signals(
     _verify_product_access(db, product_id, current_user)
 
     from app.models.vote import Vote
-    from app.models.synthesis import SynthesizedOpportunity
 
     LIMIT = 20
 
@@ -636,6 +653,9 @@ def get_job_signals(
         .limit(LIMIT)
         .all()
     )
+    ideas_total = db.query(sa_func.count(Idea.id)).filter(
+        Idea.product_id == product_id, Idea.job_id_key == job_id_key, Idea.is_active == True,
+    ).scalar() or 0
 
     evidence = (
         db.query(Evidence)
@@ -644,6 +664,9 @@ def get_job_signals(
         .limit(LIMIT)
         .all()
     )
+    evidence_total = db.query(sa_func.count(Evidence.id)).filter(
+        Evidence.product_id == product_id, Evidence.job_id_key == job_id_key,
+    ).scalar() or 0
 
     win_loss = (
         db.query(WinLossTheme)
@@ -652,6 +675,9 @@ def get_job_signals(
         .limit(LIMIT)
         .all()
     )
+    win_loss_total = db.query(sa_func.count(WinLossTheme.id)).filter(
+        WinLossTheme.product_id == product_id, WinLossTheme.job_id_key == job_id_key,
+    ).scalar() or 0
 
     support = (
         db.query(SupportTheme)
@@ -660,6 +686,9 @@ def get_job_signals(
         .limit(LIMIT)
         .all()
     )
+    support_total = db.query(sa_func.count(SupportTheme.id)).filter(
+        SupportTheme.product_id == product_id, SupportTheme.job_id_key == job_id_key,
+    ).scalar() or 0
 
     opportunities = (
         db.query(SynthesizedOpportunity)
@@ -668,9 +697,19 @@ def get_job_signals(
         .limit(LIMIT)
         .all()
     )
+    opportunities_total = db.query(sa_func.count(SynthesizedOpportunity.id)).filter(
+        SynthesizedOpportunity.product_id == product_id, SynthesizedOpportunity.job_id_key == job_id_key,
+    ).scalar() or 0
 
     return {
         "job_id_key": job_id_key,
+        "totals": {
+            "ideas": ideas_total,
+            "evidence": evidence_total,
+            "win_loss_themes": win_loss_total,
+            "support_themes": support_total,
+            "synthesis_opportunities": opportunities_total,
+        },
         "ideas": [
             {
                 "id": idea.id,

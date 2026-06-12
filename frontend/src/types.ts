@@ -1428,6 +1428,13 @@ export interface JobSignalOpportunity {
 
 export interface JobSignals {
   job_id_key: string;
+  totals: {
+    ideas: number;
+    evidence: number;
+    win_loss_themes: number;
+    support_themes: number;
+    synthesis_opportunities: number;
+  };
   ideas: JobSignalIdea[];
   evidence: JobSignalEvidence[];
   win_loss_themes: JobSignalTheme[];
