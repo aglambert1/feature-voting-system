@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.utils.celery_utils import send_celery_task as send_task
 from app.models.user import User
-from sqlalchemy import func as sa_func
+from sqlalchemy import func as sa_func, delete as sa_delete
 from app.models.competitor_intelligence import (
     CIProduct, ProductJob, JobType, JobImportance,
     ProductPermissionLevel,
@@ -760,16 +760,28 @@ def get_pending_comparison(
         except Exception:
             pending_embeddings = [None] * len(pending_statements)
 
-    # Match each pending job to best current job
+    # Match pending jobs to current jobs.
+    # Priority 1: same job_id_key — always pair directly (LLM reused the key intentionally).
+    # Priority 2: best embedding similarity >= 0.6 among unclaimed current jobs.
+    # Each current job is claimed at most once.
+    current_jobs_by_key = {j.job_id_key: j for j in current_jobs}
     current_jobs_with_emb = [j for j in current_jobs if j.statement_embedding]
     matched_current_keys = set()
     pairs = []
 
     for i, (pj, pemb) in enumerate(zip(pending_jobs, pending_embeddings)):
+        new_key = pj["job_id_key"]
         best_match = None
-        best_sim = 0.0
-        if pemb:
+        best_sim = 1.0  # sentinel for key match
+
+        # Key match takes priority
+        if new_key in current_jobs_by_key and new_key not in matched_current_keys:
+            best_match = current_jobs_by_key[new_key]
+        elif pemb:
+            best_sim = 0.0
             for cj in current_jobs_with_emb:
+                if cj.job_id_key in matched_current_keys:
+                    continue
                 sim = sum(a * b for a, b in zip(pemb, cj.statement_embedding)) / (
                     (sum(a * a for a in pemb) ** 0.5) * (sum(b * b for b in cj.statement_embedding) ** 0.5) + 1e-8
                 )
@@ -777,9 +789,12 @@ def get_pending_comparison(
                     best_sim = sim
                     best_match = cj
 
-        if best_match and best_sim >= 0.6:
+        if best_match and (best_sim >= 0.6 or best_match == current_jobs_by_key.get(new_key)):
             matched_current_keys.add(best_match.job_id_key)
-            if best_sim >= 0.85:
+            # Determine change type: compare statements to decide unchanged vs modified
+            old_stmt = best_match.statement.strip()
+            new_stmt = pj["statement"].strip()
+            if old_stmt == new_stmt or best_sim >= 0.92:
                 change_type = "unchanged"
                 default_selection = "new"
             else:
@@ -787,7 +802,7 @@ def get_pending_comparison(
                 default_selection = "old"
             pairs.append({
                 "id": f"pair_{i}",
-                "similarity": round(best_sim, 3),
+                "similarity": round(best_sim, 3) if best_sim != 1.0 else None,
                 "change_type": change_type,
                 "default_selection": default_selection,
                 "old": {
@@ -801,7 +816,7 @@ def get_pending_comparison(
         else:
             pairs.append({
                 "id": f"pair_{i}",
-                "similarity": round(best_sim, 3) if best_sim else None,
+                "similarity": round(best_sim, 3) if best_sim and best_sim != 1.0 else None,
                 "change_type": "new",
                 "default_selection": "new",
                 "old": None,
@@ -836,6 +851,7 @@ def apply_pending_job_map(
     current_user: User = Depends(get_current_active_user),
 ):
     """Apply PM selections from the pending job map comparison."""
+    import traceback as _tb
     from app.services.embedding_service import generate_embedding
     from app.queue.helpers import _relink_all_signals
 
@@ -851,37 +867,78 @@ def apply_pending_job_map(
         "low": JobImportance.LOW,
     }
 
-    # Track which old job_id_keys are being kept (choice="old") — their signals stay
     kept_old_keys = set()
     for sel in selections:
         if sel.get("choice") == "old" and sel.get("old_job_id_key"):
             kept_old_keys.add(sel["old_job_id_key"])
 
-    # Get current active job keys to determine which to delete
     current_jobs = {j.job_id_key: j for j in db.query(ProductJob).filter(
         ProductJob.product_id == product_id, ProductJob.status == "active",
     ).all()}
 
-    new_active_keys = set(kept_old_keys)  # Start with kept old jobs
+    new_active_keys = set(kept_old_keys)
 
-    for sel in selections:
-        choice = sel.get("choice")
-        old_key = sel.get("old_job_id_key")
-        new_data = sel.get("new_job_data")
+    try:
+        # Collect all keys to delete and all new rows to insert.
+        # Delete everything upfront in one statement so the ORM identity map is
+        # clear before any INSERT — avoids UNIQUE constraint violations from
+        # SQLAlchemy batching DELETEs after INSERTs in its unit-of-work.
+        keys_to_delete = set()
+        new_rows = []
+        seen_new_keys = set()  # guard against duplicate job_id_key in payload
 
-        if choice == "old":
-            # Keep existing row unchanged
-            pass
-        elif choice == "new" and new_data:
-            # Delete old row if it exists, insert new one
-            if old_key and old_key in current_jobs:
-                current_jobs[old_key].status = "inactive"
-                db.flush()
-            statement = sel.get("statement") or new_data.get("statement", "")
-            desired_outcomes = sel.get("desired_outcomes") or new_data.get("desired_outcomes", [])
-            importance_str = sel.get("importance") or new_data.get("importance", "medium")
-            new_key = new_data.get("job_id_key", "")
+        for sel in selections:
+            choice = sel.get("choice")
+            old_key = sel.get("old_job_id_key")
+            new_data = sel.get("new_job_data")
 
+            if choice == "old":
+                pass
+            elif choice == "new" and new_data:
+                new_key = new_data.get("job_id_key", "")
+                if new_key in seen_new_keys:
+                    continue  # duplicate key in payload — skip silently
+                seen_new_keys.add(new_key)
+                # Delete the old paired job if present
+                if old_key and old_key in current_jobs:
+                    keys_to_delete.add(old_key)
+                # Also delete by new_key if it already exists (covers "new" pairs
+                # whose key coincidentally matches an active row — without this
+                # the INSERT collides even after old_key is removed)
+                if new_key in current_jobs and new_key != old_key:
+                    keys_to_delete.add(new_key)
+                statement = sel.get("statement") or new_data.get("statement", "")
+                # Use explicit None check so PM can intentionally clear all outcomes ([] is falsy)
+                _do = sel.get("desired_outcomes")
+                desired_outcomes = _do if _do is not None else new_data.get("desired_outcomes", [])
+                importance_str = sel.get("importance") or new_data.get("importance", "medium")
+                new_rows.append((new_key, new_data, statement, desired_outcomes, importance_str))
+                new_active_keys.add(new_key)
+            elif choice == "drop" and old_key and old_key in current_jobs:
+                keys_to_delete.add(old_key)
+
+        # Step 1: delete all rows (any status) whose key is being replaced or dropped,
+        # plus any stale rows matching a new_key — covers inactive rows left by prior
+        # failed applies that would otherwise block the INSERT on the unique constraint.
+        all_keys_to_wipe = keys_to_delete | {r[0] for r in new_rows}
+        if all_keys_to_wipe:
+            db.execute(
+                sa_delete(ProductJob).where(
+                    ProductJob.product_id == product_id,
+                    ProductJob.job_id_key.in_(all_keys_to_wipe),
+                )
+            )
+            for key in all_keys_to_wipe:
+                obj = current_jobs.get(key)
+                if obj is not None:
+                    try:
+                        db.expunge(obj)
+                    except Exception:
+                        pass
+            db.flush()
+
+        # Step 2: insert new rows
+        for new_key, new_data, statement, desired_outcomes, importance_str in new_rows:
             emb = generate_embedding(statement, input_type="document")
             pj = ProductJob(
                 product_id=product_id,
@@ -893,22 +950,25 @@ def apply_pending_job_map(
                 statement_embedding=emb,
             )
             db.add(pj)
-            db.flush()
-            new_active_keys.add(new_key)
-        elif choice == "drop" and old_key and old_key in current_jobs:
-            current_jobs[old_key].status = "inactive"
+        if new_rows:
             db.flush()
 
-    # Archive and clear pending
-    product.previous_job_map = product.job_map
-    product.pending_job_map = None
-    _rebuild_job_map_json(db, product)
-    product.job_map_version = (product.job_map_version or 0) + 1
-    product.job_map_last_updated = datetime.now(timezone.utc)
-    db.commit()
+        product.previous_job_map = product.job_map
+        product.pending_job_map = None
+        _rebuild_job_map_json(db, product)
+        product.job_map_version = (product.job_map_version or 0) + 1
+        product.job_map_last_updated = datetime.now(timezone.utc)
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"apply-pending failed: {_tb.format_exc()}")
 
-    # Re-link signals orphaned by dropped/replaced jobs
-    _relink_all_signals(db, product_id, new_active_keys)
+    try:
+        _relink_all_signals(db, product_id, new_active_keys)
+    except Exception:
+        pass  # signal re-linkage is best-effort; map is already committed
 
     return {
         "product_id": product_id,

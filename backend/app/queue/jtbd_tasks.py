@@ -156,9 +156,9 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
                 for job_obj, embedding in zip(all_jobs, embeddings):
                     job_obj.statement_embedding = embedding
         else:
-            # Web UI path: store as pending, PM reviews before committing
+            # Web UI path: store as pending, PM reviews before committing.
+            # Do NOT update job_map_last_updated here — only update it when the PM applies.
             product.pending_job_map = job_map_data
-            product.job_map_last_updated = datetime.now(timezone.utc)
             queue_service.update_progress(job_id, 90.0, "Pending PM review...")
 
         db.commit()

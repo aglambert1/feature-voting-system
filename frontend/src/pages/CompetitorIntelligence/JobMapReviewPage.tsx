@@ -227,6 +227,7 @@ interface FinalJob {
 function VerifyStep({
   jobs,
   onUpdateJob,
+  onRemoveJob,
   onApply,
   onBack,
   onDiscard,
@@ -235,6 +236,7 @@ function VerifyStep({
 }: {
   jobs: FinalJob[];
   onUpdateJob: (pairId: string, updates: Partial<Pick<FinalJob, 'statement' | 'outcomesText' | 'importance' | 'editing'>>) => void;
+  onRemoveJob: (pairId: string) => void;
   onApply: () => void;
   onBack: () => void;
   onDiscard: () => void;
@@ -348,13 +350,24 @@ function VerifyStep({
                     </ul>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onUpdateJob(fj.pairId, { editing: true })}
-                  className="flex-shrink-0 text-xs text-blue-600 hover:text-blue-800"
-                >
-                  Edit
-                </button>
+                <div className="flex flex-col gap-1.5 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onUpdateJob(fj.pairId, { editing: true })}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    Edit
+                  </button>
+                  {jobs.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => onRemoveJob(fj.pairId)}
+                      className="text-xs text-red-500 hover:text-red-700"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -407,16 +420,20 @@ export default function JobMapReviewPage() {
       const choice = selections[pair.id] ?? pair.default_selection;
       if (choice === 'drop') return;
 
-      const job = choice === 'old' ? pair.old : pair.new;
+      // Unchanged pairs always keep the existing row — never re-insert with the same key.
+      const effectiveChoice: 'old' | 'new' | 'drop' =
+        pair.change_type === 'unchanged' ? 'old' : choice;
+
+      const job = effectiveChoice === 'old' ? pair.old : pair.new;
       if (!job) return;
 
       const source: FinalJob['source'] =
         pair.change_type === 'unchanged' ? 'unchanged' :
-        choice === 'old' ? 'old' : 'new';
+        effectiveChoice === 'old' ? 'old' : 'new';
 
       jobs.push({
         pairId: pair.id,
-        choice,
+        choice: effectiveChoice,
         oldJobIdKey: pair.old?.job_id_key,
         job,
         source,
@@ -426,7 +443,17 @@ export default function JobMapReviewPage() {
         editing: false,
       });
     });
-    setFinalJobs(jobs);
+    // Deduplicate by job_id_key — keep the first (matched/kept) entry, drop unmatched "new"
+    // entries with the same key. This handles cases where the comparison returns both a
+    // matched pair and a separate "new" pair that happen to share the same key.
+    const seenKeys = new Set<string>();
+    const deduped = jobs.filter(fj => {
+      if (seenKeys.has(fj.job.job_id_key)) return false;
+      seenKeys.add(fj.job.job_id_key);
+      return true;
+    });
+
+    setFinalJobs(deduped);
     setStep('verify');
   }, [comparison, selections]);
 
@@ -434,26 +461,43 @@ export default function JobMapReviewPage() {
     setFinalJobs(prev => prev.map(fj => fj.pairId === pairId ? { ...fj, ...updates } : fj));
   }, []);
 
+  const handleRemoveJob = useCallback((pairId: string) => {
+    setFinalJobs(prev => prev.filter(fj => fj.pairId !== pairId));
+  }, []);
+
   const handleApply = async () => {
     setApplying(true);
     try {
-      const payloadSelections = finalJobs.map(fj => ({
-        pair_id: fj.pairId,
-        choice: fj.choice,
-        old_job_id_key: fj.oldJobIdKey,
-        new_job_data: fj.choice === 'new' ? fj.job : undefined,
-        statement: fj.statement,
-        desired_outcomes: fromBulletText(fj.outcomesText),
-        importance: fj.importance,
-      }));
-      // Add dropped pairs
+      const payloadSelections = finalJobs.map(fj => {
+        const desiredOutcomes = fromBulletText(fj.outcomesText);
+        const wasEdited =
+          fj.statement !== fj.job.statement ||
+          fj.importance !== fj.job.importance ||
+          desiredOutcomes.join('|') !== fj.job.desired_outcomes.join('|');
+        // If the PM edited a kept-old job, treat it as 'new' so the backend
+        // deletes-and-reinserts with the edited content. Pure 'old' choices
+        // are left untouched (no DB write needed).
+        const effectiveChoice = fj.choice === 'old' && wasEdited ? 'new' : fj.choice;
+        return {
+          pair_id: fj.pairId,
+          choice: effectiveChoice,
+          old_job_id_key: fj.oldJobIdKey ?? fj.job.job_id_key,
+          new_job_data: effectiveChoice === 'new' ? fj.job : undefined,
+          statement: fj.statement,
+          desired_outcomes: desiredOutcomes,
+          importance: fj.importance,
+        };
+      });
+      // Add dropped pairs: from step-1 explicit drops, plus jobs removed in step-2 verify
+      const includedPairIds = new Set(finalJobs.map(fj => fj.pairId));
       comparison?.pairs.forEach(pair => {
-        const choice = selections[pair.id] ?? pair.default_selection;
-        if (choice === 'drop') {
+        if (includedPairIds.has(pair.id)) return; // already in payload
+        // Either explicitly dropped in step 1, or removed via "Remove" in step 2
+        if (pair.old?.job_id_key) {
           payloadSelections.push({
             pair_id: pair.id,
             choice: 'drop',
-            old_job_id_key: pair.old?.job_id_key,
+            old_job_id_key: pair.old.job_id_key,
             new_job_data: undefined,
             statement: '',
             desired_outcomes: [],
@@ -518,6 +562,7 @@ export default function JobMapReviewPage() {
           <VerifyStep
             jobs={finalJobs}
             onUpdateJob={handleUpdateJob}
+            onRemoveJob={handleRemoveJob}
             onApply={handleApply}
             onBack={() => setStep('compare')}
             onDiscard={handleDiscard}

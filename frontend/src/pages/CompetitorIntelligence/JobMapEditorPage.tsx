@@ -226,10 +226,14 @@ export default function JobMapEditorPage() {
                   jobTypes={[JobType.JOB_MAP_EXTRACTION]}
                   onJobComplete={fetchJobMap}
                 />
-                <span>
-                  Version <strong>{data.job_map_version}</strong>
-                </span>
-                {lastUpdated && <span>Last updated {lastUpdated}</span>}
+                {!data.has_pending_map && (
+                  <>
+                    <span>
+                      Version <strong>{data.job_map_version}</strong>
+                    </span>
+                    {lastUpdated && <span>Last updated {lastUpdated}</span>}
+                  </>
+                )}
               </div>
             </div>
           </div>
