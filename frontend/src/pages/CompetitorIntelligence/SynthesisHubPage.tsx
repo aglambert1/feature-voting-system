@@ -360,6 +360,7 @@ export default function SynthesisHubPage() {
                       opportunities={report.opportunities_detail}
                       onCreateClick={(o) => setModalOpp(o)}
                       onViewIdea={(ideaId) => navigate(`/ideas/${ideaId}`)}
+                      productId={numProductId}
                     />
                   </div>
                 )}
@@ -402,82 +403,207 @@ export default function SynthesisHubPage() {
   );
 }
 
+function EvidenceCard({ o, onCreateClick, onViewIdea, productId }: {
+  o: SynthesisOpportunityDetail;
+  onCreateClick: (o: SynthesisOpportunityDetail) => void;
+  onViewIdea: (ideaId: number) => void;
+  productId: number;
+}) {
+  const comp = o.competitive_evidence as any;
+  const cust = o.customer_evidence as any;
+  const internal = o.internal_evidence as any;
+  const evSig = o.evidence_signals as any;
+
+  return (
+    <div className="bg-blue-50/40 border-t border-blue-100 px-4 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+      {/* Competitive evidence */}
+      {comp && (
+        <div>
+          <div className="font-semibold text-gray-600 mb-1 uppercase tracking-wide text-xs">Competitive</div>
+          {comp.competitors && comp.competitors.length > 0 && (
+            <div className="mb-1">
+              <span className="text-gray-500">Competitors: </span>
+              <span className="text-gray-800">{comp.competitors.join(', ')}</span>
+            </div>
+          )}
+          {comp.prevalence && (
+            <div><span className="text-gray-500">Prevalence: </span><span className="text-gray-800">{comp.prevalence}</span></div>
+          )}
+          {comp.our_status && (
+            <div><span className="text-gray-500">Our status: </span>
+              <span className={comp.our_status === 'Gap' ? 'text-red-600 font-medium' : 'text-gray-800'}>{comp.our_status}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Customer evidence */}
+      {cust && (
+        <div>
+          <div className="font-semibold text-gray-600 mb-1 uppercase tracking-wide text-xs">Customer</div>
+          {cust.idea_title && (
+            <div className="mb-1 text-gray-800">{cust.idea_title}</div>
+          )}
+          {cust.vote_count != null && (
+            <div><span className="text-gray-500">Votes: </span><span className="text-gray-800">{cust.vote_count}</span></div>
+          )}
+        </div>
+      )}
+
+      {/* Internal evidence */}
+      {internal && (internal.winloss || internal.support) && (
+        <div>
+          <div className="font-semibold text-gray-600 mb-1 uppercase tracking-wide text-xs">Internal</div>
+          {internal.winloss && (
+            <div className="mb-1">
+              <span className="text-gray-500">Win/Loss: </span>
+              <span className="text-gray-800">{internal.winloss.theme_name}</span>
+              {internal.winloss.deal_count && <span className="text-gray-500 ml-1">({internal.winloss.deal_count} deals)</span>}
+            </div>
+          )}
+          {internal.support && (
+            <div>
+              <span className="text-gray-500">Support: </span>
+              <span className="text-gray-800">{internal.support.theme_name}</span>
+              {internal.support.ticket_count && <span className="text-gray-500 ml-1">({internal.support.ticket_count} tickets)</span>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Evidence signals (factbase) */}
+      {evSig?.items && evSig.items.length > 0 && (
+        <div>
+          <div className="font-semibold text-gray-600 mb-1 uppercase tracking-wide text-xs">Evidence Records</div>
+          <ul className="space-y-0.5">
+            {evSig.items.slice(0, 4).map((item: any) => (
+              <li key={item.evidence_id} className="text-gray-800 truncate">{item.title}</li>
+            ))}
+            {evSig.items.length > 4 && <li className="text-gray-400">+{evSig.items.length - 4} more</li>}
+          </ul>
+        </div>
+      )}
+
+      {/* Action */}
+      <div className="sm:col-span-2 pt-2 border-t border-blue-100 flex gap-3 items-center">
+        {o.linked_idea_id ? (
+          <button
+            type="button"
+            onClick={() => onViewIdea(o.linked_idea_id!)}
+            className="inline-flex items-center px-3 py-1.5 rounded text-xs bg-green-100 text-green-800 hover:bg-green-200 font-medium"
+          >
+            View Idea #{o.linked_idea_id}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onCreateClick(o)}
+            className="inline-flex items-center px-3 py-1.5 rounded text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 font-medium"
+          >
+            + Create idea from this opportunity
+          </button>
+        )}
+        {o.job_id_key && (
+          <a
+            href={`/product-intelligence/products/${productId}/job-map`}
+            className="text-xs text-blue-600 hover:text-blue-800"
+          >
+            View need map →
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OpportunitiesTable({
   opportunities,
   onCreateClick,
   onViewIdea,
+  productId,
 }: {
   opportunities: SynthesisOpportunityDetail[];
   onCreateClick: (o: SynthesisOpportunityDetail) => void;
   onViewIdea: (ideaId: number) => void;
+  productId: number;
 }) {
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
   return (
-    <div className="overflow-x-auto border border-gray-200 rounded">
+    <div className="border border-gray-200 rounded overflow-hidden">
       <table className="min-w-full text-sm">
         <thead className="bg-gray-50 text-xs uppercase text-gray-500">
           <tr>
+            <th className="text-left px-3 py-2 font-medium w-6"></th>
             <th className="text-left px-3 py-2 font-medium">Opportunity</th>
             <th className="text-left px-3 py-2 font-medium">Score</th>
             <th className="text-left px-3 py-2 font-medium">Tier</th>
             <th className="text-left px-3 py-2 font-medium">Sources</th>
-            <th className="text-left px-3 py-2 font-medium">Job</th>
-            <th className="text-left px-3 py-2 font-medium">Idea</th>
+            <th className="text-left px-3 py-2 font-medium">Customer Need</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100 bg-white">
+        <tbody className="bg-white">
           {opportunities.map((o) => (
-            <tr key={o.id} className="align-top">
-              <td className="px-3 py-2">
-                <div className="font-medium text-gray-900">{o.opportunity_name}</div>
-                {o.opportunity_summary && (
-                  <div className="text-xs text-gray-600 mt-0.5">{o.opportunity_summary}</div>
-                )}
-              </td>
-              <td className="px-3 py-2 text-gray-800 whitespace-nowrap">
-                {o.priority_score.toFixed(0)}
-              </td>
-              <td className="px-3 py-2 whitespace-nowrap">
-                {o.investment_tier ? (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
-                    {o.investment_tier.replace(/_/g, " ")}
-                  </span>
-                ) : (
-                  <span className="text-gray-400">—</span>
-                )}
-              </td>
-              <td className="px-3 py-2">
-                <div className="flex flex-wrap gap-1">
-                  {o.sources.length > 0 ? o.sources.map((s) => (
-                    <span key={s} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-indigo-50 text-indigo-700">
-                      {s}
+            <>
+              <tr
+                key={o.id}
+                className={`align-top border-t border-gray-100 cursor-pointer hover:bg-gray-50 ${expandedId === o.id ? 'bg-blue-50/30' : ''}`}
+                onClick={() => setExpandedId(expandedId === o.id ? null : o.id)}
+              >
+                <td className="px-3 py-2 text-gray-400 text-xs">{expandedId === o.id ? '▼' : '▶'}</td>
+                <td className="px-3 py-2">
+                  <div className="font-medium text-gray-900">{o.opportunity_name}</div>
+                  {o.opportunity_summary && (
+                    <div className="text-xs text-gray-600 mt-0.5">{o.opportunity_summary}</div>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-gray-800 whitespace-nowrap text-xs">
+                  {o.priority_score.toFixed(0)}
+                </td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  {o.investment_tier ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
+                      {o.investment_tier.replace(/_/g, " ")}
                     </span>
-                  )) : <span className="text-gray-400 text-xs">—</span>}
-                </div>
-              </td>
-              <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">
-                {o.job_id_key ?? <span className="text-gray-400">—</span>}
-              </td>
-              <td className="px-3 py-2 whitespace-nowrap">
-                {o.linked_idea_id ? (
-                  <button
-                    type="button"
-                    onClick={() => onViewIdea(o.linked_idea_id!)}
-                    className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-green-100 text-green-800 hover:bg-green-200"
-                    title={o.linked_idea_title ?? undefined}
-                  >
-                    View Idea #{o.linked_idea_id}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => onCreateClick(o)}
-                    className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200"
-                  >
-                    + Create idea
-                  </button>
-                )}
-              </td>
-            </tr>
+                  ) : (
+                    <span className="text-gray-400 text-xs">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap gap-1">
+                    {o.sources.length > 0 ? o.sources.map((s) => (
+                      <span key={s} className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-indigo-50 text-indigo-700">
+                        {s}
+                      </span>
+                    )) : <span className="text-gray-400 text-xs">—</span>}
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-xs text-gray-600 max-w-[200px]">
+                  {o.job_id_key ? (
+                    <div>
+                      <span className="font-mono bg-gray-100 px-1 py-0.5 rounded text-gray-600">{o.job_id_key}</span>
+                      {o.job_statement && (
+                        <div className="text-gray-500 mt-0.5 line-clamp-2">{o.job_statement}</div>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-gray-400">—</span>
+                  )}
+                </td>
+              </tr>
+              {expandedId === o.id && (
+                <tr key={`${o.id}-detail`}>
+                  <td colSpan={6} className="p-0">
+                    <EvidenceCard
+                      o={o}
+                      onCreateClick={onCreateClick}
+                      onViewIdea={onViewIdea}
+                      productId={productId}
+                    />
+                  </td>
+                </tr>
+              )}
+            </>
           ))}
         </tbody>
       </table>

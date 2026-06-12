@@ -195,6 +195,16 @@ def ideas_get_status(idea_id: int) -> dict:
             Vote.idea_id == idea_id
         ).scalar() or 0
 
+        # Resolve job statement for the linked need
+        job_statement = None
+        if idea.job_id_key:
+            from app.models.competitor_intelligence import ProductJob
+            pj = db.query(ProductJob).filter(
+                ProductJob.product_id == idea.product_id,
+                ProductJob.job_id_key == idea.job_id_key,
+            ).first()
+            job_statement = pj.statement if pj else None
+
         return {
             "idea_id": idea.id,
             "title": idea.title,
@@ -211,6 +221,8 @@ def ideas_get_status(idea_id: int) -> dict:
             "jtbd_statement": idea.jtbd_statement,
             "auto_response_text": idea.auto_response_text,
             "created_at": idea.created_at.isoformat() if idea.created_at else None,
+            "job_id_key": idea.job_id_key,
+            "job_statement": job_statement,
         }
 
 
@@ -590,6 +602,68 @@ def ideas_get_by_category(product_id: int) -> dict:
                     "total_votes": total_votes,
                 }
                 for cat, idea_count, total_votes in results
+            ],
+        }
+
+
+@mcp.tool()
+def ideas_get_by_job(product_id: int, job_id_key: str) -> dict:
+    """Get all ideas linked to a specific customer need (job), ordered by vote count.
+
+    Use this to traverse from a customer need to the ideas and feedback that map to it —
+    showing customer demand evidence for a specific job.
+
+    Args:
+        product_id: The product to query.
+        job_id_key: The job key to filter by (e.g. 'j3').
+    """
+    from app.models.idea import Idea
+    from app.models.competitor_intelligence import ProductJob
+    from app.models.vote import Vote
+    from sqlalchemy import func
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id)
+        if denied:
+            return denied
+
+        pj = db.query(ProductJob).filter(
+            ProductJob.product_id == product_id,
+            ProductJob.job_id_key == job_id_key,
+        ).first()
+
+        if not pj:
+            return {"error": f"Job '{job_id_key}' not found for product {product_id}"}
+
+        ideas = (
+            db.query(Idea, func.count(Vote.id).label("vote_count"))
+            .outerjoin(Vote, Vote.idea_id == Idea.id)
+            .filter(
+                Idea.product_id == product_id,
+                Idea.job_id_key == job_id_key,
+                Idea.is_active == True,
+            )
+            .group_by(Idea.id)
+            .order_by(func.count(Vote.id).desc())
+            .all()
+        )
+
+        return {
+            "product_id": product_id,
+            "job_id_key": job_id_key,
+            "job_statement": pj.statement,
+            "idea_count": len(ideas),
+            "ideas": [
+                {
+                    "idea_id": idea.id,
+                    "title": idea.title,
+                    "status": idea.status.value if idea.status else None,
+                    "vote_count": vote_count,
+                    "jtbd_statement": idea.jtbd_statement,
+                    "triage_confidence": idea.triage_confidence,
+                    "created_at": idea.created_at.isoformat() if idea.created_at else None,
+                }
+                for idea, vote_count in ideas
             ],
         }
 

@@ -319,6 +319,20 @@ async def get_latest_unified_report(
             i.id: i.title
             for i in db.query(Idea.id, Idea.title).filter(Idea.id.in_(linked_ids)).all()
         }
+
+    # Resolve job statements for display in the opportunity table
+    from app.models.competitor_intelligence import ProductJob
+    job_keys = [o.job_id_key for o in opp_rows if o.job_id_key]
+    job_statement_by_key: Dict[str, str] = {}
+    if job_keys:
+        job_statement_by_key = {
+            j.job_id_key: j.statement
+            for j in db.query(ProductJob.job_id_key, ProductJob.statement).filter(
+                ProductJob.product_id == product_id,
+                ProductJob.job_id_key.in_(job_keys),
+            ).all()
+        }
+
     opportunities_detail = [
         {
             "id": o.id,
@@ -329,10 +343,15 @@ async def get_latest_unified_report(
             "sources": o.sources or [],
             "recommended_action": o.recommended_action,
             "job_id_key": o.job_id_key,
+            "job_statement": job_statement_by_key.get(o.job_id_key) if o.job_id_key else None,
             "investment_tier": o.investment_tier,
             "jtbd_statement": o.jtbd_statement,
             "linked_idea_id": o.linked_idea_id,
             "linked_idea_title": idea_title_by_id.get(o.linked_idea_id) if o.linked_idea_id else None,
+            "competitive_evidence": o.competitive_evidence,
+            "customer_evidence": o.customer_evidence,
+            "internal_evidence": o.internal_evidence,
+            "evidence_signals": o.evidence_signals,
         }
         for o in opp_rows
     ]

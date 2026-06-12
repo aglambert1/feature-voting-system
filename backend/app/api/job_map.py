@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.utils.celery_utils import send_celery_task as send_task
 from app.models.user import User
-from sqlalchemy import func as sa_func
+from sqlalchemy import func as sa_func, delete as sa_delete
 from app.models.competitor_intelligence import (
     CIProduct, ProductJob, JobType, JobImportance,
     ProductPermissionLevel,
@@ -23,7 +23,9 @@ from app.models.competitor_intelligence import (
 from app.models.idea import Idea
 from app.models.evidence import Evidence
 from app.models.internal_feedback import WinLossTheme, SupportTheme
+from app.models.synthesis import SynthesizedOpportunity
 from app.models.queue import JobType as QueueJobType
+from app.models.pm_review import PMReviewQueue, ReviewQueueType, ReviewQueueStatus
 from app.schemas.job_map import (
     JobCreateRequest, JobUpdateRequest, JobResponse, JobMapResponse,
     TargetCustomerProfile,
@@ -106,10 +108,24 @@ def _rebuild_job_map_json(db: Session, product: CIProduct):
 # ============================================================================
 
 def _get_signal_counts(db: Session, product_id: int) -> dict[str, int]:
-    """Count signals per job_id_key from all four signal sources."""
+    """Count active signals per job_id_key from all four signal sources."""
     counts: dict[str, int] = {}
 
-    for model in (Idea, Evidence, WinLossTheme, SupportTheme):
+    # Ideas: only count active rows (inactive = soft-deleted)
+    idea_rows = (
+        db.query(Idea.job_id_key, sa_func.count(Idea.id))
+        .filter(
+            Idea.product_id == product_id,
+            Idea.job_id_key.isnot(None),
+            Idea.is_active == True,
+        )
+        .group_by(Idea.job_id_key)
+        .all()
+    )
+    for key, cnt in idea_rows:
+        counts[key] = counts.get(key, 0) + cnt
+
+    for model in (Evidence, WinLossTheme, SupportTheme, SynthesizedOpportunity):
         rows = (
             db.query(model.job_id_key, sa_func.count(model.id))
             .filter(
@@ -148,6 +164,7 @@ def get_job_map(
         "job_map": product.job_map,
         "job_map_version": product.job_map_version,
         "job_map_last_updated": product.job_map_last_updated.isoformat() if product.job_map_last_updated else None,
+        "has_pending_map": product.pending_job_map is not None,
         "jobs": [
             {
                 "id": j.id,
@@ -177,8 +194,11 @@ def set_job_map(
 
     job_map_data = body
 
-    # Delete existing jobs
-    db.query(ProductJob).filter(ProductJob.product_id == product_id).delete()
+    # Hard-delete all existing jobs. Full map replacement reuses key values (j1, j2…)
+    # so soft-deleted rows would conflict with the unique (product_id, job_id_key) constraint.
+    db.query(ProductJob).filter(
+        ProductJob.product_id == product_id,
+    ).delete()
 
     # Collect all job entries
     all_jobs = []
@@ -246,13 +266,18 @@ def set_target_customer(
 def extract_job_map(
     product_id: int,
     guidance: str = "",
+    skip_review: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Queue the JobMapExtractorAgent to generate a JTBD job map."""
+    """Queue the JobMapExtractorAgent to generate a JTBD job map.
+
+    skip_review=True commits directly (MCP/programmatic use).
+    skip_review=False (default) stores result as pending for PM review.
+    """
     product = _verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
-    input_data = {"product_id": product_id}
+    input_data = {"product_id": product_id, "skip_review": skip_review}
     if guidance:
         input_data["guidance"] = guidance
 
@@ -380,10 +405,15 @@ def edit_job(
 def remove_job(
     product_id: int,
     job_id: str,
+    relink: bool = True,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Remove a job from the product's JTBD job map."""
+    """Remove a job from the product's JTBD job map.
+
+    relink=True (default): re-link orphaned signals to their closest remaining job.
+    relink=False: clear job_id_key on all linked signals (they become unlinked).
+    """
     product = _verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     pj = db.query(ProductJob).filter(
@@ -396,8 +426,32 @@ def remove_job(
             detail=f"Job '{job_id}' not found for product {product_id}.",
         )
 
-    db.delete(pj)
+    pj.status = "inactive"
     db.flush()
+
+    if not relink:
+        # Clear linkages on all signals pointing to this job
+        for model in (Idea, Evidence, SynthesizedOpportunity, WinLossTheme, SupportTheme):
+            db.query(model).filter(
+                model.product_id == product_id,
+                model.job_id_key == job_id,
+            ).update({"job_id_key": None})
+    else:
+        # Re-link embedding-capable signals to their best remaining active job;
+        # themes have no jtbd_embedding so just clear their stale linkage.
+        from app.queue.helpers import _relink_all_signals
+        remaining_active = {
+            j.job_id_key for j in db.query(ProductJob).filter(
+                ProductJob.product_id == product_id,
+                ProductJob.status == "active",
+            ).all()
+        }
+        _relink_all_signals(db, product_id, remaining_active)
+        for model in (WinLossTheme, SupportTheme):
+            db.query(model).filter(
+                model.product_id == product_id,
+                model.job_id_key == job_id,
+            ).update({"job_id_key": None})
 
     _rebuild_job_map_json(db, product)
     product.job_map_version = (product.job_map_version or 0) + 1
@@ -410,3 +464,566 @@ def remove_job(
         "job_map_version": product.job_map_version,
         "message": f"Job '{job_id}' removed.",
     }
+
+
+@router.put("/{product_id}/main-job")
+def set_main_job(
+    product_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Set the main job statement for the product's need map."""
+    product = _verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
+
+    main_job = body.get("main_job", "").strip()
+    if not main_job:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="main_job is required.")
+
+    job_map = product.job_map or {}
+    job_map["main_job"] = main_job
+    product.job_map = job_map
+    product.job_map_version = (product.job_map_version or 0) + 1
+    product.job_map_last_updated = datetime.now(timezone.utc)
+    db.commit()
+
+    return {"product_id": product_id, "main_job": main_job, "job_map_version": product.job_map_version}
+
+
+@router.get("/{product_id}/need-suggestions")
+def list_need_suggestions(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List pending need map suggestions for a product."""
+    _verify_product_access(db, product_id, current_user)
+
+    items = db.query(PMReviewQueue).filter(
+        PMReviewQueue.queue_type == ReviewQueueType.NEED_SUGGESTION,
+        PMReviewQueue.status.in_([ReviewQueueStatus.PENDING, ReviewQueueStatus.IN_REVIEW]),
+    ).order_by(PMReviewQueue.created_at.desc()).all()
+
+    # Filter by product_id stored in item_metadata
+    results = []
+    for item in items:
+        meta = item.item_metadata or {}
+        if meta.get("product_id") == product_id:
+            results.append({
+                "id": item.id,
+                "signal_type": meta.get("signal_type"),
+                "signal_id": meta.get("signal_id"),
+                "signal_content": meta.get("signal_content"),
+                "match_type": meta.get("match_type"),
+                "matched_job_id": meta.get("matched_job_id"),
+                "matched_job_statement": meta.get("matched_job_statement"),
+                "matched_similarity": meta.get("matched_similarity"),
+                "priority": item.priority.value,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+            })
+
+    return {"product_id": product_id, "suggestions": results, "count": len(results)}
+
+
+@router.post("/{product_id}/need-suggestions/{suggestion_id}/approve")
+def approve_need_suggestion(
+    product_id: int,
+    suggestion_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Approve a need suggestion — creates a new ProductJob and closes the suggestion."""
+    product = _verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
+
+    item = db.query(PMReviewQueue).filter(
+        PMReviewQueue.id == suggestion_id,
+        PMReviewQueue.queue_type == ReviewQueueType.NEED_SUGGESTION,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion not found.")
+
+    meta = item.item_metadata or {}
+    if meta.get("product_id") != product_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Suggestion does not belong to this product.")
+
+    statement = (body.get("statement") or "").strip()
+    if not statement:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="statement is required.")
+
+    desired_outcomes = body.get("desired_outcomes") or []
+    importance_str = body.get("importance", "medium")
+    try:
+        importance = JobImportance(importance_str)
+    except ValueError:
+        importance = JobImportance.MEDIUM
+
+    # Generate next job_id_key across all existing jobs
+    existing_keys = [
+        j.job_id_key for j in db.query(ProductJob.job_id_key)
+        .filter(ProductJob.product_id == product_id).all()
+    ]
+    import re
+    max_index = max(
+        (int(m.group(1)) for key in existing_keys if (m := re.match(r'^j(\d+)$', key))),
+        default=0,
+    )
+    new_key = f"j{max_index + 1}"
+
+    from app.services.embedding_service import generate_embedding
+    embedding = generate_embedding(statement, input_type="document")
+
+    pj = ProductJob(
+        product_id=product_id,
+        job_id_key=new_key,
+        job_type=JobType("functional"),
+        statement=statement,
+        desired_outcomes=desired_outcomes,
+        importance=importance,
+        statement_embedding=embedding,
+    )
+    db.add(pj)
+    db.flush()
+
+    _rebuild_job_map_json(db, product)
+    product.job_map_version = (product.job_map_version or 0) + 1
+    product.job_map_last_updated = datetime.now(timezone.utc)
+
+    item.status = ReviewQueueStatus.APPROVED
+    item.reviewed_by_user_id = current_user.id
+    db.commit()
+
+    return {
+        "product_id": product_id,
+        "new_job_id_key": new_key,
+        "statement": statement,
+        "job_map_version": product.job_map_version,
+        "suggestion_id": suggestion_id,
+    }
+
+
+@router.post("/{product_id}/need-suggestions/{suggestion_id}/dismiss")
+def dismiss_need_suggestion(
+    product_id: int,
+    suggestion_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Dismiss a need suggestion without modifying the need map."""
+    _verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
+
+    item = db.query(PMReviewQueue).filter(
+        PMReviewQueue.id == suggestion_id,
+        PMReviewQueue.queue_type == ReviewQueueType.NEED_SUGGESTION,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion not found.")
+
+    meta = item.item_metadata or {}
+    if meta.get("product_id") != product_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Suggestion does not belong to this product.")
+
+    item.status = ReviewQueueStatus.REJECTED
+    item.reviewed_by_user_id = current_user.id
+    db.commit()
+
+    return {"suggestion_id": suggestion_id, "status": "dismissed"}
+
+
+@router.get("/{product_id}/jobs/{job_id_key}/signals")
+def get_job_signals(
+    product_id: int,
+    job_id_key: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get all signals linked to a specific customer need, grouped by type."""
+    _verify_product_access(db, product_id, current_user)
+
+    from app.models.vote import Vote
+
+    LIMIT = 20
+
+    ideas = (
+        db.query(Idea, sa_func.count(Vote.id).label("vote_count"))
+        .outerjoin(Vote, Vote.idea_id == Idea.id)
+        .filter(Idea.product_id == product_id, Idea.job_id_key == job_id_key, Idea.is_active == True)
+        .group_by(Idea.id)
+        .order_by(sa_func.count(Vote.id).desc())
+        .limit(LIMIT)
+        .all()
+    )
+    ideas_total = db.query(sa_func.count(Idea.id)).filter(
+        Idea.product_id == product_id, Idea.job_id_key == job_id_key, Idea.is_active == True,
+    ).scalar() or 0
+
+    evidence = (
+        db.query(Evidence)
+        .filter(Evidence.product_id == product_id, Evidence.job_id_key == job_id_key)
+        .order_by(Evidence.created_at.desc())
+        .limit(LIMIT)
+        .all()
+    )
+    evidence_total = db.query(sa_func.count(Evidence.id)).filter(
+        Evidence.product_id == product_id, Evidence.job_id_key == job_id_key,
+    ).scalar() or 0
+
+    win_loss = (
+        db.query(WinLossTheme)
+        .filter(WinLossTheme.product_id == product_id, WinLossTheme.job_id_key == job_id_key)
+        .order_by(WinLossTheme.deal_count.desc())
+        .limit(LIMIT)
+        .all()
+    )
+    win_loss_total = db.query(sa_func.count(WinLossTheme.id)).filter(
+        WinLossTheme.product_id == product_id, WinLossTheme.job_id_key == job_id_key,
+    ).scalar() or 0
+
+    support = (
+        db.query(SupportTheme)
+        .filter(SupportTheme.product_id == product_id, SupportTheme.job_id_key == job_id_key)
+        .order_by(SupportTheme.ticket_count.desc())
+        .limit(LIMIT)
+        .all()
+    )
+    support_total = db.query(sa_func.count(SupportTheme.id)).filter(
+        SupportTheme.product_id == product_id, SupportTheme.job_id_key == job_id_key,
+    ).scalar() or 0
+
+    opportunities = (
+        db.query(SynthesizedOpportunity)
+        .filter(SynthesizedOpportunity.product_id == product_id, SynthesizedOpportunity.job_id_key == job_id_key)
+        .order_by(SynthesizedOpportunity.priority_score.desc())
+        .limit(LIMIT)
+        .all()
+    )
+    opportunities_total = db.query(sa_func.count(SynthesizedOpportunity.id)).filter(
+        SynthesizedOpportunity.product_id == product_id, SynthesizedOpportunity.job_id_key == job_id_key,
+    ).scalar() or 0
+
+    return {
+        "job_id_key": job_id_key,
+        "totals": {
+            "ideas": ideas_total,
+            "evidence": evidence_total,
+            "win_loss_themes": win_loss_total,
+            "support_themes": support_total,
+            "synthesis_opportunities": opportunities_total,
+        },
+        "ideas": [
+            {
+                "id": idea.id,
+                "title": idea.title,
+                "status": idea.status.value if idea.status else None,
+                "vote_count": vote_count,
+                "created_at": idea.created_at.isoformat() if idea.created_at else None,
+            }
+            for idea, vote_count in ideas
+        ],
+        "evidence": [
+            {
+                "id": e.id,
+                "title": e.title,
+                "evidence_type": e.evidence_type.value if e.evidence_type else None,
+                "source_url": e.source_url,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in evidence
+        ],
+        "win_loss_themes": [
+            {
+                "id": t.id,
+                "theme_name": t.theme_name,
+                "outcome": t.outcome,
+                "deal_count": t.deal_count,
+            }
+            for t in win_loss
+        ],
+        "support_themes": [
+            {
+                "id": t.id,
+                "theme_name": t.theme_name,
+                "category": t.category,
+                "ticket_count": t.ticket_count,
+            }
+            for t in support
+        ],
+        "synthesis_opportunities": [
+            {
+                "id": o.id,
+                "opportunity_name": o.opportunity_name,
+                "priority_score": float(o.priority_score) if o.priority_score else 0.0,
+                "investment_tier": o.investment_tier,
+            }
+            for o in opportunities
+        ],
+    }
+
+
+@router.get("/{product_id}/job-map/pending-comparison")
+def get_pending_comparison(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return current and pending jobs matched by embedding similarity for PM review."""
+    from app.services.embedding_service import generate_embeddings_batch
+    product = _verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
+
+    if not product.pending_job_map:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No pending job map.")
+
+    current_jobs = db.query(ProductJob).filter(
+        ProductJob.product_id == product_id,
+        ProductJob.status == "active",
+    ).all()
+
+    # Flatten pending map jobs
+    pending_jobs = []
+    for key in ["functional_jobs", "emotional_jobs", "social_jobs", "jobs"]:
+        for j in (product.pending_job_map or {}).get(key, []):
+            pending_jobs.append({
+                "job_id_key": j.get("job_id", j.get("job_id_key", "")),
+                "statement": j.get("statement", ""),
+                "desired_outcomes": j.get("desired_outcomes", []),
+                "importance": j.get("importance", "medium"),
+                "job_type": j.get("job_type", "functional"),
+            })
+
+    # Generate embeddings for pending jobs
+    pending_statements = [j["statement"] for j in pending_jobs]
+    pending_embeddings = []
+    if pending_statements:
+        try:
+            pending_embeddings = generate_embeddings_batch(pending_statements, input_type="document")
+        except Exception:
+            pending_embeddings = [None] * len(pending_statements)
+
+    # Match pending jobs to current jobs.
+    # Priority 1: same job_id_key — always pair directly (LLM reused the key intentionally).
+    # Priority 2: best embedding similarity >= 0.6 among unclaimed current jobs.
+    # Each current job is claimed at most once.
+    current_jobs_by_key = {j.job_id_key: j for j in current_jobs}
+    current_jobs_with_emb = [j for j in current_jobs if j.statement_embedding]
+    matched_current_keys = set()
+    pairs = []
+
+    for i, (pj, pemb) in enumerate(zip(pending_jobs, pending_embeddings)):
+        new_key = pj["job_id_key"]
+        best_match = None
+        best_sim = 1.0  # sentinel for key match
+
+        # Key match takes priority
+        if new_key in current_jobs_by_key and new_key not in matched_current_keys:
+            best_match = current_jobs_by_key[new_key]
+        elif pemb:
+            best_sim = 0.0
+            for cj in current_jobs_with_emb:
+                if cj.job_id_key in matched_current_keys:
+                    continue
+                sim = sum(a * b for a, b in zip(pemb, cj.statement_embedding)) / (
+                    (sum(a * a for a in pemb) ** 0.5) * (sum(b * b for b in cj.statement_embedding) ** 0.5) + 1e-8
+                )
+                if sim > best_sim:
+                    best_sim = sim
+                    best_match = cj
+
+        if best_match and (best_sim >= 0.6 or best_match == current_jobs_by_key.get(new_key)):
+            matched_current_keys.add(best_match.job_id_key)
+            # Determine change type: compare statements to decide unchanged vs modified
+            old_stmt = best_match.statement.strip()
+            new_stmt = pj["statement"].strip()
+            if old_stmt == new_stmt or best_sim >= 0.92:
+                change_type = "unchanged"
+                default_selection = "new"
+            else:
+                change_type = "modified"
+                default_selection = "old"
+            pairs.append({
+                "id": f"pair_{i}",
+                "similarity": round(best_sim, 3) if best_sim != 1.0 else None,
+                "change_type": change_type,
+                "default_selection": default_selection,
+                "old": {
+                    "job_id_key": best_match.job_id_key,
+                    "statement": best_match.statement,
+                    "desired_outcomes": best_match.desired_outcomes or [],
+                    "importance": best_match.importance.value,
+                },
+                "new": pj,
+            })
+        else:
+            pairs.append({
+                "id": f"pair_{i}",
+                "similarity": round(best_sim, 3) if best_sim and best_sim != 1.0 else None,
+                "change_type": "new",
+                "default_selection": "new",
+                "old": None,
+                "new": pj,
+            })
+
+    # Current jobs with no pending match are marked removed
+    for cj in current_jobs:
+        if cj.job_id_key not in matched_current_keys:
+            pairs.append({
+                "id": f"removed_{cj.job_id_key}",
+                "similarity": None,
+                "change_type": "removed",
+                "default_selection": "drop",
+                "old": {
+                    "job_id_key": cj.job_id_key,
+                    "statement": cj.statement,
+                    "desired_outcomes": cj.desired_outcomes or [],
+                    "importance": cj.importance.value,
+                },
+                "new": None,
+            })
+
+    return {"has_pending": True, "pairs": pairs}
+
+
+@router.post("/{product_id}/job-map/apply-pending")
+def apply_pending_job_map(
+    product_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Apply PM selections from the pending job map comparison."""
+    import traceback as _tb
+    from app.services.embedding_service import generate_embedding
+    from app.queue.helpers import _relink_all_signals
+
+    product = _verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
+    if not product.pending_job_map:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No pending job map.")
+
+    selections = body.get("selections", [])
+    importance_map = {
+        "critical": JobImportance.CRITICAL,
+        "high": JobImportance.HIGH,
+        "medium": JobImportance.MEDIUM,
+        "low": JobImportance.LOW,
+    }
+
+    kept_old_keys = set()
+    for sel in selections:
+        if sel.get("choice") == "old" and sel.get("old_job_id_key"):
+            kept_old_keys.add(sel["old_job_id_key"])
+
+    current_jobs = {j.job_id_key: j for j in db.query(ProductJob).filter(
+        ProductJob.product_id == product_id, ProductJob.status == "active",
+    ).all()}
+
+    new_active_keys = set(kept_old_keys)
+
+    try:
+        # Collect all keys to delete and all new rows to insert.
+        # Delete everything upfront in one statement so the ORM identity map is
+        # clear before any INSERT — avoids UNIQUE constraint violations from
+        # SQLAlchemy batching DELETEs after INSERTs in its unit-of-work.
+        keys_to_delete = set()
+        new_rows = []
+        seen_new_keys = set()  # guard against duplicate job_id_key in payload
+
+        for sel in selections:
+            choice = sel.get("choice")
+            old_key = sel.get("old_job_id_key")
+            new_data = sel.get("new_job_data")
+
+            if choice == "old":
+                pass
+            elif choice == "new" and new_data:
+                new_key = new_data.get("job_id_key", "")
+                if new_key in seen_new_keys:
+                    continue  # duplicate key in payload — skip silently
+                seen_new_keys.add(new_key)
+                # Delete the old paired job if present
+                if old_key and old_key in current_jobs:
+                    keys_to_delete.add(old_key)
+                # Also delete by new_key if it already exists (covers "new" pairs
+                # whose key coincidentally matches an active row — without this
+                # the INSERT collides even after old_key is removed)
+                if new_key in current_jobs and new_key != old_key:
+                    keys_to_delete.add(new_key)
+                statement = sel.get("statement") or new_data.get("statement", "")
+                # Use explicit None check so PM can intentionally clear all outcomes ([] is falsy)
+                _do = sel.get("desired_outcomes")
+                desired_outcomes = _do if _do is not None else new_data.get("desired_outcomes", [])
+                importance_str = sel.get("importance") or new_data.get("importance", "medium")
+                new_rows.append((new_key, new_data, statement, desired_outcomes, importance_str))
+                new_active_keys.add(new_key)
+            elif choice == "drop" and old_key and old_key in current_jobs:
+                keys_to_delete.add(old_key)
+
+        # Step 1: delete all rows (any status) whose key is being replaced or dropped,
+        # plus any stale rows matching a new_key — covers inactive rows left by prior
+        # failed applies that would otherwise block the INSERT on the unique constraint.
+        all_keys_to_wipe = keys_to_delete | {r[0] for r in new_rows}
+        if all_keys_to_wipe:
+            db.execute(
+                sa_delete(ProductJob).where(
+                    ProductJob.product_id == product_id,
+                    ProductJob.job_id_key.in_(all_keys_to_wipe),
+                )
+            )
+            for key in all_keys_to_wipe:
+                obj = current_jobs.get(key)
+                if obj is not None:
+                    try:
+                        db.expunge(obj)
+                    except Exception:
+                        pass
+            db.flush()
+
+        # Step 2: insert new rows
+        for new_key, new_data, statement, desired_outcomes, importance_str in new_rows:
+            emb = generate_embedding(statement, input_type="document")
+            pj = ProductJob(
+                product_id=product_id,
+                job_id_key=new_key,
+                job_type=JobType(new_data.get("job_type", "functional")),
+                statement=statement,
+                desired_outcomes=desired_outcomes,
+                importance=importance_map.get(importance_str, JobImportance.MEDIUM),
+                statement_embedding=emb,
+            )
+            db.add(pj)
+        if new_rows:
+            db.flush()
+
+        product.previous_job_map = product.job_map
+        product.pending_job_map = None
+        _rebuild_job_map_json(db, product)
+        product.job_map_version = (product.job_map_version or 0) + 1
+        product.job_map_last_updated = datetime.now(timezone.utc)
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"apply-pending failed: {_tb.format_exc()}")
+
+    try:
+        _relink_all_signals(db, product_id, new_active_keys)
+    except Exception:
+        pass  # signal re-linkage is best-effort; map is already committed
+
+    return {
+        "product_id": product_id,
+        "job_map_version": product.job_map_version,
+        "message": "Job map applied.",
+    }
+
+
+@router.delete("/{product_id}/job-map/pending")
+def discard_pending_job_map(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Discard the pending job map without applying it."""
+    product = _verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
+    product.pending_job_map = None
+    db.commit()
+    return {"product_id": product_id, "message": "Pending job map discarded."}

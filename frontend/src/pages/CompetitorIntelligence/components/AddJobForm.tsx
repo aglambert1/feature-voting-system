@@ -8,6 +8,32 @@
 import { useState } from 'react';
 import type { JobCreateRequest, JobImportance, JtbdJob } from '../../../types';
 
+const BULLET = '• ';
+
+function fromBulletText(text: string): string[] {
+  return text
+    .split('\n')
+    .map((t) => t.replace(/^[•]\s*/, '').trim())
+    .filter((t) => t.length > 0);
+}
+
+function bulletKeyDown(
+  e: React.KeyboardEvent<HTMLTextAreaElement>,
+  value: string,
+  setValue: (v: string) => void
+) {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const el = e.currentTarget;
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  const next = `${value.slice(0, start)}\n${BULLET}${value.slice(end)}`;
+  setValue(next);
+  requestAnimationFrame(() => {
+    el.selectionStart = el.selectionEnd = start + 1 + BULLET.length;
+  });
+}
+
 interface AddJobFormProps {
   existingJobs: JtbdJob[];
   /** When true, the form is rendered expanded; when false, starts collapsed behind a button. */
@@ -66,10 +92,7 @@ export default function AddJobForm({ existingJobs, alwaysExpanded, onAdd }: AddJ
     }
     setSaving(true);
     try {
-      const desiredOutcomes = outcomesText
-        .split('\n')
-        .map((o) => o.trim())
-        .filter((o) => o.length > 0);
+      const desiredOutcomes = fromBulletText(outcomesText);
       const body: JobCreateRequest = {
         job_id: nextJobIdKey(existingJobs),
         statement: statement.trim(),
@@ -137,8 +160,11 @@ export default function AddJobForm({ existingJobs, alwaysExpanded, onAdd }: AddJ
           <textarea
             value={outcomesText}
             onChange={(e) => setOutcomesText(e.target.value)}
+            onFocus={() => { if (!outcomesText) setOutcomesText(BULLET); }}
+            onKeyDown={(e) => bulletKeyDown(e, outcomesText, setOutcomesText)}
             rows={3}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono"
+            placeholder={`${BULLET}Reduce time spent on...`}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             disabled={saving}
           />
         </div>

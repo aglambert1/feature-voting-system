@@ -96,6 +96,8 @@ class CIProduct(Base):
     job_map = Column(JSON, nullable=True)  # Hierarchical JTBD map
     job_map_version = Column(Integer, default=0, nullable=False)
     job_map_last_updated = Column(DateTime(timezone=True), nullable=True)
+    pending_job_map = Column(JSON, nullable=True)  # LLM-generated map awaiting PM review
+    previous_job_map = Column(JSON, nullable=True)  # Last committed map before most recent change
 
     status = Column(String(50), default="active", index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

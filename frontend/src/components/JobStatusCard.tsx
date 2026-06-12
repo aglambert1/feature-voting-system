@@ -8,7 +8,7 @@
  * - Auto-polling for running jobs
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getJob } from '../services/api';
 import type { QueueJob, ApiError } from '../types';
 import { JobStatus, JobType } from '../types';
@@ -32,34 +32,40 @@ const JobStatusCard = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Keep callbacks in refs so fetchJob never needs them as dependencies.
+  const onCompleteRef = useRef(onComplete);
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
+
   const fetchJob = useCallback(async () => {
     try {
       const jobData = await getJob(jobUuid);
       setJob(jobData);
 
-      // Trigger callbacks
-      if (jobData.status === JobStatus.SUCCESS && onComplete) {
-        onComplete(jobData);
-      } else if (jobData.status === JobStatus.FAILURE && onError) {
-        onError(jobData);
+      if (jobData.status === JobStatus.SUCCESS) {
+        onCompleteRef.current?.(jobData);
+      } else if (jobData.status === JobStatus.FAILURE) {
+        onErrorRef.current?.(jobData);
       }
     } catch (err) {
       setError((err as ApiError).message);
     } finally {
       setLoading(false);
     }
-  }, [jobUuid, onComplete, onError]);
+  }, [jobUuid]);
 
   useEffect(() => {
     fetchJob();
+  }, [fetchJob]);
 
-    // Poll for updates if job is still running
-    const interval = setInterval(() => {
-      if (job?.status === JobStatus.RUNNING || job?.status === JobStatus.QUEUED || job?.status === JobStatus.PENDING) {
-        fetchJob();
-      }
-    }, 2000);
+  // Poll only while the job is active — interval depends only on fetchJob (stable).
+  useEffect(() => {
+    if (!job) return;
+    const isActive = job.status === JobStatus.RUNNING || job.status === JobStatus.QUEUED || job.status === JobStatus.PENDING;
+    if (!isActive) return;
 
+    const interval = setInterval(fetchJob, 2000);
     return () => clearInterval(interval);
   }, [fetchJob, job?.status]);
 

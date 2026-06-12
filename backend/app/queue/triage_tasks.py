@@ -19,6 +19,7 @@ from app.services.llm_service import LLMService
 from app.queue.helpers import (
     get_db,
     _link_idea_to_job,
+    _maybe_suggest_need,
     _sanitize_existing_feature_info,
 )
 
@@ -366,13 +367,25 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             except Exception as jtbd_emb_err:
                 print(f"[triage_idea_task] Warning: JTBD embedding failed: {jtbd_emb_err}")
 
-            # Link idea to best-matching ProductJob via embedding similarity
+            # Link idea to best-matching ProductJob via embedding similarity.
+            # Reset first so a no-match clears any stale value from a previous triage.
+            idea.job_id_key = None
             try:
-                matched_key = _link_idea_to_job(db, idea)
+                matched_key = _link_idea_to_job(db, idea, llm_service=llm_service)
                 if matched_key:
                     print(f"[triage_idea_task] Linked idea {idea.id} to job {matched_key}")
             except Exception as link_err:
                 print(f"[triage_idea_task] Warning: Job linkage failed: {link_err}")
+
+            # Surface unmatched/weak-match signals as need map suggestions
+            _maybe_suggest_need(
+                db,
+                product_id=idea.product_id,
+                signal_type="idea",
+                signal_id=idea.id,
+                signal_content=idea.title or idea.description or "",
+                jtbd_embedding=idea.jtbd_embedding,
+            )
 
         # Record status history for agent triage
         # Only record as automated action if auto-respond is ON and status changed
@@ -675,7 +688,7 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
 
             # Link idea to best-matching ProductJob via embedding similarity
             try:
-                matched_key = _link_idea_to_job(db, idea)
+                matched_key = _link_idea_to_job(db, idea, llm_service=llm_service)
                 if matched_key:
                     print(f"[submit_and_triage_idea_task] Linked idea {idea.id} to job {matched_key}")
             except Exception as link_err:

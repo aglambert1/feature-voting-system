@@ -765,22 +765,49 @@ def add_competitor_manually(
     """
     verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
 
-    # Check uniqueness within product - compare in Python for DB-agnostic behavior
-    active_competitors = db.query(ProductCompetitor).filter(
+    # Check uniqueness against ALL rows (any status) — the DB UNIQUE constraint
+    # covers inactive rows too, so checking only active ones allows a collision
+    # when re-adding a previously deleted competitor.
+    all_competitors = db.query(ProductCompetitor).filter(
         ProductCompetitor.product_id == product_id,
-        ProductCompetitor.status == 'active'
     ).all()
 
     request_name_lower = request.competitor_name.lower()
     request_domain = extract_domain(request.competitor_url)
 
-    for existing in active_competitors:
+    for existing in all_competitors:
         if existing.competitor_name.lower() == request_name_lower:
+            if existing.status == 'inactive':
+                # Re-activating a previously removed competitor is valid — update in place
+                existing.status = 'active'
+                existing.competitor_url = request.competitor_url or existing.competitor_url
+                existing.tracked = True
+                db.commit()
+                db.refresh(existing)
+                return {
+                    "id": existing.id,
+                    "competitor_name": existing.competitor_name,
+                    "competitor_url": existing.competitor_url,
+                    "tracked": existing.tracked,
+                    "message": f"Competitor '{existing.competitor_name}' re-activated successfully",
+                }
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"A competitor named '{existing.competitor_name}' already exists for this product"
             )
         if request_domain and extract_domain(existing.competitor_url or '') == request_domain:
+            if existing.status == 'inactive':
+                existing.status = 'active'
+                existing.tracked = True
+                db.commit()
+                db.refresh(existing)
+                return {
+                    "id": existing.id,
+                    "competitor_name": existing.competitor_name,
+                    "competitor_url": existing.competitor_url,
+                    "tracked": existing.tracked,
+                    "message": f"Competitor '{existing.competitor_name}' re-activated successfully",
+                }
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"A competitor with URL '{existing.competitor_url}' already exists for this product"

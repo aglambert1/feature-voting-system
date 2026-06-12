@@ -55,6 +55,7 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
         product_id = job.product_id
         user_id = job.user_id
         guidance = input_data.get("guidance")
+        skip_review = input_data.get("skip_review", False)
 
         if not product_id:
             raise ValueError("Product ID is required")
@@ -108,65 +109,78 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
 
         queue_service.update_progress(job_id, 70.0, "Saving job map...")
 
-        # Store results on CIProduct
         product.target_customer_profile = result.get("target_customer_profile")
         job_map_data = result.get("job_map")
-        product.job_map = job_map_data
-        product.job_map_version = (product.job_map_version or 0) + 1
-        product.job_map_last_updated = datetime.now(timezone.utc)
 
-        # Create/update ProductJob records
-        db.query(ProductJob).filter(ProductJob.product_id == product_id).delete()
+        if skip_review:
+            # MCP / programmatic path: commit directly to ProductJob rows (all-or-nothing)
+            product.job_map = job_map_data
+            product.job_map_version = (product.job_map_version or 0) + 1
+            product.job_map_last_updated = datetime.now(timezone.utc)
 
-        job_type_map = {
-            "functional_jobs": JTBDJobType.FUNCTIONAL,
-            "emotional_jobs": JTBDJobType.EMOTIONAL,
-            "social_jobs": JTBDJobType.SOCIAL,
-        }
-        importance_map = {
-            "critical": JobImportance.CRITICAL,
-            "high": JobImportance.HIGH,
-            "medium": JobImportance.MEDIUM,
-            "low": JobImportance.LOW,
-        }
+            db.query(ProductJob).filter(ProductJob.product_id == product_id).delete()
 
-        all_jobs = []
-        for job_list_key in ["functional_jobs", "emotional_jobs", "social_jobs"]:
-            for job_data in (job_map_data or {}).get(job_list_key, []):
-                product_job = ProductJob(
-                    product_id=product_id,
-                    job_id_key=job_data["job_id"],
-                    job_type=job_type_map[job_list_key],
-                    statement=job_data["statement"],
-                    desired_outcomes=job_data.get("desired_outcomes", []),
-                    importance=importance_map.get(
-                        job_data.get("importance", "medium"),
-                        JobImportance.MEDIUM,
-                    ),
-                )
-                db.add(product_job)
-                all_jobs.append(product_job)
+            job_type_map = {
+                "functional_jobs": JTBDJobType.FUNCTIONAL,
+                "emotional_jobs": JTBDJobType.EMOTIONAL,
+                "social_jobs": JTBDJobType.SOCIAL,
+            }
+            importance_map = {
+                "critical": JobImportance.CRITICAL,
+                "high": JobImportance.HIGH,
+                "medium": JobImportance.MEDIUM,
+                "low": JobImportance.LOW,
+            }
+            all_jobs = []
+            for job_list_key in ["functional_jobs", "emotional_jobs", "social_jobs"]:
+                for job_data in (job_map_data or {}).get(job_list_key, []):
+                    product_job = ProductJob(
+                        product_id=product_id,
+                        job_id_key=job_data["job_id"],
+                        job_type=job_type_map[job_list_key],
+                        statement=job_data["statement"],
+                        desired_outcomes=job_data.get("desired_outcomes", []),
+                        importance=importance_map.get(
+                            job_data.get("importance", "medium"),
+                            JobImportance.MEDIUM,
+                        ),
+                    )
+                    db.add(product_job)
+                    all_jobs.append(product_job)
 
-        db.flush()  # Get IDs before generating embeddings
-
-        # Generate embeddings for all job statements
-        queue_service.update_progress(job_id, 85.0, "Generating embeddings...")
-        if all_jobs:
-            statements = [j.statement for j in all_jobs]
-            embeddings = generate_embeddings_batch(
-                statements, input_type="document"
-            )
-            for job_obj, embedding in zip(all_jobs, embeddings):
-                job_obj.statement_embedding = embedding
+            db.flush()
+            queue_service.update_progress(job_id, 85.0, "Generating embeddings...")
+            if all_jobs:
+                statements = [j.statement for j in all_jobs]
+                embeddings = generate_embeddings_batch(statements, input_type="document")
+                for job_obj, embedding in zip(all_jobs, embeddings):
+                    job_obj.statement_embedding = embedding
+        else:
+            # Web UI path: store as pending, PM reviews before committing.
+            # Do NOT update job_map_last_updated here — only update it when the PM applies.
+            product.pending_job_map = job_map_data
+            queue_service.update_progress(job_id, 90.0, "Pending PM review...")
 
         db.commit()
 
         queue_service.update_progress(job_id, 95.0, "Finalizing...")
 
+        if skip_review:
+            pending_status = "committed"
+            job_count = len(all_jobs)
+        else:
+            pending_status = "pending_review"
+            # Count jobs in the pending map
+            job_count = sum(
+                len((job_map_data or {}).get(k, []))
+                for k in ["functional_jobs", "emotional_jobs", "social_jobs", "jobs"]
+            )
+
         output_data = {
             "product_id": product_id,
+            "status": pending_status,
             "job_map_version": product.job_map_version,
-            "jobs_created": len(all_jobs),
+            "jobs_created": job_count,
             "extraction_notes": result.get("extraction_notes"),
         }
 
@@ -174,8 +188,9 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
 
         return {
             "product_id": product_id,
+            "status": pending_status,
             "job_map_version": product.job_map_version,
-            "jobs_created": len(all_jobs),
+            "jobs_created": job_count,
         }
 
     except Exception:

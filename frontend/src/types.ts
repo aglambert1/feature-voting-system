@@ -688,6 +688,33 @@ export interface StatusHistoryEntry {
   created_at: string;
 }
 
+export interface JobMapJobEntry {
+  job_id_key: string;
+  statement: string;
+  desired_outcomes: string[];
+  importance: string;
+  job_type?: string;
+}
+
+export interface JobMapPair {
+  id: string;
+  similarity: number | null;
+  change_type: 'unchanged' | 'modified' | 'new' | 'removed';
+  default_selection: 'old' | 'new' | 'drop';
+  old: JobMapJobEntry | null;
+  new: JobMapJobEntry | null;
+}
+
+export interface JobMapComparison {
+  has_pending: boolean;
+  pairs: JobMapPair[];
+}
+
+export interface JobLinkage {
+  job_id_key: string;
+  job_statement: string | null;
+}
+
 export interface TriageRecommendation {
   idea_id: number;
   has_recommendation: boolean;
@@ -695,11 +722,13 @@ export interface TriageRecommendation {
   confidence: number | null;
   suggested_comment: string | null;
   reasoning: string | null;
+  jtbd_statement: string | null;
   duplicate_of_idea_id: number | null;
   similar_ideas: SimilarIdeaForTriage[];
   source_summary: SourceSummary;
   current_response: CurrentResponse | null;
   status_history: StatusHistoryEntry[];
+  job_linkage: JobLinkage | null;
 }
 
 export interface CanRespondResponse {
@@ -1172,10 +1201,16 @@ export interface SynthesisOpportunityDetail {
   sources: string[];
   recommended_action: string | null;
   job_id_key: string | null;
+  job_statement: string | null;
   investment_tier: string | null;
   jtbd_statement: string | null;
   linked_idea_id: number | null;
   linked_idea_title: string | null;
+  // Evidence traceability fields
+  competitive_evidence: Record<string, unknown> | null;
+  customer_evidence: Record<string, unknown> | null;
+  internal_evidence: Record<string, unknown> | null;
+  evidence_signals: Record<string, unknown> | null;
 }
 
 export interface OpportunityCreateIdeaRequest {
@@ -1342,6 +1377,7 @@ export interface JobMapResponse {
   job_map: Record<string, any> | null;
   job_map_version: number;
   job_map_last_updated: string | null;
+  has_pending_map: boolean;
   jobs: JtbdJob[];
 }
 
@@ -1356,6 +1392,67 @@ export interface JobUpdateRequest {
   statement?: string;
   desired_outcomes?: string[];
   importance?: JobImportance;
+}
+
+export interface JobSignalIdea {
+  id: number;
+  title: string;
+  status: string | null;
+  vote_count: number;
+  created_at: string | null;
+}
+
+export interface JobSignalEvidence {
+  id: number;
+  title: string;
+  evidence_type: string | null;
+  source_url: string | null;
+  created_at: string | null;
+}
+
+export interface JobSignalTheme {
+  id: number;
+  theme_name: string;
+  outcome?: string;
+  category?: string;
+  deal_count?: number;
+  ticket_count?: number;
+}
+
+export interface JobSignalOpportunity {
+  id: number;
+  opportunity_name: string;
+  priority_score: number;
+  investment_tier: string | null;
+}
+
+export interface JobSignals {
+  job_id_key: string;
+  totals: {
+    ideas: number;
+    evidence: number;
+    win_loss_themes: number;
+    support_themes: number;
+    synthesis_opportunities: number;
+  };
+  ideas: JobSignalIdea[];
+  evidence: JobSignalEvidence[];
+  win_loss_themes: JobSignalTheme[];
+  support_themes: JobSignalTheme[];
+  synthesis_opportunities: JobSignalOpportunity[];
+}
+
+export interface NeedSuggestion {
+  id: number;
+  signal_type: string;
+  signal_id: number;
+  signal_content: string;
+  match_type: 'no_match' | 'weak_match';
+  matched_job_id: string | null;
+  matched_job_statement: string | null;
+  matched_similarity: number | null;
+  priority: string;
+  created_at: string | null;
 }
 
 // ============================================================================

@@ -31,6 +31,7 @@ class ReviewQueueType(str, enum.Enum):
     IDEA = "idea"                      # New idea needing review
     COMPETITIVE_ALERT = "competitive_alert"  # Competitive change alert
     REPORT = "report"                  # Generated report for review
+    NEED_SUGGESTION = "need_suggestion"  # Agent-surfaced need map candidate
 
 
 class ReviewQueuePriority(str, enum.Enum):

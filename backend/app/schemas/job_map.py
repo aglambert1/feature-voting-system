@@ -8,8 +8,9 @@ Defines input/output schemas for:
 - JobMapExtractorAgent output
 """
 
-from typing import List, Optional, Literal
-from pydantic import BaseModel, Field
+import json
+from typing import Any, List, Optional, Literal
+from pydantic import BaseModel, Field, field_validator
 
 
 class TargetCustomerProfile(BaseModel):
@@ -18,6 +19,20 @@ class TargetCustomerProfile(BaseModel):
     company_characteristics: Optional[str] = Field(default=None, description="Company size, industry, stage")
     key_traits: List[str] = Field(default=[], description="Key behavioral traits or constraints")
     hiring_criteria: Optional[str] = Field(default=None, description="What would make them 'hire' this product?")
+
+    @field_validator('company_characteristics', 'hiring_criteria', mode='before')
+    @classmethod
+    def coerce_to_string(cls, v: Any) -> Optional[str]:
+        """Coerce dict or list to string — LLM occasionally returns structured sub-objects."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        if isinstance(v, list):
+            return '; '.join(str(item) for item in v if item)
+        if isinstance(v, dict):
+            return json.dumps(v)
+        return str(v)
 
 
 class DesiredOutcome(BaseModel):

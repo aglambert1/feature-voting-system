@@ -7,12 +7,47 @@
 
 import { useState } from 'react';
 import { differenceInDays, parseISO } from 'date-fns';
-import type { JobImportance, JtbdJob, JobUpdateRequest } from '../../../types';
+import type { JobImportance, JobSignals, JtbdJob, JobUpdateRequest } from '../../../types';
+import { getJobSignals, linkIdeaToJob } from '../../../services/api';
+
+const BULLET = '• ';
+
+function toBulletText(items: string[]): string {
+  return items.map((t) => `${BULLET}${t}`).join('\n');
+}
+
+function fromBulletText(text: string): string[] {
+  return text
+    .split('\n')
+    .map((t) => t.replace(/^[•]\s*/, '').trim())
+    .filter((t) => t.length > 0);
+}
+
+function bulletKeyDown(
+  e: React.KeyboardEvent<HTMLTextAreaElement>,
+  value: string,
+  setValue: (v: string) => void
+) {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const el = e.currentTarget;
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  const next = `${value.slice(0, start)}\n${BULLET}${value.slice(end)}`;
+  setValue(next);
+  requestAnimationFrame(() => {
+    el.selectionStart = el.selectionEnd = start + 1 + BULLET.length;
+  });
+}
+
+const SIGNAL_LIMIT = 5;
 
 interface JobRowProps {
   job: JtbdJob;
+  productId: number;
+  returnIdeaId?: string | null;
   onSave: (jobIdKey: string, patch: JobUpdateRequest) => Promise<void>;
-  onDelete: (jobIdKey: string) => Promise<void>;
+  onDelete: (jobIdKey: string, relink: boolean) => Promise<void>;
 }
 
 const IMPORTANCE_OPTIONS: { value: JobImportance; label: string; classes: string }[] = [
@@ -49,21 +84,42 @@ function importanceLabel(importance: JobImportance): string {
   return IMPORTANCE_OPTIONS.find((o) => o.value === importance)?.label ?? importance;
 }
 
-export default function JobRow({ job, onSave, onDelete }: JobRowProps) {
+export default function JobRow({ job, productId, returnIdeaId, onSave, onDelete }: JobRowProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [relinkChoice, setRelinkChoice] = useState<'relink' | 'clear'>('relink');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [statement, setStatement] = useState(job.statement);
-  const [outcomesText, setOutcomesText] = useState((job.desired_outcomes ?? []).join('\n'));
+  const [outcomesText, setOutcomesText] = useState(toBulletText(job.desired_outcomes ?? []));
   const [importance, setImportance] = useState<JobImportance>(job.importance);
+
+  const [signals, setSignals] = useState<JobSignals | null>(null);
+  const [signalsLoading, setSignalsLoading] = useState(false);
+  const [showSignals, setShowSignals] = useState(false);
+  const [linking, setLinking] = useState(false);
+
+  const fetchSignals = () => {
+    if (signals) return; // already loaded
+    setSignalsLoading(true);
+    getJobSignals(productId, job.job_id_key)
+      .then(setSignals)
+      .catch(() => {})
+      .finally(() => setSignalsLoading(false));
+  };
+
+  const handleSignalsBadgeClick = () => {
+    fetchSignals();
+    setShowSignals(s => !s);
+  };
 
   const startEdit = () => {
     setStatement(job.statement);
-    setOutcomesText((job.desired_outcomes ?? []).join('\n'));
+    setOutcomesText(toBulletText(job.desired_outcomes ?? []));
     setImportance(job.importance);
+    fetchSignals(); // lazy-fetch on first edit open too
     setError(null);
     setIsEditing(true);
   };
@@ -81,10 +137,7 @@ export default function JobRow({ job, onSave, onDelete }: JobRowProps) {
     }
     setSaving(true);
     try {
-      const desiredOutcomes = outcomesText
-        .split('\n')
-        .map((o) => o.trim())
-        .filter((o) => o.length > 0);
+      const desiredOutcomes = fromBulletText(outcomesText);
       const patch: JobUpdateRequest = {};
       if (statement.trim() !== job.statement) {
         patch.statement = statement.trim();
@@ -118,7 +171,7 @@ export default function JobRow({ job, onSave, onDelete }: JobRowProps) {
     setError(null);
     setDeleting(true);
     try {
-      await onDelete(job.job_id_key);
+      await onDelete(job.job_id_key, relinkChoice === 'relink');
       // Parent will re-fetch; this row unmounts.
     } catch (err: any) {
       setError(err?.message ?? 'Failed to delete job.');
@@ -147,9 +200,13 @@ export default function JobRow({ job, onSave, onDelete }: JobRowProps) {
             </span>
           )}
           {!isEditing && (
-            <span className="text-xs text-gray-400">
+            <button
+              type="button"
+              onClick={handleSignalsBadgeClick}
+              className={`text-xs underline-offset-2 hover:underline ${job.signal_count > 0 ? 'text-blue-600 hover:text-blue-800' : 'text-gray-400'}`}
+            >
               {job.signal_count > 0 ? `${job.signal_count} signal${job.signal_count === 1 ? '' : 's'}` : 'No signals'}
-            </span>
+            </button>
           )}
           {!isEditing && isStale && (
             <span className="text-xs text-amber-600" title={`Last updated ${staleDays} days ago`}>
@@ -176,22 +233,42 @@ export default function JobRow({ job, onSave, onDelete }: JobRowProps) {
         )}
 
         {!isEditing && confirmingDelete && (
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-xs text-gray-600">Delete this job?</span>
-            <button
-              onClick={handleDelete}
-              disabled={deleting}
-              className="text-sm text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded disabled:opacity-50"
-            >
-              {deleting ? 'Deleting…' : 'Confirm'}
-            </button>
-            <button
-              onClick={() => setConfirmingDelete(false)}
-              disabled={deleting}
-              className="text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded disabled:opacity-50"
-            >
-              Cancel
-            </button>
+          <div className="flex-shrink-0 text-right">
+            {job.signal_count > 0 ? (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-700 font-medium">
+                  Delete "{job.job_id_key}"? {job.signal_count} signal{job.signal_count !== 1 ? 's' : ''} linked.
+                </p>
+                <div className="flex flex-col gap-1 text-xs text-gray-600">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input type="radio" name={`relink-${job.job_id_key}`} checked={relinkChoice === 'relink'} onChange={() => setRelinkChoice('relink')} />
+                    Re-link signals to closest remaining need
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input type="radio" name={`relink-${job.job_id_key}`} checked={relinkChoice === 'clear'} onChange={() => setRelinkChoice('clear')} />
+                    Clear linkages (signals become unlinked)
+                  </label>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button onClick={handleDelete} disabled={deleting} className="text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded disabled:opacity-50">
+                    {deleting ? 'Deleting…' : 'Confirm delete'}
+                  </button>
+                  <button onClick={() => setConfirmingDelete(false)} disabled={deleting} className="text-xs text-gray-700 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded disabled:opacity-50">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-600">Delete this need?</span>
+                <button onClick={handleDelete} disabled={deleting} className="text-sm text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded disabled:opacity-50">
+                  {deleting ? 'Deleting…' : 'Confirm'}
+                </button>
+                <button onClick={() => setConfirmingDelete(false)} disabled={deleting} className="text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded disabled:opacity-50">
+                  Cancel
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -244,8 +321,11 @@ export default function JobRow({ job, onSave, onDelete }: JobRowProps) {
             <textarea
               value={outcomesText}
               onChange={(e) => setOutcomesText(e.target.value)}
+              onFocus={() => { if (!outcomesText) setOutcomesText(BULLET); }}
+              onKeyDown={(e) => bulletKeyDown(e, outcomesText, setOutcomesText)}
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono"
+              placeholder={`${BULLET}Reduce time spent on...`}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               disabled={saving}
             />
           </div>
@@ -287,6 +367,109 @@ export default function JobRow({ job, onSave, onDelete }: JobRowProps) {
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
+
+        </div>
+      )}
+
+      {/* Signals panel — shown in view mode (via badge click) or edit mode */}
+      {(showSignals || isEditing) && (
+        <div className="mt-3 pt-3 border-t border-gray-100">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Linked Signals</span>
+            {signalsLoading && <span className="text-xs text-gray-400">Loading…</span>}
+          </div>
+
+          {/* Link idea button — shown when arriving from idea response modal */}
+          {returnIdeaId && (
+            <button
+              type="button"
+              disabled={linking}
+              onClick={async () => {
+                setLinking(true);
+                try {
+                  await linkIdeaToJob(parseInt(returnIdeaId, 10), job.job_id_key);
+                  window.location.href = `/ideas?openModal=${returnIdeaId}`;
+                } catch {
+                  setLinking(false);
+                }
+              }}
+              className="w-full mb-3 px-3 py-2 text-sm font-medium text-amber-900 bg-amber-50 border border-amber-300 rounded-md hover:bg-amber-100 disabled:opacity-50"
+            >
+              {linking ? 'Linking…' : `Link Idea #${returnIdeaId} to this need`}
+            </button>
+          )}
+
+          {signals && (() => {
+            const sections: { label: string; total: number; items: { id: number; primary: string; badge?: string }[] }[] = [];
+
+            if (signals.totals.ideas > 0) sections.push({
+              label: 'Ideas',
+              total: signals.totals.ideas,
+              items: signals.ideas.slice(0, SIGNAL_LIMIT).map(i => ({
+                id: i.id, primary: i.title, badge: i.status ?? undefined,
+              })),
+            });
+            if (signals.totals.evidence > 0) sections.push({
+              label: 'Evidence',
+              total: signals.totals.evidence,
+              items: signals.evidence.slice(0, SIGNAL_LIMIT).map(e => ({
+                id: e.id, primary: e.title, badge: e.evidence_type ?? undefined,
+              })),
+            });
+            if (signals.totals.win_loss_themes > 0) sections.push({
+              label: 'Win/Loss',
+              total: signals.totals.win_loss_themes,
+              items: signals.win_loss_themes.slice(0, SIGNAL_LIMIT).map(t => ({
+                id: t.id, primary: t.theme_name, badge: t.outcome ?? undefined,
+              })),
+            });
+            if (signals.totals.support_themes > 0) sections.push({
+              label: 'Support',
+              total: signals.totals.support_themes,
+              items: signals.support_themes.slice(0, SIGNAL_LIMIT).map(t => ({
+                id: t.id, primary: t.theme_name, badge: t.category ?? undefined,
+              })),
+            });
+            if (signals.totals.synthesis_opportunities > 0) sections.push({
+              label: 'Opportunities',
+              total: signals.totals.synthesis_opportunities,
+              items: signals.synthesis_opportunities.slice(0, SIGNAL_LIMIT).map(o => ({
+                id: o.id, primary: o.opportunity_name, badge: o.investment_tier ?? undefined,
+              })),
+            });
+
+            if (sections.length === 0) {
+              return <p className="text-xs text-gray-400 italic">No signals linked to this need yet.</p>;
+            }
+
+            return (
+              <div className="space-y-3">
+                {sections.map(section => (
+                  <div key={section.label}>
+                    <div className="text-xs font-medium text-gray-500 mb-1">
+                      {section.label} ({section.items.length < section.total ? `${section.items.length} of ${section.total}` : section.total})
+                    </div>
+                    <ul className="space-y-1">
+                      {section.items.map(item => (
+                        <li key={item.id} className="flex items-center gap-2 text-xs text-gray-700">
+                          <span className="flex-1 truncate">{item.primary}</span>
+                          {item.badge && (
+                            <span className="flex-shrink-0 px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-xs">
+                              {item.badge}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {!signals && !signalsLoading && (
+            <p className="text-xs text-gray-400 italic">No signals loaded.</p>
+          )}
         </div>
       )}
     </div>

@@ -172,6 +172,21 @@ const IdeasPage = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
+  // Auto-open response modal when ?openModal=<ideaId> is present (e.g. returning from job map)
+  useEffect(() => {
+    const openModalParam = searchParams.get('openModal');
+    if (!openModalParam || ideas.length === 0) return;
+    const ideaId = parseInt(openModalParam, 10);
+    if (isNaN(ideaId)) return;
+    const idea = ideas.find(i => i.id === ideaId);
+    if (idea) {
+      setRespondingToIdeaId(ideaId);
+      setRespondingToIdeaTitle(idea.title);
+      // Clear the param so it doesn't re-trigger on re-renders
+      setSearchParams(prev => { const next = new URLSearchParams(prev); next.delete('openModal'); return next; });
+    }
+  }, [searchParams, ideas, setSearchParams]);
+
   // Handle opening the respond modal (with permission check)
   const handleRespond = useCallback(async (ideaId: number) => {
     const idea = ideas.find(i => i.id === ideaId);

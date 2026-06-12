@@ -23,14 +23,10 @@ export default function GenerateJobMapDialog({
         </h2>
         <p className="text-sm text-gray-500 mb-4">
           Claude will analyze your product name, description, category, and features to draft a
-          JTBD job map. You can edit any job after generation.
+          customer need map.{hasExistingMap
+            ? " You'll review the changes and choose which to keep before anything is committed. Your current map stays unchanged until you apply."
+            : " You can edit any need after generation."}
         </p>
-
-        {hasExistingMap && (
-          <div className="mb-4 p-3 rounded border border-amber-200 bg-amber-50 text-sm text-amber-800">
-            This will replace your current job map, including all manually edited jobs.
-          </div>
-        )}
 
         <label className="block mb-1.5">
           <span className="text-sm font-medium text-gray-700">
@@ -65,7 +61,7 @@ export default function GenerateJobMapDialog({
             {isSubmitting && (
               <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
             )}
-            {hasExistingMap ? 'Replace and generate' : 'Generate job map'}
+            {hasExistingMap ? 'Generate and review' : 'Generate need map'}
           </button>
         </div>
       </div>

@@ -87,6 +87,20 @@ def create_evidence(
     except Exception as e:
         logger.warning("Failed to link evidence to job: %s", e)
 
+    # Surface unmatched/weak-match signals as need map suggestions
+    try:
+        from app.queue.helpers import _maybe_suggest_need
+        _maybe_suggest_need(
+            db,
+            product_id=product_id,
+            signal_type="evidence",
+            signal_id=evidence.id,
+            signal_content=f"{title}: {content[:400]}",
+            jtbd_embedding=jtbd_embedding,
+        )
+    except Exception as e:
+        logger.warning("Failed to create need suggestion from evidence: %s", e)
+
     return evidence
 
 

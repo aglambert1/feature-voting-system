@@ -8,6 +8,37 @@
 import { useState } from 'react';
 import type { TargetCustomerProfile } from '../../../types';
 
+const BULLET = '• ';
+
+function toBulletText(items: string[]): string {
+  return items.map((t) => `${BULLET}${t}`).join('\n');
+}
+
+function fromBulletText(text: string): string[] {
+  return text
+    .split('\n')
+    .map((t) => t.replace(/^[•]\s*/, '').trim())
+    .filter((t) => t.length > 0);
+}
+
+function bulletKeyDown(
+  e: React.KeyboardEvent<HTMLTextAreaElement>,
+  value: string,
+  setValue: (v: string) => void
+) {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const el = e.currentTarget;
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  const next = `${value.slice(0, start)}\n${BULLET}${value.slice(end)}`;
+  setValue(next);
+  // Restore cursor after the new bullet
+  requestAnimationFrame(() => {
+    el.selectionStart = el.selectionEnd = start + 1 + BULLET.length;
+  });
+}
+
 interface TargetCustomerCardProps {
   profile: TargetCustomerProfile | null;
   onSave: (profile: TargetCustomerProfile) => Promise<void>;
@@ -23,14 +54,14 @@ export default function TargetCustomerCard({ profile, onSave }: TargetCustomerCa
     profile?.company_characteristics ?? ''
   );
   const [keyTraitsText, setKeyTraitsText] = useState(
-    (profile?.key_traits ?? []).join('\n')
+    toBulletText(profile?.key_traits ?? [])
   );
   const [hiringCriteria, setHiringCriteria] = useState(profile?.hiring_criteria ?? '');
 
   const startEdit = () => {
     setPersonaName(profile?.persona_name ?? '');
     setCompanyCharacteristics(profile?.company_characteristics ?? '');
-    setKeyTraitsText((profile?.key_traits ?? []).join('\n'));
+    setKeyTraitsText(toBulletText(profile?.key_traits ?? []));
     setHiringCriteria(profile?.hiring_criteria ?? '');
     setError(null);
     setIsEditing(true);
@@ -49,10 +80,7 @@ export default function TargetCustomerCard({ profile, onSave }: TargetCustomerCa
     }
     setSaving(true);
     try {
-      const keyTraits = keyTraitsText
-        .split('\n')
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0);
+      const keyTraits = fromBulletText(keyTraitsText);
       await onSave({
         persona_name: personaName.trim(),
         company_characteristics: companyCharacteristics.trim() || undefined,
@@ -123,7 +151,7 @@ export default function TargetCustomerCard({ profile, onSave }: TargetCustomerCa
           {profile.hiring_criteria && (
             <div>
               <div className="text-xs uppercase tracking-wide text-gray-500 mb-1">
-                Hiring criteria
+                Solution selection criteria
               </div>
               <div className="text-gray-800 whitespace-pre-wrap">{profile.hiring_criteria}</div>
             </div>
@@ -168,15 +196,17 @@ export default function TargetCustomerCard({ profile, onSave }: TargetCustomerCa
             <textarea
               value={keyTraitsText}
               onChange={(e) => setKeyTraitsText(e.target.value)}
+              onFocus={() => { if (!keyTraitsText) setKeyTraitsText(BULLET); }}
+              onKeyDown={(e) => bulletKeyDown(e, keyTraitsText, setKeyTraitsText)}
               rows={4}
-              placeholder={'Data-driven decision maker\nOwns the roadmap\nReports to CPO'}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+              placeholder={`${BULLET}Data-driven decision maker`}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               disabled={saving}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Hiring criteria</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Solution selection criteria</label>
             <textarea
               value={hiringCriteria}
               onChange={(e) => setHiringCriteria(e.target.value)}

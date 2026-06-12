@@ -12,13 +12,15 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import {
   addJob,
   deleteJob,
   extractJobMap,
   getJobMap,
+  getNeedSuggestions,
+  setMainJob,
   updateJob,
   updateTargetCustomer,
 } from '../../services/api';
@@ -28,6 +30,7 @@ import type {
   JobCreateRequest,
   JobMapResponse,
   JobUpdateRequest,
+  NeedSuggestion,
   TargetCustomerProfile,
 } from '../../types';
 import { JobType } from '../../types';
@@ -35,6 +38,7 @@ import TargetCustomerCard from './components/TargetCustomerCard';
 import JobRow from './components/JobRow';
 import AddJobForm from './components/AddJobForm';
 import GenerateJobMapDialog from './components/GenerateJobMapDialog';
+import NeedSuggestionPanel from './components/NeedSuggestionPanel';
 
 interface ActionMessage {
   type: 'success' | 'error';
@@ -44,6 +48,10 @@ interface ActionMessage {
 export default function JobMapEditorPage() {
   const { productId } = useParams<{ productId: string }>();
   const numProductId = productId ? parseInt(productId, 10) : NaN;
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get('returnTo'); // e.g. "idea/47"
+  const returnIdeaId = returnTo?.startsWith('idea/') ? returnTo.slice(5) : null;
 
   const [data, setData] = useState<JobMapResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,12 +59,17 @@ export default function JobMapEditorPage() {
   const [actionMessage, setActionMessage] = useState<ActionMessage | null>(null);
   const [showGenerateDialog, setShowGenerateDialog] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [suggestions, setSuggestions] = useState<NeedSuggestion[]>([]);
+  const [mainJobText, setMainJobText] = useState('');
+  const [editingMainJob, setEditingMainJob] = useState(false);
+  const [savingMainJob, setSavingMainJob] = useState(false);
 
   const fetchJobMap = useCallback(async () => {
     if (!Number.isFinite(numProductId)) return;
     try {
       const result = await getJobMap(numProductId);
       setData(result);
+      setMainJobText((result.job_map as any)?.main_job ?? '');
       setError(null);
     } catch (err: any) {
       setError(err?.message ?? 'Failed to load job map.');
@@ -65,9 +78,20 @@ export default function JobMapEditorPage() {
     }
   }, [numProductId]);
 
+  const fetchSuggestions = useCallback(async () => {
+    if (!Number.isFinite(numProductId)) return;
+    try {
+      const result = await getNeedSuggestions(numProductId);
+      setSuggestions(result.suggestions);
+    } catch {
+      // Non-critical — suggestions panel simply stays empty
+    }
+  }, [numProductId]);
+
   useEffect(() => {
     fetchJobMap();
-  }, [fetchJobMap]);
+    fetchSuggestions();
+  }, [fetchJobMap, fetchSuggestions]);
 
   useEffect(() => {
     if (actionMessage) {
@@ -94,10 +118,28 @@ export default function JobMapEditorPage() {
     await fetchJobMap();
   };
 
-  const handleDeleteJob = async (jobIdKey: string) => {
-    await deleteJob(numProductId, jobIdKey);
+  const handleDeleteJob = async (jobIdKey: string, relink: boolean) => {
+    await deleteJob(numProductId, jobIdKey, relink);
     setActionMessage({ type: 'success', text: `Deleted ${jobIdKey}.` });
     await fetchJobMap();
+  };
+
+  const handleSaveMainJob = async () => {
+    if (!mainJobText.trim()) return;
+    setSavingMainJob(true);
+    try {
+      await setMainJob(numProductId, mainJobText.trim());
+      setEditingMainJob(false);
+      setActionMessage({ type: 'success', text: 'Main job saved.' });
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err?.message ?? 'Failed to save main job.' });
+    } finally {
+      setSavingMainJob(false);
+    }
+  };
+
+  const handleSuggestionRefresh = async () => {
+    await Promise.all([fetchJobMap(), fetchSuggestions()]);
   };
 
   const handleGenerateConfirm = async (guidance: string) => {
@@ -160,6 +202,14 @@ export default function JobMapEditorPage() {
           >
             ← Back to {data.product_name}
           </Link>
+          {returnIdeaId && (
+            <Link
+              to={`/ideas?openModal=${returnIdeaId}`}
+              className="mt-1 flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-1.5 hover:bg-amber-100 w-fit"
+            >
+              ← Back to Idea #{returnIdeaId}
+            </Link>
+          )}
           <div className="mt-2 flex flex-wrap items-start justify-between gap-2">
             <h1 className="text-2xl font-bold text-gray-900">Customer Need Map</h1>
             <div className="flex flex-col items-end gap-1">
@@ -176,10 +226,14 @@ export default function JobMapEditorPage() {
                   jobTypes={[JobType.JOB_MAP_EXTRACTION]}
                   onJobComplete={fetchJobMap}
                 />
-                <span>
-                  Version <strong>{data.job_map_version}</strong>
-                </span>
-                {lastUpdated && <span>Last updated {lastUpdated}</span>}
+                {!data.has_pending_map && (
+                  <>
+                    <span>
+                      Version <strong>{data.job_map_version}</strong>
+                    </span>
+                    {lastUpdated && <span>Last updated {lastUpdated}</span>}
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -188,6 +242,23 @@ export default function JobMapEditorPage() {
             analysis, idea triage, and synthesis to surface evidence and gaps.
           </p>
         </div>
+
+        {/* Pending map banner */}
+        {data.has_pending_map && (
+          <div className="mb-4 p-3 rounded border border-amber-300 bg-amber-50 flex items-center justify-between gap-3">
+            <div>
+              <span className="text-sm font-medium text-amber-900">⚠ Pending changes from regeneration</span>
+              <span className="text-xs text-amber-700 ml-2">Your current map is unchanged — review before applying.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate(`/product-intelligence/products/${productId}/job-map/review`)}
+              className="flex-shrink-0 px-3 py-1.5 text-xs font-medium text-white bg-amber-600 rounded hover:bg-amber-700"
+            >
+              Review changes →
+            </button>
+          </div>
+        )}
 
         {/* Action message */}
         {actionMessage && (
@@ -206,6 +277,65 @@ export default function JobMapEditorPage() {
         <TargetCustomerCard
           profile={data.target_customer_profile}
           onSave={handleSaveTargetCustomer}
+        />
+
+        {/* Main job */}
+        <section className="bg-white rounded-lg shadow p-6 mb-6">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">Main Job</h2>
+              <p className="text-xs text-gray-400 mb-2">The overarching outcome your customers are trying to achieve.</p>
+              {editingMainJob ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={mainJobText}
+                    onChange={(e) => setMainJobText(e.target.value)}
+                    placeholder="e.g. Help operations teams close deals faster"
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-y"
+                    disabled={savingMainJob}
+                    onKeyDown={(e) => { if (e.key === 'Escape') setEditingMainJob(false); }}
+                    autoFocus
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveMainJob}
+                      disabled={savingMainJob || !mainJobText.trim()}
+                      className="text-sm px-3 py-1 text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {savingMainJob ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => { setEditingMainJob(false); setMainJobText((data.job_map as any)?.main_job ?? ''); }}
+                      disabled={savingMainJob}
+                      className="text-sm px-3 py-1 text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-gray-800 text-sm">
+                  {mainJobText || <span className="text-gray-400 italic">Not set — click Edit to define the main job</span>}
+                </p>
+              )}
+            </div>
+            {!editingMainJob && (
+              <button
+                onClick={() => setEditingMainJob(true)}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium flex-shrink-0"
+              >
+                Edit
+              </button>
+            )}
+          </div>
+        </section>
+
+        {/* Need map suggestions */}
+        <NeedSuggestionPanel
+          productId={numProductId}
+          suggestions={suggestions}
+          onRefresh={handleSuggestionRefresh}
         />
 
         {/* Customer needs — flat list */}
@@ -230,6 +360,8 @@ export default function JobMapEditorPage() {
                 <JobRow
                   key={job.job_id_key}
                   job={job}
+                  productId={numProductId}
+                  returnIdeaId={returnIdeaId}
                   onSave={handleSaveJob}
                   onDelete={handleDeleteJob}
                 />

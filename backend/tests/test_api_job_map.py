@@ -235,12 +235,14 @@ class TestDeleteJob:
         assert body["job_map_version"] == version_after_create + 1
 
         db_session.expire_all()
+        # Soft delete — row remains but status is inactive
         remaining = (
             db_session.query(ProductJob)
             .filter(ProductJob.product_id == test_product.id)
             .all()
         )
-        assert len(remaining) == 0
+        assert len(remaining) == 1
+        assert remaining[0].status == "inactive"
 
     def test_delete_missing_job_returns_404(self, client, po_user, test_product):
         resp = client.delete(
@@ -296,3 +298,200 @@ class TestSignalCountAndDefaults:
             )
         assert resp.status_code == 200
         assert resp.json()["job_type"] == "functional"
+
+
+# ---------------------------------------------------------------------------
+# Pending job map review flow
+# ---------------------------------------------------------------------------
+
+
+EMBED_BATCH_PATCH_PATH = "app.services.embedding_service.generate_embeddings_batch"
+
+
+def _make_pending_map():
+    return {
+        "functional_jobs": [
+            {
+                "job_id_key": "j1",
+                "statement": "When reconciling accounts, I want auto-matching",
+                "desired_outcomes": ["Reduce manual steps"],
+                "importance": "high",
+                "job_type": "functional",
+            }
+        ],
+        "emotional_jobs": [],
+        "social_jobs": [],
+    }
+
+
+class TestPendingJobMapFlow:
+
+    def test_get_job_map_has_pending_false_when_none(self, client, po_user, test_product):
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-map",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["has_pending_map"] is False
+
+    def test_pending_comparison_404_when_no_pending(self, client, po_user, test_product):
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-map/pending-comparison",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 404
+
+    def test_discard_pending_idempotent_when_no_pending(self, client, po_user, test_product):
+        # Discard is idempotent — returns 200 even when nothing is pending
+        resp = client.delete(
+            f"/product-intelligence/products/{test_product.id}/job-map/pending",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200
+
+    def test_get_job_map_shows_has_pending_true(self, client, po_user, test_product, db_session):
+        from app.models.competitor_intelligence import CIProduct
+        product = db_session.query(CIProduct).filter(CIProduct.id == test_product.id).first()
+        product.pending_job_map = _make_pending_map()
+        db_session.commit()
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-map",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["has_pending_map"] is True
+
+    def test_discard_pending_clears_pending(self, client, po_user, test_product, db_session):
+        from app.models.competitor_intelligence import CIProduct
+        product = db_session.query(CIProduct).filter(CIProduct.id == test_product.id).first()
+        product.pending_job_map = _make_pending_map()
+        db_session.commit()
+
+        resp = client.delete(
+            f"/product-intelligence/products/{test_product.id}/job-map/pending",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200
+
+        map_resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-map",
+            headers=auth_headers(po_user),
+        )
+        assert map_resp.json()["has_pending_map"] is False
+
+    def test_pending_comparison_returns_pairs(self, client, po_user, test_product, db_session):
+        from app.models.competitor_intelligence import CIProduct
+        product = db_session.query(CIProduct).filter(CIProduct.id == test_product.id).first()
+        product.pending_job_map = _make_pending_map()
+        db_session.commit()
+
+        with patch(EMBED_BATCH_PATCH_PATH, return_value=[_mock_embedding()]):
+            resp = client.get(
+                f"/product-intelligence/products/{test_product.id}/job-map/pending-comparison",
+                headers=auth_headers(po_user),
+            )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["has_pending"] is True
+        assert len(body["pairs"]) >= 1
+        pair = body["pairs"][0]
+        assert "id" in pair
+        assert "change_type" in pair
+        assert "default_selection" in pair
+
+    def test_apply_pending_new_job_creates_product_job(
+        self, client, po_user, test_product, db_session
+    ):
+        from app.models.competitor_intelligence import CIProduct
+        product = db_session.query(CIProduct).filter(CIProduct.id == test_product.id).first()
+        product.pending_job_map = _make_pending_map()
+        db_session.commit()
+
+        new_job_data = {
+            "job_id_key": "j1",
+            "statement": "When reconciling accounts, I want auto-matching",
+            "desired_outcomes": ["Reduce manual steps"],
+            "importance": "high",
+            "job_type": "functional",
+        }
+        selections = [
+            {
+                "pair_id": "pending_0",
+                "choice": "new",
+                "old_job_id_key": None,
+                "new_job_data": new_job_data,
+                "statement": new_job_data["statement"],
+                "desired_outcomes": new_job_data["desired_outcomes"],
+                "importance": new_job_data["importance"],
+            }
+        ]
+
+        with patch(EMBED_PATCH_PATH, return_value=_mock_embedding()):
+            resp = client.post(
+                f"/product-intelligence/products/{test_product.id}/job-map/apply-pending",
+                json={"selections": selections},
+                headers=auth_headers(po_user),
+            )
+        assert resp.status_code == 200
+
+        db_session.expire_all()
+        pj = db_session.query(ProductJob).filter(
+            ProductJob.product_id == test_product.id,
+            ProductJob.job_id_key == "j1",
+            ProductJob.status == "active",
+        ).first()
+        assert pj is not None
+        assert pj.statement == "When reconciling accounts, I want auto-matching"
+
+        product = db_session.query(CIProduct).filter(CIProduct.id == test_product.id).first()
+        assert product.pending_job_map is None  # cleared after apply
+
+    def test_apply_pending_drop_removes_existing_job(
+        self, client, po_user, test_product, db_session
+    ):
+        # First add a real job
+        with patch(EMBED_PATCH_PATH, return_value=_mock_embedding()):
+            client.post(
+                f"/product-intelligence/products/{test_product.id}/jobs",
+                json={
+                    "job_id": "j_old",
+                    "statement": "Old job to be dropped",
+                    "desired_outcomes": [],
+                    "importance": "medium",
+                },
+                headers=auth_headers(po_user),
+            )
+        # Set a pending map that doesn't include j_old
+        from app.models.competitor_intelligence import CIProduct
+        product = db_session.query(CIProduct).filter(CIProduct.id == test_product.id).first()
+        product.pending_job_map = {"functional_jobs": [], "emotional_jobs": [], "social_jobs": []}
+        db_session.commit()
+
+        selections = [
+            {
+                "pair_id": "removed_j_old",
+                "choice": "drop",
+                "old_job_id_key": "j_old",
+                "new_job_data": None,
+                "statement": "",
+                "desired_outcomes": [],
+                "importance": "medium",
+            }
+        ]
+
+        with patch(EMBED_PATCH_PATH, return_value=_mock_embedding()):
+            resp = client.post(
+                f"/product-intelligence/products/{test_product.id}/job-map/apply-pending",
+                json={"selections": selections},
+                headers=auth_headers(po_user),
+            )
+        assert resp.status_code == 200
+
+        db_session.expire_all()
+        active = db_session.query(ProductJob).filter(
+            ProductJob.product_id == test_product.id,
+            ProductJob.job_id_key == "j_old",
+            ProductJob.status == "active",
+        ).first()
+        assert active is None

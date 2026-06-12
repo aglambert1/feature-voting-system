@@ -47,7 +47,7 @@ services:
     runtime: docker
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
-    dockerCommand: celery -A app.queue worker --loglevel=info --pool=solo
+    dockerCommand: celery -A app.queue worker --beat --loglevel=info --pool=solo
     envVars:
       - key: SECRET_KEY
         fromService:
