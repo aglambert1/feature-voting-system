@@ -352,6 +352,34 @@ def _authoritative_job_key(source_metadata) -> Optional[str]:
     return source_metadata.get('job_id_key') or None
 
 
+def _authoritative_competitor_names(source_metadata) -> Optional[list]:
+    """Return the deterministic competitor list set by a synthesis writer.
+
+    Ideas created from a SynthesizedOpportunity carry the opportunity's
+    competitor list in source_metadata as ``competitor_names`` (PR #45), falling
+    back to a single legacy ``competitor_name``. This list is authoritative —
+    the triage agent's own list is unreliable for opportunity-sourced ideas
+    (synthesis prompts use anonymized labels like "Competitor 1" which the agent
+    echoes alongside real names, producing phantom duplicates).
+
+    The authoritative signal is the *presence* of the key, not a non-empty value:
+    a customer-only opportunity legitimately has ``competitor_names: []`` and
+    must show no competitors, NOT fall back to the agent's (possibly
+    hallucinated) list. Returns None only when source_metadata carries no
+    competitor key at all, signalling the caller to use the agent's list. Keyed
+    on the presence of authoritative data rather than the source_type flag,
+    mirroring _authoritative_job_key.
+    """
+    if not isinstance(source_metadata, dict):
+        return None
+    if 'competitor_names' in source_metadata:
+        return list(source_metadata.get('competitor_names') or [])
+    single = source_metadata.get('competitor_name')
+    if single:
+        return [single]
+    return None
+
+
 def _sanitize_existing_feature_info(info):
     """Return a copy of existing_feature_info with source_url stripped to None
     unless it's a real http(s) URL.

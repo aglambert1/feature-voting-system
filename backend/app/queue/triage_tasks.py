@@ -22,6 +22,7 @@ from app.queue.helpers import (
     _maybe_suggest_need,
     _sanitize_existing_feature_info,
     _authoritative_job_key,
+    _authoritative_competitor_names,
 )
 
 
@@ -312,21 +313,18 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         #   reliable for customer-submitted ideas because the agent saw real
         #   similarity_service matches in its prompt and echoed them back.
         # - Deterministic source_metadata (set by synthesis writers in PR #45):
-        #   the authoritative competitor list for competitor-sourced ideas
+        #   the authoritative competitor list for opportunity-sourced ideas
         #   (auto-gen + manual create-from-opp).
-        # For competitor-sourced ideas the agent's list is unreliable — synthesis
-        # prompts sometimes use anonymized labels ("Competitor 1") which the
-        # agent echoes alongside the real names, producing phantom duplicates.
-        # Trust the deterministic list and ignore the agent's prose for this field.
+        # When an authoritative list is present we trust it and ignore the
+        # agent's prose — synthesis prompts use anonymized labels ("Competitor 1")
+        # which the agent echoes alongside real names, producing phantom
+        # duplicates. Keyed on the presence of authoritative data (not the
+        # source_type flag), mirroring the job_id_key handling below.
         comp_context = triage_result.get('competitive_context', {})
 
-        if is_competitor_idea and idea.source_metadata:
-            source_competitor_names = idea.source_metadata.get('competitor_names', [])
-            if not source_competitor_names:
-                single_name = idea.source_metadata.get('competitor_name')
-                if single_name:
-                    source_competitor_names = [single_name]
-            competitors_with_feature = list(source_competitor_names)
+        authoritative_competitors = _authoritative_competitor_names(idea.source_metadata)
+        if authoritative_competitors is not None:
+            competitors_with_feature = authoritative_competitors
         else:
             competitors_with_feature = list(comp_context.get('competitors_with_feature', []))
 
