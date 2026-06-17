@@ -276,7 +276,17 @@ def _maybe_suggest_need(
         db.commit()
 
     except Exception as exc:
+        # Roll back so a failed INSERT (e.g. an aborted transaction) doesn't
+        # leave the shared session poisoned — without this, the caller's next
+        # commit fails with InFailedSqlTransaction and its essential work is
+        # lost. This is best-effort signal enrichment; never let it corrupt the
+        # caller's session. (Regression: an enum error here once aborted a
+        # triage commit, discarding the idea's verdict + job link.)
         print(f"[_maybe_suggest_need] Warning: failed to create suggestion: {exc}")
+        try:
+            db.rollback()
+        except Exception as rollback_exc:
+            print(f"[_maybe_suggest_need] Warning: rollback failed: {rollback_exc}")
 
 
 def _bump_parent_synthesis_progress(db, parent_job_id: int) -> None:

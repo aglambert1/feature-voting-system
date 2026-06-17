@@ -387,19 +387,6 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
                 except Exception as link_err:
                     print(f"[triage_idea_task] Warning: Job linkage failed: {link_err}")
 
-            # Surface unmatched/weak-match signals as need map suggestions.
-            # Skip when we preserved an authoritative source link — the idea is
-            # already tied to a job, so a "needs a job" suggestion would be noise.
-            if not authoritative_job_key:
-                _maybe_suggest_need(
-                    db,
-                    product_id=idea.product_id,
-                    signal_type="idea",
-                    signal_id=idea.id,
-                    signal_content=idea.title or idea.description or "",
-                    jtbd_embedding=idea.jtbd_embedding,
-                )
-
         # Record status history for agent triage
         # Only record as automated action if auto-respond is ON and status changed
         # When auto-respond is OFF, we don't record the agent's recommendation in history
@@ -418,6 +405,22 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             db.add(status_history)
 
         db.commit()
+
+        # Surface unmatched/weak-match signals as need map suggestions — AFTER
+        # the triage verdict is durably committed. This is best-effort signal
+        # enrichment that commits separately; running it pre-commit once let a
+        # failure here abort the whole triage transaction and discard the
+        # verdict. Skip when we preserved an authoritative source link (idea is
+        # already tied to a job, so a "needs a job" suggestion would be noise).
+        if idea.jtbd_embedding and not _authoritative_job_key(idea.source_metadata):
+            _maybe_suggest_need(
+                db,
+                product_id=idea.product_id,
+                signal_type="idea",
+                signal_id=idea.id,
+                signal_content=idea.title or idea.description or "",
+                jtbd_embedding=idea.jtbd_embedding,
+            )
 
         # Update progress
         queue_service.update_progress(job_id, 90.0, "Storing idea embedding...")

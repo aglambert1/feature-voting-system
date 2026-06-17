@@ -145,6 +145,31 @@ class TestMaybeSuggestNeed:
         ).count()
         assert count == 1
 
+    def test_commit_failure_rolls_back_and_does_not_raise(self, db_session, test_product):
+        """Regression: a failed commit inside _maybe_suggest_need must roll the
+        session back, not leave it poisoned. Previously an aborted INSERT here
+        (e.g. an enum error) left the shared session in a failed-transaction
+        state, so the triage task's *next* commit failed with
+        InFailedSqlTransaction and the idea's verdict + job link were discarded."""
+        with patch.object(db_session, "commit", side_effect=Exception("boom")) as mock_commit, \
+             patch.object(db_session, "rollback", wraps=db_session.rollback) as mock_rollback:
+            # Must not raise — best-effort enrichment swallows the failure.
+            _maybe_suggest_need(
+                db_session,
+                product_id=test_product.id,
+                signal_id=6,
+                signal_type="idea",
+                signal_content="Signal whose commit blows up",
+                jtbd_embedding=_unit_vec(1024),
+            )
+            assert mock_commit.called
+            # The session was rolled back so the caller can keep using it.
+            assert mock_rollback.called
+
+        # Session is usable again after the failure — a fresh query succeeds
+        # rather than erroring with InFailedSqlTransaction.
+        db_session.query(PMReviewQueue).count()
+
 
 # ---------------------------------------------------------------------------
 # API endpoint tests
