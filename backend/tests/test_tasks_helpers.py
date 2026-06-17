@@ -6,7 +6,36 @@ the triage and synthesis paths to keep their data hygiene predictable.
 
 import pytest
 
-from app.queue.helpers import _extract_competitor_names, _sanitize_existing_feature_info
+from app.queue.helpers import (
+    _extract_competitor_names,
+    _sanitize_existing_feature_info,
+    _authoritative_job_key,
+)
+
+
+class TestAuthoritativeJobKey:
+    """`_authoritative_job_key` reads a deterministically-set job_id_key from an
+    idea's source_metadata so triage preserves the synthesis-assigned job link
+    instead of re-deriving it via embedding similarity."""
+
+    def test_returns_key_when_present(self):
+        assert _authoritative_job_key({"job_id_key": "j3"}) == "j3"
+
+    def test_returns_none_when_key_missing(self):
+        assert _authoritative_job_key({"opportunity_id": 5}) is None
+
+    def test_returns_none_when_key_is_none(self):
+        assert _authoritative_job_key({"job_id_key": None}) is None
+
+    def test_returns_none_for_empty_string(self):
+        assert _authoritative_job_key({"job_id_key": ""}) is None
+
+    def test_returns_none_for_none_metadata(self):
+        assert _authoritative_job_key(None) is None
+
+    def test_returns_none_for_non_dict(self):
+        assert _authoritative_job_key("not a dict") is None
+        assert _authoritative_job_key(42) is None
 
 
 class TestExtractCompetitorNames:

@@ -21,6 +21,7 @@ from app.queue.helpers import (
     _link_idea_to_job,
     _maybe_suggest_need,
     _sanitize_existing_feature_info,
+    _authoritative_job_key,
 )
 
 
@@ -367,25 +368,39 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             except Exception as jtbd_emb_err:
                 print(f"[triage_idea_task] Warning: JTBD embedding failed: {jtbd_emb_err}")
 
-            # Link idea to best-matching ProductJob via embedding similarity.
-            # Reset first so a no-match clears any stale value from a previous triage.
-            idea.job_id_key = None
-            try:
-                matched_key = _link_idea_to_job(db, idea, llm_service=llm_service)
-                if matched_key:
-                    print(f"[triage_idea_task] Linked idea {idea.id} to job {matched_key}")
-            except Exception as link_err:
-                print(f"[triage_idea_task] Warning: Job linkage failed: {link_err}")
+            # Link idea to a ProductJob. For ideas created from a synthesized
+            # opportunity the synthesis already linked the opportunity to a job;
+            # that `job_id_key` (carried in source_metadata) is authoritative —
+            # the opportunity's prose often won't cosine-match its own job
+            # statement above threshold, so re-deriving here would drop the link.
+            # Trust the deterministic value, mirroring the competitors_with_feature
+            # handling above. Otherwise re-derive via embedding similarity, resetting
+            # first so a no-match clears any stale value from a previous triage.
+            authoritative_job_key = _authoritative_job_key(idea.source_metadata)
+            if authoritative_job_key:
+                idea.job_id_key = authoritative_job_key
+                print(f"[triage_idea_task] Preserved source job link {authoritative_job_key} for idea {idea.id}")
+            else:
+                idea.job_id_key = None
+                try:
+                    matched_key = _link_idea_to_job(db, idea, llm_service=llm_service)
+                    if matched_key:
+                        print(f"[triage_idea_task] Linked idea {idea.id} to job {matched_key}")
+                except Exception as link_err:
+                    print(f"[triage_idea_task] Warning: Job linkage failed: {link_err}")
 
-            # Surface unmatched/weak-match signals as need map suggestions
-            _maybe_suggest_need(
-                db,
-                product_id=idea.product_id,
-                signal_type="idea",
-                signal_id=idea.id,
-                signal_content=idea.title or idea.description or "",
-                jtbd_embedding=idea.jtbd_embedding,
-            )
+            # Surface unmatched/weak-match signals as need map suggestions.
+            # Skip when we preserved an authoritative source link — the idea is
+            # already tied to a job, so a "needs a job" suggestion would be noise.
+            if not authoritative_job_key:
+                _maybe_suggest_need(
+                    db,
+                    product_id=idea.product_id,
+                    signal_type="idea",
+                    signal_id=idea.id,
+                    signal_content=idea.title or idea.description or "",
+                    jtbd_embedding=idea.jtbd_embedding,
+                )
 
         # Record status history for agent triage
         # Only record as automated action if auto-respond is ON and status changed

@@ -334,6 +334,24 @@ def _extract_competitor_names(competitive_evidence) -> list:
     return [c for c in (competitive_evidence.get("competitors") or []) if c]
 
 
+def _authoritative_job_key(source_metadata) -> Optional[str]:
+    """Return a job_id_key that was set deterministically by a synthesis writer.
+
+    Ideas created from a SynthesizedOpportunity carry the opportunity's
+    job_id_key in source_metadata (auto-gen loop + manual create-from-opp).
+    Synthesis already linked the opportunity to a job map need, so that key is
+    authoritative — triage must preserve it rather than re-deriving via
+    embedding similarity, which often fails to cosine-match an opportunity's
+    prose to its own job statement and would drop the link.
+
+    Returns None when there is no source key, so the caller falls back to
+    similarity-based linkage.
+    """
+    if not isinstance(source_metadata, dict):
+        return None
+    return source_metadata.get('job_id_key') or None
+
+
 def _sanitize_existing_feature_info(info):
     """Return a copy of existing_feature_info with source_url stripped to None
     unless it's a real http(s) URL.
