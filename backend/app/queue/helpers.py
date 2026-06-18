@@ -276,7 +276,17 @@ def _maybe_suggest_need(
         db.commit()
 
     except Exception as exc:
+        # Roll back so a failed INSERT (e.g. an aborted transaction) doesn't
+        # leave the shared session poisoned — without this, the caller's next
+        # commit fails with InFailedSqlTransaction and its essential work is
+        # lost. This is best-effort signal enrichment; never let it corrupt the
+        # caller's session. (Regression: an enum error here once aborted a
+        # triage commit, discarding the idea's verdict + job link.)
         print(f"[_maybe_suggest_need] Warning: failed to create suggestion: {exc}")
+        try:
+            db.rollback()
+        except Exception as rollback_exc:
+            print(f"[_maybe_suggest_need] Warning: rollback failed: {rollback_exc}")
 
 
 def _bump_parent_synthesis_progress(db, parent_job_id: int) -> None:
@@ -332,6 +342,52 @@ def _extract_competitor_names(competitive_evidence) -> list:
     if not isinstance(competitive_evidence, dict):
         return []
     return [c for c in (competitive_evidence.get("competitors") or []) if c]
+
+
+def _authoritative_job_key(source_metadata) -> Optional[str]:
+    """Return a job_id_key that was set deterministically by a synthesis writer.
+
+    Ideas created from a SynthesizedOpportunity carry the opportunity's
+    job_id_key in source_metadata (auto-gen loop + manual create-from-opp).
+    Synthesis already linked the opportunity to a job map need, so that key is
+    authoritative — triage must preserve it rather than re-deriving via
+    embedding similarity, which often fails to cosine-match an opportunity's
+    prose to its own job statement and would drop the link.
+
+    Returns None when there is no source key, so the caller falls back to
+    similarity-based linkage.
+    """
+    if not isinstance(source_metadata, dict):
+        return None
+    return source_metadata.get('job_id_key') or None
+
+
+def _authoritative_competitor_names(source_metadata) -> Optional[list]:
+    """Return the deterministic competitor list set by a synthesis writer.
+
+    Ideas created from a SynthesizedOpportunity carry the opportunity's
+    competitor list in source_metadata as ``competitor_names`` (PR #45), falling
+    back to a single legacy ``competitor_name``. This list is authoritative —
+    the triage agent's own list is unreliable for opportunity-sourced ideas
+    (synthesis prompts use anonymized labels like "Competitor 1" which the agent
+    echoes alongside real names, producing phantom duplicates).
+
+    The authoritative signal is the *presence* of the key, not a non-empty value:
+    a customer-only opportunity legitimately has ``competitor_names: []`` and
+    must show no competitors, NOT fall back to the agent's (possibly
+    hallucinated) list. Returns None only when source_metadata carries no
+    competitor key at all, signalling the caller to use the agent's list. Keyed
+    on the presence of authoritative data rather than the source_type flag,
+    mirroring _authoritative_job_key.
+    """
+    if not isinstance(source_metadata, dict):
+        return None
+    if 'competitor_names' in source_metadata:
+        return list(source_metadata.get('competitor_names') or [])
+    single = source_metadata.get('competitor_name')
+    if single:
+        return [single]
+    return None
 
 
 def _sanitize_existing_feature_info(info):

@@ -16,7 +16,11 @@ depends_on = None
 def upgrade():
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
-        op.execute("ALTER TYPE reviewqueuetype ADD VALUE IF NOT EXISTS 'need_suggestion'")
+        # SQLAlchemy's Enum column maps to the member *name* (uppercase), not the
+        # value — the existing reviewqueuetype labels are IDEA/COMPETITIVE_ALERT/
+        # REPORT. The new member must match that convention or every query filtering
+        # on NEED_SUGGESTION 500s with "invalid input value for enum".
+        op.execute("ALTER TYPE reviewqueuetype ADD VALUE IF NOT EXISTS 'NEED_SUGGESTION'")
 
 
 def downgrade():

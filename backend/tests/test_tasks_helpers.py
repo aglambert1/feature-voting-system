@@ -6,7 +6,81 @@ the triage and synthesis paths to keep their data hygiene predictable.
 
 import pytest
 
-from app.queue.helpers import _extract_competitor_names, _sanitize_existing_feature_info
+from app.queue.helpers import (
+    _extract_competitor_names,
+    _sanitize_existing_feature_info,
+    _authoritative_job_key,
+    _authoritative_competitor_names,
+)
+
+
+class TestAuthoritativeCompetitorNames:
+    """`_authoritative_competitor_names` reads the deterministic competitor list
+    a synthesis writer stamped into source_metadata, so triage preserves it
+    instead of trusting the agent's (often anonymized) list. Returns None when
+    there is no authoritative data, signalling the caller to fall back."""
+
+    def test_returns_competitor_names_list(self):
+        assert _authoritative_competitor_names(
+            {"competitor_names": ["Acme", "Globex"]}
+        ) == ["Acme", "Globex"]
+
+    def test_falls_back_to_singular_competitor_name(self):
+        assert _authoritative_competitor_names(
+            {"competitor_name": "Acme"}
+        ) == ["Acme"]
+
+    def test_prefers_plural_over_singular(self):
+        assert _authoritative_competitor_names(
+            {"competitor_names": ["Acme"], "competitor_name": "Globex"}
+        ) == ["Acme"]
+
+    def test_returns_none_when_no_competitor_key(self):
+        # No competitor key at all (e.g. customer-submitted idea) → fall back.
+        assert _authoritative_competitor_names({"opportunity_id": 5}) is None
+
+    def test_empty_list_is_authoritative_not_fallback(self):
+        # A customer-only opportunity stamps competitor_names: [] — that empty
+        # list is authoritative (show no competitors), NOT a signal to fall back
+        # to the agent's possibly-hallucinated list.
+        assert _authoritative_competitor_names({"competitor_names": []}) == []
+
+    def test_returns_none_for_none_metadata(self):
+        assert _authoritative_competitor_names(None) is None
+
+    def test_returns_none_for_non_dict(self):
+        assert _authoritative_competitor_names("not a dict") is None
+        assert _authoritative_competitor_names(42) is None
+
+    def test_returns_new_list_not_alias(self):
+        src = ["Acme", "Globex"]
+        out = _authoritative_competitor_names({"competitor_names": src})
+        assert out == src and out is not src
+
+
+class TestAuthoritativeJobKey:
+    """`_authoritative_job_key` reads a deterministically-set job_id_key from an
+    idea's source_metadata so triage preserves the synthesis-assigned job link
+    instead of re-deriving it via embedding similarity."""
+
+    def test_returns_key_when_present(self):
+        assert _authoritative_job_key({"job_id_key": "j3"}) == "j3"
+
+    def test_returns_none_when_key_missing(self):
+        assert _authoritative_job_key({"opportunity_id": 5}) is None
+
+    def test_returns_none_when_key_is_none(self):
+        assert _authoritative_job_key({"job_id_key": None}) is None
+
+    def test_returns_none_for_empty_string(self):
+        assert _authoritative_job_key({"job_id_key": ""}) is None
+
+    def test_returns_none_for_none_metadata(self):
+        assert _authoritative_job_key(None) is None
+
+    def test_returns_none_for_non_dict(self):
+        assert _authoritative_job_key("not a dict") is None
+        assert _authoritative_job_key(42) is None
 
 
 class TestExtractCompetitorNames:

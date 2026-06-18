@@ -38,6 +38,7 @@ def _make_opp(db_session, product_id: int, **overrides) -> SynthesizedOpportunit
         recommended_action="do the thing",
         investment_tier="now",
         competitive_evidence=overrides.get("competitive_evidence"),
+        job_id_key=overrides.get("job_id_key"),
     )
     db_session.add(opp)
     db_session.commit()
@@ -175,6 +176,32 @@ class TestCreateIdeaFromOpportunity:
         idea = db_session.query(Idea).filter(Idea.id == resp.json()["idea_id"]).first()
         assert idea.source_metadata["competitors_with_feature"] == ["Acme", "Globex", "Initech"]
         assert idea.source_metadata["competitor_names"] == ["Acme", "Globex", "Initech"]
+
+    def test_propagates_job_id_key_from_opportunity(
+        self, client, po_user, test_product, db_session
+    ):
+        """An opportunity already linked to a job carries that authoritative
+        job_id_key into the new idea's source_metadata, so triage can preserve
+        it instead of re-deriving (and dropping) the link via similarity."""
+        opp = _make_opp(db_session, test_product.id, job_id_key="j3")
+
+        with patch(
+            "app.api.unified_synthesis.send_task",
+            return_value=MagicMock(id="celery-id-3"),
+        ):
+            resp = client.post(
+                f"/products/{test_product.id}/synthesis/opportunities/{opp.id}/create-idea",
+                json={
+                    "title": "Edited",
+                    "what_description": "what",
+                    "why_description": "why",
+                    "use_case_description": "use",
+                },
+                headers=auth_headers(po_user),
+            )
+        assert resp.status_code == 200, resp.text
+        idea = db_session.query(Idea).filter(Idea.id == resp.json()["idea_id"]).first()
+        assert idea.source_metadata["job_id_key"] == "j3"
 
     def test_handles_null_competitive_evidence(
         self, client, po_user, test_product, db_session

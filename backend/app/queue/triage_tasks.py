@@ -21,6 +21,8 @@ from app.queue.helpers import (
     _link_idea_to_job,
     _maybe_suggest_need,
     _sanitize_existing_feature_info,
+    _authoritative_job_key,
+    _authoritative_competitor_names,
 )
 
 
@@ -311,21 +313,18 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         #   reliable for customer-submitted ideas because the agent saw real
         #   similarity_service matches in its prompt and echoed them back.
         # - Deterministic source_metadata (set by synthesis writers in PR #45):
-        #   the authoritative competitor list for competitor-sourced ideas
+        #   the authoritative competitor list for opportunity-sourced ideas
         #   (auto-gen + manual create-from-opp).
-        # For competitor-sourced ideas the agent's list is unreliable — synthesis
-        # prompts sometimes use anonymized labels ("Competitor 1") which the
-        # agent echoes alongside the real names, producing phantom duplicates.
-        # Trust the deterministic list and ignore the agent's prose for this field.
+        # When an authoritative list is present we trust it and ignore the
+        # agent's prose — synthesis prompts use anonymized labels ("Competitor 1")
+        # which the agent echoes alongside real names, producing phantom
+        # duplicates. Keyed on the presence of authoritative data (not the
+        # source_type flag), mirroring the job_id_key handling below.
         comp_context = triage_result.get('competitive_context', {})
 
-        if is_competitor_idea and idea.source_metadata:
-            source_competitor_names = idea.source_metadata.get('competitor_names', [])
-            if not source_competitor_names:
-                single_name = idea.source_metadata.get('competitor_name')
-                if single_name:
-                    source_competitor_names = [single_name]
-            competitors_with_feature = list(source_competitor_names)
+        authoritative_competitors = _authoritative_competitor_names(idea.source_metadata)
+        if authoritative_competitors is not None:
+            competitors_with_feature = authoritative_competitors
         else:
             competitors_with_feature = list(comp_context.get('competitors_with_feature', []))
 
@@ -367,25 +366,26 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             except Exception as jtbd_emb_err:
                 print(f"[triage_idea_task] Warning: JTBD embedding failed: {jtbd_emb_err}")
 
-            # Link idea to best-matching ProductJob via embedding similarity.
-            # Reset first so a no-match clears any stale value from a previous triage.
-            idea.job_id_key = None
-            try:
-                matched_key = _link_idea_to_job(db, idea, llm_service=llm_service)
-                if matched_key:
-                    print(f"[triage_idea_task] Linked idea {idea.id} to job {matched_key}")
-            except Exception as link_err:
-                print(f"[triage_idea_task] Warning: Job linkage failed: {link_err}")
-
-            # Surface unmatched/weak-match signals as need map suggestions
-            _maybe_suggest_need(
-                db,
-                product_id=idea.product_id,
-                signal_type="idea",
-                signal_id=idea.id,
-                signal_content=idea.title or idea.description or "",
-                jtbd_embedding=idea.jtbd_embedding,
-            )
+            # Link idea to a ProductJob. For ideas created from a synthesized
+            # opportunity the synthesis already linked the opportunity to a job;
+            # that `job_id_key` (carried in source_metadata) is authoritative —
+            # the opportunity's prose often won't cosine-match its own job
+            # statement above threshold, so re-deriving here would drop the link.
+            # Trust the deterministic value, mirroring the competitors_with_feature
+            # handling above. Otherwise re-derive via embedding similarity, resetting
+            # first so a no-match clears any stale value from a previous triage.
+            authoritative_job_key = _authoritative_job_key(idea.source_metadata)
+            if authoritative_job_key:
+                idea.job_id_key = authoritative_job_key
+                print(f"[triage_idea_task] Preserved source job link {authoritative_job_key} for idea {idea.id}")
+            else:
+                idea.job_id_key = None
+                try:
+                    matched_key = _link_idea_to_job(db, idea, llm_service=llm_service)
+                    if matched_key:
+                        print(f"[triage_idea_task] Linked idea {idea.id} to job {matched_key}")
+                except Exception as link_err:
+                    print(f"[triage_idea_task] Warning: Job linkage failed: {link_err}")
 
         # Record status history for agent triage
         # Only record as automated action if auto-respond is ON and status changed
@@ -405,6 +405,22 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             db.add(status_history)
 
         db.commit()
+
+        # Surface unmatched/weak-match signals as need map suggestions — AFTER
+        # the triage verdict is durably committed. This is best-effort signal
+        # enrichment that commits separately; running it pre-commit once let a
+        # failure here abort the whole triage transaction and discard the
+        # verdict. Skip when we preserved an authoritative source link (idea is
+        # already tied to a job, so a "needs a job" suggestion would be noise).
+        if idea.jtbd_embedding and not _authoritative_job_key(idea.source_metadata):
+            _maybe_suggest_need(
+                db,
+                product_id=idea.product_id,
+                signal_type="idea",
+                signal_id=idea.id,
+                signal_content=idea.title or idea.description or "",
+                jtbd_embedding=idea.jtbd_embedding,
+            )
 
         # Update progress
         queue_service.update_progress(job_id, 90.0, "Storing idea embedding...")
