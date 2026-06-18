@@ -9,7 +9,6 @@ const GITHUB_ISSUES_URL = 'https://github.com/aglambert1/feature-voting-system/i
 const LICENSE_URL = 'https://github.com/aglambert1/feature-voting-system/blob/main/LICENSE';
 const FEEDBACK_EMAIL = 'aglambert@gmail.com';
 
-const FEATURE_IQ_FEEDBACK_INVITE_URL = 'TODO_REPLACE_WITH_INVITE_URL';
 const SCREENSHOT_JOB_MAP = '/screenshots/jobmap.png';
 const SCREENSHOT_SYNTHESIS = '/screenshots/synthesis.png';
 const LOOM_EMBED_URL = '';
@@ -47,21 +46,28 @@ const LandingPage = () => {
           <h1 className="text-4xl md:text-5xl font-bold text-gray-900 leading-tight mb-6">
             Exploring a new product management workflow.
           </h1>
+          <p className="text-lg text-gray-700 leading-relaxed mb-5">
+            Most AI-for-PM tools speed up steps in the existing workflow — conduct competitive
+            analysis, write a PRD, etc. This can drive incremental productivity, but can't deliver
+            the kind of transformative change that's needed to truly modernize product management.
+          </p>
+          <p className="text-lg text-gray-700 leading-relaxed mb-5">
+            Feature-IQ is a focused component of a new approach based on agents analyzing market and
+            competitive data, triaging customer feedback, recommending features to build, presenting
+            PRDs for implementation, providing documentation to support launch, and monitoring
+            product success. The PM stays in the loop as the strategic judge — what gets built, why,
+            and what to ignore. But every step of the workflow around that judgment will be
+            transformed by AI agents.
+          </p>
           <p className="text-lg text-gray-700 leading-relaxed">
-            Most AI-for-PM tools speed up the old workflow - conduct competitive analysis, write a PRD, etc. 
-            Feature-IQ is a focused component of a new approach based on agents analyzing data, triaging customer feedback,
-            analyzing the competitive landscape, recommending features to build, and presenting 
-            use cases and PRDs that are ready for implementation.
-            The PM stays in the loop as the strategic judge — what gets built, why, and what to
-            ignore. But every step of the workflow around that judgment is transformed by AI agents.
-            Feature-IQ is one step of that workflow: a continuous fact-base for
-            market and customer signal, synthesized through a Jobs-to-be-Done spine, with every
-            claim traceable back to its source. It's not the only thing a PM uses, and it doesn't
-            try to be. It works today and it delivers value today — and it's also an experiment
-            in how AI is changing the practice of product management. The goal is to strip product 
-            management down to its core - understanding and empathizing with customers' needs - and 
-            remove the administrative and project management overhead. 
-            When you use it, I want to hear what you think.
+            Feature-IQ is one step of that workflow: a continuous fact-base for market and customer
+            signal, synthesized through a Jobs-to-be-Done spine, with every claim traceable back to
+            its source. It is intended
+            to deliver value today, and it's also an experiment in how AI is changing the practice of
+            product management. The opportunity in transforming product processes with AI is to strip
+            product management down to its core — understanding and empathizing with customers'
+            needs — and remove the administrative and project management overhead. When you use it,
+            I want to hear what you think.
           </p>
         </section>
 
@@ -69,7 +75,13 @@ const LandingPage = () => {
           <h2 className="text-2xl font-semibold text-gray-900 mb-6">What it does today</h2>
           <ul className="space-y-4 text-gray-700">
             <li className="border-l-2 border-blue-500 pl-4">
-              <span className="font-medium text-gray-900">Audit a competitor in 3 minutes or on a schedule.</span>{' '}
+              <span className="font-medium text-gray-900">Analyze uploaded product information to create a Jobs-to-be-Done
+                map.</span>{' '}
+              Accelerate product manager understanding and documentation of customer needs. Extract core features, target users,
+              and key value propositions from product data.
+            </li>
+            <li className="border-l-2 border-blue-500 pl-4">
+              <span className="font-medium text-gray-900">Track and audit key competitors on demand or on a schedule.</span>{' '}
               Get back a structured comparison across your customers' Jobs-to-be-Done — not a
               bullet list of features.
             </li>
@@ -80,8 +92,9 @@ const LandingPage = () => {
             </li>
             <li className="border-l-2 border-blue-500 pl-4">
               <span className="font-medium text-gray-900">Synthesize across signals.</span>{' '}
-              Customer ideas, competitor reports, and internal feedback themes combine into
-              prioritized opportunities, each tagged to a specific job.
+              Customer ideas, competitor reports, internal feedback themes, and uploaded evidence combine into
+              prioritized opportunities, each tagged to a specific job. Optionally export opportunities to the idea voting
+              system for further customer or internal feedback.
             </li>
             <li className="border-l-2 border-blue-500 pl-4">
               <span className="font-medium text-gray-900">Ask in plain English.</span>{' '}
@@ -130,9 +143,6 @@ const LandingPage = () => {
 
         <section className="mb-16 bg-gray-50 border border-gray-200 rounded-lg p-8">
           <h2 className="text-2xl font-semibold text-gray-900 mb-4">Try it</h2>
-          <p className="text-gray-700 mb-6">
-            Access is hand-issued. Two paths:
-          </p>
           <div className="space-y-4">
             <div>
               <p className="text-gray-900 font-medium mb-1">Already have credentials?</p>
@@ -161,16 +171,9 @@ const LandingPage = () => {
             Feature-IQ is one bet on how AI is reshaping the practice of product management.
             The bigger conversation — what changes, what doesn't, what's still missing — is
             happening across the industry. Your feedback shapes both this tool and that
-            conversation. Three ways to engage:
+            conversation. Two ways to engage:
           </p>
-          <div className="grid gap-4 md:grid-cols-3">
-            <FeedbackCard
-              title="Use the product itself"
-              body="Feature-IQ runs its own feedback board. Submit ideas, vote, and watch them get triaged through the same flow you'd use for your own product."
-              cta="Join the feedback product"
-              href={FEATURE_IQ_FEEDBACK_INVITE_URL}
-              primary
-            />
+          <div className="grid gap-4 md:grid-cols-2">
             <FeedbackCard
               title="Email a quick thought"
               body="Best for general reactions, half-formed ideas, or 'what do you think about X' questions."
@@ -179,7 +182,7 @@ const LandingPage = () => {
             />
             <FeedbackCard
               title="GitHub Discussions or Issues"
-              body="Best for technical discussion, bug reports, and conversations the broader community might want to see."
+              body="Best for technical discussion, bug reports, and conversations a broader community might want to see."
               cta="Open a discussion"
               href={GITHUB_DISCUSSIONS_URL}
               secondaryCta="Or file an issue"
@@ -191,11 +194,13 @@ const LandingPage = () => {
         <section className="mb-16">
           <h2 className="text-2xl font-semibold text-gray-900 mb-4">What it isn't</h2>
           <ul className="space-y-2 text-gray-700">
-            <li>— A roadmapping tool. It informs roadmap decisions; it doesn't replace Jira / Linear / Aha /  Productboard.</li>
-            <li>— A replacement for a customer-facing portal. Voters are internal stakeholders, not the public. Future integrations may change this.</li>
+            <li>— A roadmapping tool. It informs roadmap decisions; it doesn't replace Jira / Linear / Aha / Productboard.</li>
+            <li>— A replacement for a customer-facing portal. Voters are internal stakeholders, not the public.</li>
             <li>— A live CRM integration. Internal feedback comes in via import, not real-time sync.</li>
-            <li>If feature-IQ is useful, future integrations may expand its capabilities.</li>
           </ul>
+          <p className="text-gray-700 mt-4">
+            If Feature-IQ proves useful, future integrations may expand its capabilities.
+          </p>
         </section>
       </main>
 
@@ -206,7 +211,7 @@ const LandingPage = () => {
             <a href={LINKEDIN_URL} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
               A.G. Lambert
             </a>
-            .
+            , with assistance from Claude Code.
           </p>
           <p className="flex gap-4">
             <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
