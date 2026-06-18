@@ -44,9 +44,11 @@ const WelcomePage = () => {
             Hi{user?.full_name ? `, ${user.full_name.split(' ')[0]}` : ''}.
           </h1>
           <p className="text-lg text-gray-700">
-            Feature-IQ runs automated competitive analysis against your customers' Jobs-to-be-Done,
-            then synthesizes the results with your customer feedback into prioritized opportunities
-            that flow into a voting board.
+            Feature-IQ builds a living factbase for your product — signals from competitors, customer
+            ideas, your internal data, and any evidence you upload (interview transcripts, extra
+            competitive research, anything). It organizes everything around your customers'
+            Jobs-to-be-Done, then synthesizes it into prioritized opportunities that flow into a
+            voting board.
           </p>
         </header>
 
@@ -55,8 +57,8 @@ const WelcomePage = () => {
           <div className="space-y-3 text-gray-700">
             <p>
               <span className="font-medium text-gray-900">Read access to a demo product</span> —{' '}
-              browse a fully populated example (Concur Invoice, AP automation). You can vote on its
-              ideas and ask Claude Desktop questions about it. You cannot run audits or change settings.
+              browse a fully populated example. You can vote on its ideas and connect an AI assistant
+              to ask questions about it. You cannot run audits or change settings.
             </p>
             {isPO && (
               <p>
@@ -74,22 +76,30 @@ const WelcomePage = () => {
               step="1"
               title="Browse the demo product"
               time="3 min"
-              body="Open Concur Invoice. Look at the Job Map (the analytical spine), one of the Competitor Reports (notice positions are grouped by job, not separate gaps/advantages), and the Synthesis Hub."
-              cta="Go to Competitive Intelligence"
+              body="Open the demo product. Look at the Job Map (the analytical spine), one of the Competitor Reports, and the latest Opportunity Synthesis. Notice opportunities are tagged to a customer need and traceable to the competitive analysis or evidence sources."
+              cta="Go to Product Dashboard"
               ctaHref="/product-intelligence"
               onClick={() => navigate('/product-intelligence')}
             />
             <ActionCard
               step="2"
-              title="Connect Claude Desktop"
+              title="Connect an AI assistant over MCP"
               time="5 min"
-              body='Generate an API key from your profile, paste it into Claude Desktop config. Then ask things like "What are the top 3 opportunities in my latest synthesis report, and which jobs do they serve?" This is the showcase use case.'
-              cta="Open my profile to generate a key"
+              body={
+                'Feature-IQ exposes its factbase through MCP, so you can query and drive it in plain ' +
+                'English from the MCP-capable tool of your choice. Easiest path, no install: in ' +
+                'claude.ai go to Settings → Connectors → Add custom connector, paste the MCP server ' +
+                'URL below, and leave the OAuth Client ID and Secret blank — sign in with your ' +
+                'Feature-IQ credentials when the browser prompts you. Claude Desktop and other MCP ' +
+                'tools work too: point them at the same URL. Prefer headless or CLI use? Generate an ' +
+                'API key from your profile instead. Once connected, ask things like "What are the top ' +
+                '3 opportunities in my latest synthesis report, and which jobs do they serve?"'
+              }
+              copyValue="https://feature-iq-mcp.onrender.com/mcp"
+              copyLabel="Copy MCP server URL"
+              cta="Need a key instead?"
               ctaHref="/profile"
               onClick={() => navigate('/profile')}
-              secondaryCta="Setup guide"
-              secondaryHref="https://github.com/aglambert1/feature-voting-system/blob/main/docs/getting-started/claude-desktop.md"
-              external
             />
             {isPO && (
               <ActionCard
@@ -118,7 +128,7 @@ const WelcomePage = () => {
           <ul className="space-y-2 text-gray-700 list-disc list-inside">
             <li>
               <span className="font-medium">The job map is load-bearing.</span> Skip it and every
-              downstream artifact is weaker. Spend the time.
+              downstream artifact is weaker. 
             </li>
             <li>
               <span className="font-medium">The system is async.</span> Audits, synthesis, and triage
@@ -126,8 +136,7 @@ const WelcomePage = () => {
             </li>
             <li>
               <span className="font-medium">Triage runs on every idea.</span> Each idea gets classified,
-              linked to the closest job, and tagged with competitive context. Not decoration — that's how
-              the loop closes.
+              linked to the closest job, and tagged with competitive context. 
             </li>
             <li>
               <span className="font-medium">Costs are real.</span> Each audit ~$0.50–$1.00. Synthesis
@@ -140,30 +149,20 @@ const WelcomePage = () => {
           <h2 className="text-xl font-semibold text-gray-900 mb-4">When you have questions</h2>
           <ul className="space-y-2 text-gray-700">
             <li>
-              <span className="font-medium">How does X work?</span>{' '}
-              <ExternalLink href="https://github.com/aglambert1/feature-voting-system/blob/main/docs/getting-started/architecture.md">
-                Architecture guide
-              </ExternalLink>{' '}
-              — JTBD model and major components
+              <span className="font-medium">Anything at all?</span>{' '}
+              <a href="mailto:aglambert@gmail.com" className="text-blue-600 hover:underline">
+                Email me
+              </a>{' '}
+              (aglambert@gmail.com) — happy to walk you through setup, the JTBD model, or what the
+              system can do, and to share the reference docs.
             </li>
             <li>
-              <span className="font-medium">What features exist?</span>{' '}
-              <ExternalLink href="https://github.com/aglambert1/feature-voting-system/blob/main/docs/getting-started/tour.md">
-                Tour
-              </ExternalLink>{' '}
-              — feature inventory by role
-            </li>
-            <li>
-              <span className="font-medium">Connect Claude Desktop?</span>{' '}
-              <ExternalLink href="https://github.com/aglambert1/feature-voting-system/blob/main/docs/getting-started/claude-desktop.md">
-                Setup guide
-              </ExternalLink>
-            </li>
-            <li>
-              <span className="font-medium">Something broken or surprising?</span> Contact the operator
-              who gave you access.
+              <span className="font-medium">Something broken or surprising?</span> Email me.
             </li>
           </ul>
+          <p className="text-gray-700 mt-3">
+            To return to this Welcome page, open the profile menu in the top-right.
+          </p>
         </section>
 
         <footer className="border-t border-gray-200 pt-8 mt-10">
@@ -177,7 +176,7 @@ const WelcomePage = () => {
                 disabled={acknowledging}
                 className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
               >
-                Competitive Intelligence
+                Product Dashboard
               </button>
             )}
             <button
@@ -217,9 +216,8 @@ interface ActionCardProps {
   cta?: string;
   ctaHref?: string;
   onClick?: () => void;
-  secondaryCta?: string;
-  secondaryHref?: string;
-  external?: boolean;
+  copyValue?: string;
+  copyLabel?: string;
 }
 
 const ActionCard = ({
@@ -230,53 +228,60 @@ const ActionCard = ({
   cta,
   ctaHref,
   onClick,
-  secondaryCta,
-  secondaryHref,
-  external,
-}: ActionCardProps) => (
-  <div className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
-    <div className="flex items-baseline gap-3 mb-2">
-      <span className="bg-blue-100 text-blue-800 text-xs font-semibold px-2 py-0.5 rounded">
-        Step {step}
-      </span>
-      <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
-      <span className="text-xs text-gray-500 ml-auto">{time}</span>
-    </div>
-    <p className="text-gray-700 text-sm mb-3">{body}</p>
-    {(cta || secondaryCta) && (
-      <div className="flex gap-2 flex-wrap">
-        {cta && ctaHref && (
-          <button
-            onClick={onClick}
-            className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
-          >
-            {cta}
-          </button>
-        )}
-        {secondaryCta && secondaryHref && (
-          <a
-            href={secondaryHref}
-            target={external ? '_blank' : undefined}
-            rel={external ? 'noopener noreferrer' : undefined}
-            className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-medium px-4 py-2 rounded transition-colors"
-          >
-            {secondaryCta}
-          </a>
-        )}
-      </div>
-    )}
-  </div>
-);
+  copyValue,
+  copyLabel,
+}: ActionCardProps) => {
+  const [copied, setCopied] = useState(false);
 
-const ExternalLink = ({ href, children }: { href: string; children: React.ReactNode }) => (
-  <a
-    href={href}
-    target="_blank"
-    rel="noopener noreferrer"
-    className="text-blue-600 hover:underline"
-  >
-    {children}
-  </a>
-);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(copyValue ?? '');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard can fail (permissions / insecure context) — the URL is also
+      // printed in the body text, so the user still has it.
+    }
+  };
+
+  const hasActions = copyValue || (cta && ctaHref);
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
+      <div className="flex items-baseline gap-3 mb-2">
+        <span className="bg-blue-100 text-blue-800 text-xs font-semibold px-2 py-0.5 rounded">
+          Step {step}
+        </span>
+        <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+        <span className="text-xs text-gray-500 ml-auto">{time}</span>
+      </div>
+      <p className="text-gray-700 text-sm mb-3">{body}</p>
+      {hasActions && (
+        <div className="flex gap-2 flex-wrap items-center">
+          {copyValue && (
+            <button
+              onClick={handleCopy}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded transition-colors"
+            >
+              {copied ? 'Copied!' : copyLabel ?? 'Copy'}
+            </button>
+          )}
+          {cta && ctaHref && (
+            <button
+              onClick={onClick}
+              className={
+                copyValue
+                  ? 'text-blue-600 hover:underline text-sm font-medium px-2 py-2'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded transition-colors'
+              }
+            >
+              {cta}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default WelcomePage;
