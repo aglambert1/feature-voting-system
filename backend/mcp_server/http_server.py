@@ -13,7 +13,7 @@ from datetime import datetime
 from urllib.parse import urlencode
 
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from fastmcp.server.auth import MultiAuth
 from mcp.server.auth.provider import construct_redirect_uri
@@ -207,6 +207,45 @@ async def oauth_login(request: Request) -> Response:
     final_url = construct_redirect_uri(redirect_uri, code=txn_id, state=state or None)
     logger.info("OAuth login: user_id=%d authorized, redirecting to client", user_id)
     return RedirectResponse(url=str(final_url), status_code=302)
+
+
+def _protected_resource_metadata() -> dict:
+    """RFC 9728 OAuth 2.0 Protected Resource Metadata for the /mcp resource.
+
+    Required by the MCP authorization spec so a client (notably the claude.ai
+    custom-connector flow) can discover which authorization server protects
+    /mcp. Without it, claude.ai can't bootstrap OAuth from just the server URL
+    and falls back to manual config. The config-file/mcp-remote path works
+    without this because it skips discovery entirely.
+
+    `authorization_servers` must match the issuer advertised by
+    /.well-known/oauth-authorization-server exactly, including the trailing
+    slash, or discovery silently fails.
+    """
+    base = settings.mcp_base_url.rstrip("/")
+    return {
+        "resource": f"{base}/mcp",
+        "authorization_servers": [f"{base}/"],
+        "scopes_supported": ["mcp"],
+        "bearer_methods_supported": ["header"],
+    }
+
+
+# Serve both the bare path and the resource-suffixed path. RFC 9728 §3.1 places
+# the document at the resource-suffixed path (/.../oauth-protected-resource/mcp),
+# but clients also probe the bare path, so advertise both.
+@mcp.custom_route(
+    "/.well-known/oauth-protected-resource",
+    methods=["GET"],
+    name="protected_resource_metadata",
+)
+@mcp.custom_route(
+    "/.well-known/oauth-protected-resource/mcp",
+    methods=["GET"],
+    name="protected_resource_metadata_mcp",
+)
+async def protected_resource_metadata(request: Request) -> Response:
+    return JSONResponse(_protected_resource_metadata())
 
 
 def main():
