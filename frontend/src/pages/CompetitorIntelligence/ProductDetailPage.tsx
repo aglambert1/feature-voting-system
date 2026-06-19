@@ -465,6 +465,11 @@ export default function ProductDetailPage() {
   const isCurrentUserOwner = product?.created_by_user_id === user?.id
     || members.some(m => m.user_id === user?.id && m.permission_level === 'owner');
 
+  const isViewOnly = !isCurrentUserOwner
+    && (user?.role === UserRole.PRODUCT_OWNER || user?.role === UserRole.ADMIN)
+    && members.some(m => m.user_id === user?.id && m.permission_level === 'view')
+    && !members.some(m => m.user_id === user?.id && (m.permission_level === 'edit' || m.permission_level === 'owner'));
+
   const handleShareAccess = async () => {
     if (!productId || !shareEmail.trim()) return;
     setSharingInProgress(true);
@@ -625,6 +630,13 @@ export default function ProductDetailPage() {
             actionMessage.type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'
           }`}>
             {actionMessage.text}
+          </div>
+        )}
+
+        {/* View-only notice for POs/Admins with VIEW access */}
+        {isViewOnly && (
+          <div className="mb-6 p-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+            You have view-only access to this product. Analyses and edits require edit or owner permission from a product owner.
           </div>
         )}
 
