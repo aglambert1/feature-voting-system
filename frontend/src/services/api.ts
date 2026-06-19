@@ -1117,7 +1117,7 @@ export const redeemInviteCode = async (code: string): Promise<{ product_id: numb
 
 export const createInviteCode = async (
   productId: number,
-  options?: { max_uses?: number; expires_at?: string; permission_level?: string }
+  options?: { max_uses?: number; expires_at?: string }
 ): Promise<InviteCode> => {
   const response = await api.post<InviteCode>(
     `/products/${productId}/invite-codes`,

@@ -36,7 +36,6 @@ router = APIRouter(tags=["Invites"])
 class CreateInviteCodeRequest(BaseModel):
     max_uses: Optional[int] = Field(None, ge=1, description="Max redemptions (null = unlimited)")
     expires_at: Optional[datetime] = Field(None, description="Expiration datetime (null = never)")
-    permission_level: Optional[str] = Field(None, description="Permission level: view or edit (default: view)")
 
 
 class InviteCodeResponse(BaseModel):
@@ -204,21 +203,12 @@ def create_invite_code(
     """Create a new invite code for a product."""
     _check_po_access(db, current_user, product_id)
 
-    perm_level = ProductPermissionLevel.VIEW
-    if request.permission_level:
-        perm_level = _parse_permission_level(request.permission_level)
-        if perm_level == ProductPermissionLevel.OWNER:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invite codes cannot grant OWNER permission. Use direct sharing instead."
-            )
-
     invite = ProductInviteCode(
         product_id=product_id,
         code=ProductInviteCode.generate_code(),
         created_by_user_id=current_user.id,
         max_uses=request.max_uses,
-        permission_level=perm_level,
+        permission_level=ProductPermissionLevel.VIEW,
         expires_at=request.expires_at,
     )
     db.add(invite)

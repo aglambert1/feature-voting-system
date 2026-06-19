@@ -635,25 +635,17 @@ class TestRevokePermission:
 
 class TestInviteCodePermissionLevel:
 
-    def test_create_invite_with_edit_permission(self, client, po_user, test_product):
+    def test_invite_always_grants_view(self, client, po_user, test_product):
+        """Invite codes always grant VIEW regardless of any permission_level in request body."""
         resp = client.post(
             f"/products/{test_product.id}/invite-codes",
-            json={"permission_level": "edit"},
+            json={},
             headers=auth_headers(po_user),
         )
         assert resp.status_code == 201
-        assert resp.json()["permission_level"] == "edit"
+        assert resp.json()["permission_level"] == "view"
 
-    def test_create_invite_with_owner_rejected(self, client, po_user, test_product):
-        resp = client.post(
-            f"/products/{test_product.id}/invite-codes",
-            json={"permission_level": "owner"},
-            headers=auth_headers(po_user),
-        )
-        assert resp.status_code == 400
-        assert "cannot grant OWNER" in resp.json()["detail"]
-
-    def test_redeem_edit_invite_grants_edit(self, client, db_session, po_user, test_product):
+    def test_redeem_invite_grants_view(self, client, db_session, po_user, test_product):
         from app.models.product_invite import ProductInviteCode
         from app.models.user import UserRole
 
@@ -661,7 +653,7 @@ class TestInviteCodePermissionLevel:
             product_id=test_product.id,
             code=ProductInviteCode.generate_code(),
             created_by_user_id=po_user.id,
-            permission_level=ProductPermissionLevel.EDIT,
+            permission_level=ProductPermissionLevel.VIEW,
         )
         db_session.add(invite)
         db_session.commit()
@@ -680,4 +672,4 @@ class TestInviteCodePermissionLevel:
             ProductPermission.user_id == redeemer.id,
         ).first()
         assert perm is not None
-        assert perm.permission_level == ProductPermissionLevel.EDIT
+        assert perm.permission_level == ProductPermissionLevel.VIEW

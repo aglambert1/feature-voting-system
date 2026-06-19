@@ -28,6 +28,7 @@ export default function UserManagementPage() {
   const [editingProductsUserId, setEditingProductsUserId] = useState<number | null>(null);
   const [editingProductIds, setEditingProductIds] = useState<number[]>([]);
   const [editingPermissionLevels, setEditingPermissionLevels] = useState<Record<number, string>>({});
+  const [adminOwnedProductIds, setAdminOwnedProductIds] = useState<Set<number>>(new Set());
   const [createFormData, setCreateFormData] = useState<CreateFormData>({
     username: '',
     email: '',
@@ -48,7 +49,17 @@ export default function UserManagementPage() {
       const response = await api.get('/ideas/products');
       setAllProducts(Array.isArray(response.data) ? response.data : []);
     } catch {
-      // Admin should see all products
+      // Products may not be accessible
+    }
+    if (user?.id) {
+      try {
+        const myPerms = await getUserProducts(user.id);
+        setAdminOwnedProductIds(new Set(
+          myPerms.filter(p => p.permission_level === 'owner').map(p => p.product_id)
+        ));
+      } catch {
+        setAdminOwnedProductIds(new Set());
+      }
     }
   };
 
@@ -425,44 +436,52 @@ export default function UserManagementPage() {
             </div>
 
             <div className="px-6 py-4">
-              {allProducts.length === 0 ? (
-                <p className="text-sm text-gray-500">No products available.</p>
-              ) : (
-                <div className="border border-gray-300 rounded-lg max-h-60 overflow-y-auto">
-                  {allProducts.map(product => (
-                    <div
-                      key={product.id}
-                      className="flex items-center justify-between px-3 py-2 hover:bg-gray-50"
-                    >
-                      <label className="flex items-center cursor-pointer flex-1">
-                        <input
-                          type="checkbox"
-                          checked={editingProductIds.includes(product.id)}
-                          onChange={() => {
-                            toggleProductId(product.id, editingProductIds, setEditingProductIds);
-                            if (!editingProductIds.includes(product.id)) {
-                              setEditingPermissionLevels(prev => ({ ...prev, [product.id]: prev[product.id] || 'view' }));
-                            }
-                          }}
-                          className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                        />
-                        <span className="ml-2 text-sm text-gray-700">{product.product_name}</span>
-                      </label>
-                      {editingProductIds.includes(product.id) && (
-                        <select
-                          value={editingPermissionLevels[product.id] || 'view'}
-                          onChange={e => setEditingPermissionLevels(prev => ({ ...prev, [product.id]: e.target.value }))}
-                          className="ml-2 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+              {(() => {
+                const ownedProducts = allProducts.filter(p => adminOwnedProductIds.has(p.id));
+                return ownedProducts.length === 0 ? (
+                  <p className="text-sm text-gray-500">You don't have owner access to any products.</p>
+                ) : (
+                  <>
+                    <div className="border border-gray-300 rounded-lg max-h-60 overflow-y-auto">
+                      {ownedProducts.map(product => (
+                        <div
+                          key={product.id}
+                          className="flex items-center justify-between px-3 py-2 hover:bg-gray-50"
                         >
-                          <option value="view">View</option>
-                          <option value="edit">Edit</option>
-                          <option value="owner">Owner</option>
-                        </select>
-                      )}
+                          <label className="flex items-center cursor-pointer flex-1">
+                            <input
+                              type="checkbox"
+                              checked={editingProductIds.includes(product.id)}
+                              onChange={() => {
+                                toggleProductId(product.id, editingProductIds, setEditingProductIds);
+                                if (!editingProductIds.includes(product.id)) {
+                                  setEditingPermissionLevels(prev => ({ ...prev, [product.id]: prev[product.id] || 'view' }));
+                                }
+                              }}
+                              className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                            />
+                            <span className="ml-2 text-sm text-gray-700">{product.product_name}</span>
+                          </label>
+                          {editingProductIds.includes(product.id) && (
+                            <select
+                              value={editingPermissionLevels[product.id] || 'view'}
+                              onChange={e => setEditingPermissionLevels(prev => ({ ...prev, [product.id]: e.target.value }))}
+                              className="ml-2 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            >
+                              <option value="view">View</option>
+                              <option value="edit">Edit</option>
+                              <option value="owner">Owner</option>
+                            </select>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
+                    <p className="mt-2 text-xs text-gray-500">
+                      Only products where you have owner access are shown.
+                    </p>
+                  </>
+                );
+              })()}
             </div>
 
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
@@ -569,32 +588,35 @@ export default function UserManagementPage() {
                   </select>
                 </div>
 
-                {allProducts.length > 0 && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Product Access
-                    </label>
-                    <div className="border border-gray-300 rounded-lg max-h-40 overflow-y-auto">
-                      {allProducts.map(product => (
-                        <label
-                          key={product.id}
-                          className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={createFormData.product_ids.includes(product.id)}
-                            onChange={() => toggleProductId(product.id, createFormData.product_ids, (ids) => setCreateFormData({...createFormData, product_ids: ids}))}
-                            className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                          />
-                          <span className="ml-2 text-sm text-gray-700">{product.product_name}</span>
-                        </label>
-                      ))}
+                {(() => {
+                  const ownedProducts = allProducts.filter(p => adminOwnedProductIds.has(p.id));
+                  return ownedProducts.length > 0 ? (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Product Access
+                      </label>
+                      <div className="border border-gray-300 rounded-lg max-h-40 overflow-y-auto">
+                        {ownedProducts.map(product => (
+                          <label
+                            key={product.id}
+                            className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={createFormData.product_ids.includes(product.id)}
+                              onChange={() => toggleProductId(product.id, createFormData.product_ids, (ids) => setCreateFormData({...createFormData, product_ids: ids}))}
+                              className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                            />
+                            <span className="ml-2 text-sm text-gray-700">{product.product_name}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <p className="mt-1 text-xs text-gray-500">
+                        Only products where you have owner access are shown.
+                      </p>
                     </div>
-                    <p className="mt-1 text-xs text-gray-500">
-                      Select products this user can access. Can be changed later.
-                    </p>
-                  </div>
-                )}
+                  ) : null;
+                })()}
               </div>
 
               <div className="mt-6 flex justify-end space-x-3">

@@ -797,20 +797,17 @@ def product_update_agent_config(
 
 
 @mcp.tool()
-def product_create_invite(product_id: int, max_uses: int = 0, permission_level: str = "view") -> dict:
-    """Create an invite code for a product so others can join. Returns the invite code.
+def product_create_invite(product_id: int, max_uses: int = 0) -> dict:
+    """Create an invite code for a product so voters can self-register. Returns the invite code.
+
+    Invite codes always grant VIEW permission. Use the sharing UI or member management
+    endpoints to grant higher permission levels to specific users.
 
     Args:
         product_id: The product to create an invite for.
         max_uses: Maximum number of times this code can be redeemed (0 = unlimited).
-        permission_level: Permission granted to users who redeem this code: "view" or "edit" (default: "view").
     """
     from app.models.product_invite import ProductInviteCode
-
-    perm_level_str = permission_level.lower().strip()
-    if perm_level_str not in ("view", "edit"):
-        return {"error": "permission_level must be 'view' or 'edit'. Use direct sharing for owner access."}
-    perm_level = ProductPermissionLevel.VIEW if perm_level_str == "view" else ProductPermissionLevel.EDIT
 
     with get_session() as db:
         denied = require_product_access(db, product_id, ProductPermissionLevel.OWNER)
@@ -822,7 +819,7 @@ def product_create_invite(product_id: int, max_uses: int = 0, permission_level: 
             code=ProductInviteCode.generate_code(),
             created_by_user_id=resolve_user_id_for_job(db, product_id),
             max_uses=max_uses if max_uses > 0 else None,
-            permission_level=perm_level,
+            permission_level=ProductPermissionLevel.VIEW,
         )
         db.add(invite)
         db.flush()

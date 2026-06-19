@@ -800,15 +800,32 @@ async def get_user_products(
         ProductPermission.product_id.in_(admin_product_ids),
     ).all()
 
-    return [
-        UserProductResponse(
+    results = {
+        product.id: UserProductResponse(
             product_id=product.id,
             product_name=product.product_name,
             permission_level=perm.permission_level.value,
             granted_at=perm.granted_at,
         )
         for perm, product in permissions
-    ]
+    }
+
+    # Include implicit OWNER for products the target user created
+    created_products = db.query(CIProduct).filter(
+        CIProduct.created_by_user_id == user_id,
+        CIProduct.status == "active",
+        CIProduct.id.in_(admin_product_ids),
+    ).all()
+    for product in created_products:
+        if product.id not in results:
+            results[product.id] = UserProductResponse(
+                product_id=product.id,
+                product_name=product.product_name,
+                permission_level="owner",
+                granted_at=product.created_at,
+            )
+
+    return list(results.values())
 
 
 @router.put("/users/{user_id}/products", response_model=List[UserProductResponse])
@@ -897,12 +914,28 @@ async def set_user_products(
         ProductPermission.product_id.in_(admin_product_ids),
     ).all()
 
-    return [
-        UserProductResponse(
+    results = {
+        product.id: UserProductResponse(
             product_id=product.id,
             product_name=product.product_name,
             permission_level=perm.permission_level.value,
             granted_at=perm.granted_at,
         )
         for perm, product in permissions
-    ]
+    }
+
+    created_products = db.query(CIProduct).filter(
+        CIProduct.created_by_user_id == user_id,
+        CIProduct.status == "active",
+        CIProduct.id.in_(admin_product_ids),
+    ).all()
+    for product in created_products:
+        if product.id not in results:
+            results[product.id] = UserProductResponse(
+                product_id=product.id,
+                product_name=product.product_name,
+                permission_level="owner",
+                granted_at=product.created_at,
+            )
+
+    return list(results.values())
