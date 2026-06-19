@@ -527,7 +527,7 @@ export default function ProductDetailPage() {
       getProductMembers(parseInt(productId))
         .then(m => { setMembers(m); setMemberFetchDenied(false); })
         .catch((err: any) => {
-          if (err?.response?.status === 403) setMemberFetchDenied(true);
+          if (err?.status === 403) setMemberFetchDenied(true);
         });
     }
   }, [productId]);
