@@ -467,9 +467,7 @@ export default function ProductDetailPage() {
 
   const [memberFetchDenied, setMemberFetchDenied] = useState(false);
 
-  const isViewOnly = !isCurrentUserOwner
-    && (user?.role === UserRole.PRODUCT_OWNER || user?.role === UserRole.ADMIN)
-    && memberFetchDenied;
+  const isViewOnly = !isCurrentUserOwner && memberFetchDenied;
 
   const handleShareAccess = async () => {
     if (!productId || !shareEmail.trim()) return;
