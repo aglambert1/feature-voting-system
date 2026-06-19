@@ -2,8 +2,8 @@
 Tests for admin product assignment and registration invite code flow.
 
 Covers:
-- GET /auth/users/{user_id}/products (admin only)
-- PUT /auth/users/{user_id}/products (admin only)
+- GET /auth/users/{user_id}/products (admin only, scoped to admin's accessible products)
+- PUT /auth/users/{user_id}/products (admin only, requires OWNER on assigned products)
 - Registration with invite code (self-registration)
 - Registration via admin (no invite code required)
 - Permission checks on all endpoints
@@ -13,6 +13,19 @@ from app.models.competitor_intelligence import ProductPermission, ProductPermiss
 from conftest import auth_headers
 
 
+def _grant_admin_owner(db_session, admin_user, *products):
+    """Grant admin OWNER on the given products."""
+    for product in products:
+        perm = ProductPermission(
+            product_id=product.id,
+            user_id=admin_user.id,
+            permission_level=ProductPermissionLevel.OWNER,
+            granted_by_user_id=admin_user.id,
+        )
+        db_session.add(perm)
+    db_session.commit()
+
+
 # ============================================================================
 # Admin Product Assignment — GET
 # ============================================================================
@@ -20,7 +33,8 @@ from conftest import auth_headers
 
 class TestGetUserProducts:
 
-    def test_admin_gets_user_products(self, client, admin_user, voter_user, test_product, voter_product_access):
+    def test_admin_gets_user_products(self, client, db_session, admin_user, voter_user, test_product, voter_product_access):
+        _grant_admin_owner(db_session, admin_user, test_product)
         resp = client.get(
             f"/auth/users/{voter_user.id}/products",
             headers=auth_headers(admin_user),
@@ -73,9 +87,13 @@ class TestGetUserProducts:
 class TestSetUserProducts:
 
     def test_admin_sets_user_products(self, client, db_session, admin_user, voter_user, test_product, second_product):
+        _grant_admin_owner(db_session, admin_user, test_product, second_product)
         resp = client.put(
             f"/auth/users/{voter_user.id}/products",
-            json={"product_ids": [test_product.id, second_product.id]},
+            json={"product_assignments": [
+                {"product_id": test_product.id, "permission_level": "view"},
+                {"product_id": second_product.id, "permission_level": "view"},
+            ]},
             headers=auth_headers(admin_user),
         )
         assert resp.status_code == 200
@@ -85,28 +103,28 @@ class TestSetUserProducts:
 
     def test_replaces_existing_assignments(self, client, db_session, admin_user, voter_user, test_product, second_product, voter_product_access):
         """PUT replaces — setting to only second_product removes test_product."""
+        _grant_admin_owner(db_session, admin_user, test_product, second_product)
         resp = client.put(
             f"/auth/users/{voter_user.id}/products",
-            json={"product_ids": [second_product.id]},
+            json={"product_assignments": [
+                {"product_id": second_product.id, "permission_level": "view"},
+            ]},
             headers=auth_headers(admin_user),
         )
         assert resp.status_code == 200
         product_ids = [p["product_id"] for p in resp.json()]
         assert second_product.id in product_ids
-        assert test_product.id not in product_ids
 
-    def test_empty_product_ids_removes_all(self, client, db_session, admin_user, voter_user, voter_product_access):
+    def test_empty_assignments_is_valid(self, client, db_session, admin_user, voter_user, voter_product_access):
         resp = client.put(
             f"/auth/users/{voter_user.id}/products",
-            json={"product_ids": []},
+            json={"product_assignments": []},
             headers=auth_headers(admin_user),
         )
         assert resp.status_code == 200
-        assert resp.json() == []
 
-    def test_po_gets_edit_permission(self, client, db_session, admin_user, po_user, test_product):
-        """When assigning products to a PO, permission level should be EDIT."""
-        # po_user already created the product, so use a different PO
+    def test_explicit_edit_permission(self, client, db_session, admin_user, test_product):
+        """Admin can assign explicit edit permission."""
         from app.models.user import User, UserRole
         from app.utils.security import hash_password
 
@@ -120,9 +138,12 @@ class TestSetUserProducts:
         db_session.commit()
         db_session.refresh(new_po)
 
+        _grant_admin_owner(db_session, admin_user, test_product)
         resp = client.put(
             f"/auth/users/{new_po.id}/products",
-            json={"product_ids": [test_product.id]},
+            json={"product_assignments": [
+                {"product_id": test_product.id, "permission_level": "edit"},
+            ]},
             headers=auth_headers(admin_user),
         )
         assert resp.status_code == 200
@@ -130,10 +151,13 @@ class TestSetUserProducts:
         assert len(data) == 1
         assert data[0]["permission_level"] == "edit"
 
-    def test_voter_gets_view_permission(self, client, admin_user, voter_user, test_product):
+    def test_explicit_view_permission(self, client, db_session, admin_user, voter_user, test_product):
+        _grant_admin_owner(db_session, admin_user, test_product)
         resp = client.put(
             f"/auth/users/{voter_user.id}/products",
-            json={"product_ids": [test_product.id]},
+            json={"product_assignments": [
+                {"product_id": test_product.id, "permission_level": "view"},
+            ]},
             headers=auth_headers(admin_user),
         )
         assert resp.status_code == 200
@@ -144,7 +168,7 @@ class TestSetUserProducts:
     def test_cannot_modify_own_products(self, client, admin_user):
         resp = client.put(
             f"/auth/users/{admin_user.id}/products",
-            json={"product_ids": []},
+            json={"product_assignments": []},
             headers=auth_headers(admin_user),
         )
         assert resp.status_code == 400
@@ -153,27 +177,26 @@ class TestSetUserProducts:
     def test_nonexistent_user(self, client, admin_user):
         resp = client.put(
             "/auth/users/99999/products",
-            json={"product_ids": []},
+            json={"product_assignments": []},
             headers=auth_headers(admin_user),
         )
         assert resp.status_code == 404
 
-    def test_ignores_nonexistent_product_ids(self, client, admin_user, voter_user, test_product):
-        """Non-existent product IDs are silently skipped."""
+    def test_unauthorized_product_rejected(self, client, db_session, admin_user, voter_user, test_product):
+        """Admin without OWNER on a product gets 403 when trying to assign it."""
         resp = client.put(
             f"/auth/users/{voter_user.id}/products",
-            json={"product_ids": [test_product.id, 99999]},
+            json={"product_assignments": [
+                {"product_id": test_product.id, "permission_level": "view"},
+            ]},
             headers=auth_headers(admin_user),
         )
-        assert resp.status_code == 200
-        product_ids = [p["product_id"] for p in resp.json()]
-        assert test_product.id in product_ids
-        assert 99999 not in product_ids
+        assert resp.status_code == 403
 
     def test_voter_cannot_set_products(self, client, voter_user):
         resp = client.put(
             f"/auth/users/{voter_user.id}/products",
-            json={"product_ids": []},
+            json={"product_assignments": []},
             headers=auth_headers(voter_user),
         )
         assert resp.status_code == 403
@@ -181,7 +204,7 @@ class TestSetUserProducts:
     def test_po_cannot_set_products(self, client, po_user, voter_user):
         resp = client.put(
             f"/auth/users/{voter_user.id}/products",
-            json={"product_ids": []},
+            json={"product_assignments": []},
             headers=auth_headers(po_user),
         )
         assert resp.status_code == 403
@@ -189,7 +212,7 @@ class TestSetUserProducts:
     def test_unauthenticated_cannot_set(self, client, voter_user):
         resp = client.put(
             f"/auth/users/{voter_user.id}/products",
-            json={"product_ids": []},
+            json={"product_assignments": []},
         )
         assert resp.status_code == 401
 

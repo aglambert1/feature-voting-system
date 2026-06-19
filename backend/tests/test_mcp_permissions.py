@@ -66,7 +66,7 @@ def no_access_user(db_session):
 
 @pytest.fixture
 def admin_user(db_session):
-    """Admin user — bypasses all permission checks."""
+    """Admin user — requires explicit product permission like all other roles."""
     user = User(
         email="admin@test.com",
         username="adminuser",
@@ -170,8 +170,23 @@ class TestRequireProductAccess:
             assert denied is not None
             assert "error" in denied
 
-    def test_admin_bypasses_checks(self, db_session, product, admin_user):
-        """Admin users bypass all product permission checks."""
+    def test_admin_without_permission_denied(self, db_session, product, admin_user):
+        """Admin without explicit product access is denied."""
+        with _patch_user_id(admin_user.id):
+            result = require_product_access(db_session, product.id, ProductPermissionLevel.OWNER)
+            assert result is not None
+            assert "error" in result
+
+    def test_admin_with_explicit_permission_succeeds(self, db_session, product, admin_user):
+        """Admin with explicit OWNER permission on the product is allowed."""
+        perm = ProductPermission(
+            product_id=product.id,
+            user_id=admin_user.id,
+            permission_level=ProductPermissionLevel.OWNER,
+            granted_by_user_id=admin_user.id,
+        )
+        db_session.add(perm)
+        db_session.commit()
         with _patch_user_id(admin_user.id):
             assert require_product_access(db_session, product.id, ProductPermissionLevel.OWNER) is None
 
@@ -221,10 +236,18 @@ class TestGetPermittedProducts:
             products = get_permitted_products(db_session)
             assert len(products) == 0
 
-    def test_admin_sees_all(self, db_session, product, product_b, admin_user):
-        """Admin sees all active products."""
+    def test_admin_sees_only_permitted_products(self, db_session, product, product_b, admin_user):
+        """Admin only sees products with explicit permission."""
+        perm = ProductPermission(
+            product_id=product.id,
+            user_id=admin_user.id,
+            permission_level=ProductPermissionLevel.OWNER,
+            granted_by_user_id=admin_user.id,
+        )
+        db_session.add(perm)
+        db_session.commit()
         with _patch_user_id(admin_user.id):
             products = get_permitted_products(db_session)
             ids = {p.id for p in products}
             assert product.id in ids
-            assert product_b.id in ids
+            assert product_b.id not in ids

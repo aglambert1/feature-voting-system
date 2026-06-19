@@ -10,8 +10,20 @@ from unittest.mock import patch, MagicMock
 
 from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.user import UserRole
-from app.models.competitor_intelligence import CIProduct
+from app.models.competitor_intelligence import CIProduct, ProductPermission, ProductPermissionLevel
 from conftest import auth_headers
+
+
+def _grant_admin_access(db_session, test_product, admin_user, level=ProductPermissionLevel.EDIT):
+    """Grant admin_user explicit permission on test_product."""
+    perm = ProductPermission(
+        product_id=test_product.id,
+        user_id=admin_user.id,
+        permission_level=level,
+        granted_by_user_id=admin_user.id,
+    )
+    db_session.add(perm)
+    db_session.commit()
 
 
 class TestCreateIdea:
@@ -104,7 +116,8 @@ class TestListIdeas:
         )
         assert resp.status_code == 404
 
-    def test_list_ideas_admin_sees_all(self, client, admin_user, db_session, test_product):
+    def test_list_ideas_admin_with_access(self, client, admin_user, db_session, test_product):
+        _grant_admin_access(db_session, test_product, admin_user)
         pending = Idea(
             title="Pending Idea",
             what_description="A pending feature idea",
@@ -146,6 +159,7 @@ class TestListIdeas:
 class TestIdeaReview:
 
     def test_review_approve(self, client, admin_user, db_session, test_product):
+        _grant_admin_access(db_session, test_product, admin_user)
         idea = Idea(
             title="Reviewable Idea",
             what_description="A feature that needs review first",
@@ -169,6 +183,7 @@ class TestIdeaReview:
         assert resp.json()["status"] == "accepted"
 
     def test_review_reject(self, client, admin_user, db_session, test_product):
+        _grant_admin_access(db_session, test_product, admin_user)
         idea = Idea(
             title="Rejectable Idea",
             what_description="A feature that should be rejected",
@@ -191,7 +206,8 @@ class TestIdeaReview:
         assert resp.status_code == 200
         assert resp.json()["status"] == "not_appropriate"
 
-    def test_review_invalid_action(self, client, admin_user, test_idea):
+    def test_review_invalid_action(self, client, admin_user, db_session, test_product, test_idea):
+        _grant_admin_access(db_session, test_product, admin_user)
         resp = client.post(f"/ideas/{test_idea.id}/review", json={
             "action": "invalid_action",
         }, headers=auth_headers(admin_user))
@@ -207,6 +223,7 @@ class TestIdeaReview:
 class TestPublishIdea:
 
     def test_publish_pending_idea(self, client, admin_user, db_session, test_product):
+        _grant_admin_access(db_session, test_product, admin_user)
         idea = Idea(
             title="Publishable Idea",
             what_description="A feature that can be published for voting",
@@ -227,7 +244,8 @@ class TestPublishIdea:
         assert resp.json()["status"] == "accepted"
         assert resp.json()["is_active"] is True
 
-    def test_publish_already_accepted_fails(self, client, admin_user, test_idea):
+    def test_publish_already_accepted_fails(self, client, admin_user, db_session, test_product, test_idea):
+        _grant_admin_access(db_session, test_product, admin_user)
         resp = client.post(f"/ideas/{test_idea.id}/publish", headers=auth_headers(admin_user))
         assert resp.status_code == 400
 

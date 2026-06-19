@@ -53,11 +53,7 @@ class PermissionService:
         if not product:
             return False
 
-        # 1. System admins bypass product permissions
-        if user.role == UserRole.ADMIN:
-            return True
-
-        # 2. Product creator has implicit OWNER access
+        # 1. Product creator has implicit OWNER access
         if product.created_by_user_id == user_id:
             return True
 
@@ -107,10 +103,9 @@ class PermissionService:
         """
         Get all products accessible to a user at the specified permission level.
 
-        Role-based filtering (MVP):
-        - VOTER: Can see all products (read-only for dropdown in idea submission)
-        - PRODUCT_OWNER: Can only see products they created
-        - ADMIN: Can see all products
+        Role-based filtering:
+        - ADMIN / PRODUCT_OWNER: Products they created + explicitly granted
+        - VOTER: Only products with explicit permission grants
 
         Args:
             user_id: User ID
@@ -131,12 +126,8 @@ class PermissionService:
         query = self.db.query(CIProduct).filter(CIProduct.status == "active")
 
         # Role-based filtering
-        if user.role == UserRole.ADMIN:
-            # ADMINs see all products
-            return query.all()
-
-        elif user.role == UserRole.PRODUCT_OWNER:
-            # POs see products they created + products explicitly granted to them
+        if user.role in (UserRole.ADMIN, UserRole.PRODUCT_OWNER):
+            # ADMINs and POs see products they created + products explicitly granted
             granted_ids = select(ProductPermission.product_id).where(
                 ProductPermission.user_id == user_id
             )

@@ -170,8 +170,7 @@ def list_ideas(
     List ideas with vote counts, optionally filtered by product.
 
     Visibility rules:
-    - ADMIN: See all ideas (active and inactive) for all products
-    - PRODUCT_OWNER: See all ideas (active and inactive) for products they own
+    - ADMIN / PRODUCT_OWNER: See all ideas (active and inactive) for products they have access to
     - VOTER: See all their own submitted ideas (any status) + only active ideas from others
 
     Sort options:
@@ -197,13 +196,12 @@ def list_ideas(
     from sqlalchemy import or_, and_
 
     # Determine user's visibility level
-    is_admin = current_user and current_user.role == UserRole.ADMIN
-    is_po = current_user and current_user.role == UserRole.PRODUCT_OWNER
+    is_po_or_admin = current_user and current_user.role in (UserRole.ADMIN, UserRole.PRODUCT_OWNER)
 
-    # Get accessible product IDs for PO and VOTER roles
+    # Get accessible product IDs
     accessible_product_ids = []
-    if is_po and current_user:
-        # POs: products they created + explicitly granted
+    if is_po_or_admin and current_user:
+        # Admins and POs: products they created + explicitly granted
         owned = db.query(CIProduct.id).filter(
             CIProduct.created_by_user_id == current_user.id
         ).all()
@@ -221,11 +219,8 @@ def list_ideas(
         accessible_product_ids = [p.product_id for p in permitted]
 
     # Build base query with visibility rules
-    if is_admin:
-        # Admins see all ideas
-        query = db.query(Idea)
-    elif is_po and current_user:
-        # POs see all ideas for accessible products, plus their own submissions
+    if is_po_or_admin and current_user:
+        # Admins and POs see all ideas for accessible products, plus their own submissions
         query = db.query(Idea).filter(
             or_(
                 Idea.product_id.in_(accessible_product_ids),
@@ -314,7 +309,7 @@ def list_ideas(
     # Default: pending_first for PO/Admin, most_votes for voters
     effective_sort = sort_by
     if effective_sort is None:
-        if is_admin or is_po:
+        if is_po_or_admin:
             effective_sort = IdeaSortOption.PENDING_FIRST
         else:
             effective_sort = IdeaSortOption.MOST_VOTES
@@ -377,9 +372,7 @@ def get_products_for_ideas(
 
     query = db.query(CIProduct).filter(CIProduct.status == "active")
 
-    if current_user.role == UserRole.ADMIN:
-        pass  # no filter
-    elif current_user.role == UserRole.PRODUCT_OWNER:
+    if current_user.role in (UserRole.ADMIN, UserRole.PRODUCT_OWNER):
         granted_ids = select(ProductPermission.product_id).where(
             ProductPermission.user_id == current_user.id
         )
@@ -1197,13 +1190,9 @@ def can_respond_to_idea(db: Session, user: User, idea: Idea) -> bool:
     """
     Check if user can respond to an idea.
 
-    Admins can respond to any idea.
-    Product Owners can respond to ideas for products they have EDIT permission on.
+    Admins and Product Owners can respond to ideas for products they have EDIT permission on.
     """
-    if user.role == UserRole.ADMIN:
-        return True
-
-    if user.role == UserRole.PRODUCT_OWNER:
+    if user.role in (UserRole.ADMIN, UserRole.PRODUCT_OWNER):
         permission_service = PermissionService(db)
         return permission_service.can_access_product(
             user_id=user.id,

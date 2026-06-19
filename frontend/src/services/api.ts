@@ -1117,7 +1117,7 @@ export const redeemInviteCode = async (code: string): Promise<{ product_id: numb
 
 export const createInviteCode = async (
   productId: number,
-  options?: { max_uses?: number; expires_at?: string; permission_level?: string }
+  options?: { max_uses?: number; expires_at?: string }
 ): Promise<InviteCode> => {
   const response = await api.post<InviteCode>(
     `/products/${productId}/invite-codes`,
@@ -1180,8 +1180,14 @@ export const getUserProducts = async (userId: number): Promise<UserProduct[]> =>
   return response.data;
 };
 
-export const setUserProducts = async (userId: number, productIds: number[]): Promise<UserProduct[]> => {
-  const response = await api.put<UserProduct[]>(`/auth/users/${userId}/products`, { product_ids: productIds });
+export const setUserProducts = async (
+  userId: number,
+  productAssignments: Array<{ product_id: number; permission_level: string }>
+): Promise<UserProduct[]> => {
+  const response = await api.put<UserProduct[]>(
+    `/auth/users/${userId}/products`,
+    { product_assignments: productAssignments }
+  );
   return response.data;
 };
 

@@ -57,7 +57,16 @@ class TestVoting:
         }, headers=auth_headers(voter_user))
         assert resp.status_code == 422  # Pydantic validator rejects
 
-    def test_multiple_users_vote(self, client, voter_user, admin_user, test_idea):
+    def test_multiple_users_vote(self, client, voter_user, admin_user, db_session, test_product, test_idea):
+        from app.models.competitor_intelligence import ProductPermission, ProductPermissionLevel
+        perm = ProductPermission(
+            product_id=test_product.id,
+            user_id=admin_user.id,
+            permission_level=ProductPermissionLevel.VIEW,
+            granted_by_user_id=admin_user.id,
+        )
+        db_session.add(perm)
+        db_session.commit()
         client.post(f"/ideas/{test_idea.id}/vote", json={
             "vote_value": 1
         }, headers=auth_headers(voter_user))

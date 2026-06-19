@@ -122,8 +122,8 @@ class TestIdeaCrossTenantIsolation:
         resp = client.get(f"/ideas/{idea_b.id}", headers=auth_headers(po_a))
         assert resp.status_code == 403
 
-    def test_admin_can_access_any_idea(self, client, db_session):
-        """Admin can access ideas from any product."""
+    def test_admin_cannot_access_without_permission(self, client, db_session):
+        """Admin without explicit product access is denied."""
         admin = _make_user(db_session, "admin@test.com", "admin_iso", UserRole.ADMIN)
         po = _make_user(db_session, "po_any@test.com", "po_any", UserRole.PRODUCT_OWNER)
 
@@ -131,7 +131,7 @@ class TestIdeaCrossTenantIsolation:
         idea = _make_idea(db_session, "Any Idea", product.id, po.id)
 
         resp = client.get(f"/ideas/{idea.id}", headers=auth_headers(admin))
-        assert resp.status_code == 200
+        assert resp.status_code == 403
 
 
 # ============================================================================
@@ -277,7 +277,7 @@ class TestProductListIsolation:
         product_ids = [p["id"] for p in resp.json()]
         assert product_b.id not in product_ids
 
-    def test_admin_sees_all_products(self, client, db_session):
+    def test_admin_sees_only_permitted_products(self, client, db_session):
         admin = _make_user(db_session, "pladmin@test.com", "pladmin", UserRole.ADMIN)
         po_a = _make_user(db_session, "plall_a@test.com", "plall_a", UserRole.PRODUCT_OWNER)
         po_b = _make_user(db_session, "plall_b@test.com", "plall_b", UserRole.PRODUCT_OWNER)
@@ -285,11 +285,13 @@ class TestProductListIsolation:
         product_a = _make_product(db_session, "Admin Sees A", po_a.id)
         product_b = _make_product(db_session, "Admin Sees B", po_b.id)
 
+        _grant_access(db_session, product_a.id, admin.id, admin.id, ProductPermissionLevel.OWNER)
+
         resp = client.get("/ideas/products", headers=auth_headers(admin))
         assert resp.status_code == 200
         product_ids = [p["id"] for p in resp.json()]
         assert product_a.id in product_ids
-        assert product_b.id in product_ids
+        assert product_b.id not in product_ids
 
 
 # ============================================================================

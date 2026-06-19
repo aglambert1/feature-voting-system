@@ -23,6 +23,7 @@ from app.database import get_db
 from app.models.user import User, UserRole
 from app.models.product_invite import ProductInviteCode
 from app.models.competitor_intelligence import ProductPermission, ProductPermissionLevel, CIProduct
+from app.services.permission_service import PermissionService
 from app.schemas.auth import (
     UserCreate,
     UserLogin,
@@ -145,7 +146,7 @@ def register(
         perm = ProductPermission(
             product_id=invite.product_id,
             user_id=new_user.id,
-            permission_level=invite.permission_level,
+            permission_level=ProductPermissionLevel.VIEW,
             granted_by_user_id=invite.created_by_user_id,
         )
         db.add(perm)
@@ -758,9 +759,15 @@ if _settings.debug:
 # Admin Product Assignment
 # ============================================================================
 
+class ProductAssignment(BaseModel):
+    """A single product assignment with permission level."""
+    product_id: int
+    permission_level: str = Field("view", description="Permission level: view, edit, or owner")
+
+
 class UserProductsUpdate(BaseModel):
     """Schema for setting a user's product assignments."""
-    product_ids: List[int] = Field(..., description="Product IDs to assign")
+    product_assignments: List[ProductAssignment] = Field(..., description="Product assignments with permission levels")
 
 
 class UserProductResponse(BaseModel):
@@ -777,26 +784,48 @@ async def get_user_products(
     current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
-    """Get product assignments for a user (admin only)."""
+    """Get product assignments for a user (admin only). Scoped to products the admin has access to."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    permission_service = PermissionService(db)
+    admin_products = permission_service.get_accessible_products(current_user.id)
+    admin_product_ids = {p.id for p in admin_products}
+
     permissions = db.query(ProductPermission, CIProduct).join(
         CIProduct, ProductPermission.product_id == CIProduct.id
     ).filter(
-        ProductPermission.user_id == user_id
+        ProductPermission.user_id == user_id,
+        ProductPermission.product_id.in_(admin_product_ids),
     ).all()
 
-    return [
-        UserProductResponse(
+    results = {
+        product.id: UserProductResponse(
             product_id=product.id,
             product_name=product.product_name,
             permission_level=perm.permission_level.value,
             granted_at=perm.granted_at,
         )
         for perm, product in permissions
-    ]
+    }
+
+    # Include implicit OWNER for products the target user created
+    created_products = db.query(CIProduct).filter(
+        CIProduct.created_by_user_id == user_id,
+        CIProduct.status == "active",
+        CIProduct.id.in_(admin_product_ids),
+    ).all()
+    for product in created_products:
+        if product.id not in results:
+            results[product.id] = UserProductResponse(
+                product_id=product.id,
+                product_name=product.product_name,
+                permission_level="owner",
+                granted_at=product.created_at,
+            )
+
+    return list(results.values())
 
 
 @router.put("/users/{user_id}/products", response_model=List[UserProductResponse])
@@ -809,8 +838,8 @@ async def set_user_products(
     """
     Set product assignments for a user (admin only).
 
-    Replaces all existing product permissions with the new set.
-    Permission level is inferred from user role: EDIT for POs, VIEW for voters.
+    Only modifies assignments for products the admin has OWNER access to.
+    Assignments for other products are left unchanged.
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -822,21 +851,45 @@ async def set_user_products(
             detail="Cannot modify your own product assignments"
         )
 
-    # Determine permission level based on user role
-    perm_level = (
-        ProductPermissionLevel.EDIT
-        if user.role == UserRole.PRODUCT_OWNER
-        else ProductPermissionLevel.VIEW
-    )
+    permission_service = PermissionService(db)
 
-    # Remove existing permissions
+    # Determine which products the admin can assign (OWNER access required)
+    admin_owned_ids = set()
+    for assignment in update.product_assignments:
+        if permission_service.can_access_product(
+            current_user.id, assignment.product_id, ProductPermissionLevel.OWNER
+        ):
+            admin_owned_ids.add(assignment.product_id)
+
+    requested_product_ids = {a.product_id for a in update.product_assignments}
+    unauthorized_ids = requested_product_ids - admin_owned_ids
+    if unauthorized_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"You do not have owner access to product(s): {sorted(unauthorized_ids)}"
+        )
+
+    # Parse permission levels
+    level_map = {"view": ProductPermissionLevel.VIEW, "edit": ProductPermissionLevel.EDIT, "owner": ProductPermissionLevel.OWNER}
+    assignments = {}
+    for a in update.product_assignments:
+        perm_level = level_map.get(a.permission_level.lower())
+        if not perm_level:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid permission level '{a.permission_level}' for product {a.product_id}"
+            )
+        assignments[a.product_id] = perm_level
+
+    # Remove existing permissions for these specific products only
     db.query(ProductPermission).filter(
-        ProductPermission.user_id == user_id
+        ProductPermission.user_id == user_id,
+        ProductPermission.product_id.in_(assignments.keys()),
     ).delete(synchronize_session="fetch")
     db.flush()
 
     # Add new permissions
-    for product_id in update.product_ids:
+    for product_id, perm_level in assignments.items():
         product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
         if not product:
             continue
@@ -850,19 +903,39 @@ async def set_user_products(
 
     db.commit()
 
-    # Return updated assignments
+    # Return updated assignments (scoped to admin's accessible products)
+    admin_products = permission_service.get_accessible_products(current_user.id)
+    admin_product_ids = {p.id for p in admin_products}
+
     permissions = db.query(ProductPermission, CIProduct).join(
         CIProduct, ProductPermission.product_id == CIProduct.id
     ).filter(
-        ProductPermission.user_id == user_id
+        ProductPermission.user_id == user_id,
+        ProductPermission.product_id.in_(admin_product_ids),
     ).all()
 
-    return [
-        UserProductResponse(
+    results = {
+        product.id: UserProductResponse(
             product_id=product.id,
             product_name=product.product_name,
             permission_level=perm.permission_level.value,
             granted_at=perm.granted_at,
         )
         for perm, product in permissions
-    ]
+    }
+
+    created_products = db.query(CIProduct).filter(
+        CIProduct.created_by_user_id == user_id,
+        CIProduct.status == "active",
+        CIProduct.id.in_(admin_product_ids),
+    ).all()
+    for product in created_products:
+        if product.id not in results:
+            results[product.id] = UserProductResponse(
+                product_id=product.id,
+                product_name=product.product_name,
+                permission_level="owner",
+                granted_at=product.created_at,
+            )
+
+    return list(results.values())
