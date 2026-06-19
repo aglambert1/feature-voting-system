@@ -465,10 +465,11 @@ export default function ProductDetailPage() {
   const isCurrentUserOwner = product?.created_by_user_id === user?.id
     || members.some(m => m.user_id === user?.id && m.permission_level === 'owner');
 
+  const [memberFetchDenied, setMemberFetchDenied] = useState(false);
+
   const isViewOnly = !isCurrentUserOwner
     && (user?.role === UserRole.PRODUCT_OWNER || user?.role === UserRole.ADMIN)
-    && members.some(m => m.user_id === user?.id && m.permission_level === 'view')
-    && !members.some(m => m.user_id === user?.id && (m.permission_level === 'edit' || m.permission_level === 'owner'));
+    && memberFetchDenied;
 
   const handleShareAccess = async () => {
     if (!productId || !shareEmail.trim()) return;
@@ -525,7 +526,11 @@ export default function ProductDetailPage() {
   // Fetch members eagerly so isCurrentUserOwner resolves before section is opened
   useEffect(() => {
     if (productId) {
-      getProductMembers(parseInt(productId)).then(setMembers).catch(() => {});
+      getProductMembers(parseInt(productId))
+        .then(m => { setMembers(m); setMemberFetchDenied(false); })
+        .catch((err: any) => {
+          if (err?.response?.status === 403) setMemberFetchDenied(true);
+        });
     }
   }, [productId]);
 
