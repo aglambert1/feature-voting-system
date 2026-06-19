@@ -88,6 +88,7 @@ export interface ProductMember {
   user_id: number;
   username: string;
   email: string;
+  role: string;
   permission_level: string;
   granted_at: string;
 }

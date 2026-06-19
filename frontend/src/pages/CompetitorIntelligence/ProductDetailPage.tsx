@@ -28,10 +28,14 @@ import api, {
   getInviteCodes,
   deactivateInviteCode,
   getProductMembers,
+  grantProductPermission,
+  updateProductPermission,
+  revokeProductPermission,
   getEvidence,
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
-import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, TriageSettings, JobType, QueueJob, JobStatus, InviteCode, ProductMember } from '../../types';
+import { useAuth } from '../../contexts/AuthContext';
+import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, TriageSettings, JobType, QueueJob, JobStatus, InviteCode, ProductMember, UserRole } from '../../types';
 import IdeaTriageSetupModal from './components/IdeaTriageSetupModal';
 import CompetitiveIntelligenceSetupModal from './components/CompetitiveIntelligenceSetupModal';
 import AgentJobStatus from '../../components/AgentJobStatus';
@@ -57,6 +61,7 @@ interface ProductDetail {
   product_name: string;
   product_description: string;
   product_category?: string;
+  created_by_user_id?: number;
   product_source_type?: string;
   product_source_data?: SourceData;
   analysis_version: number;
@@ -78,6 +83,7 @@ export default function ProductDetailPage() {
   const { productId } = useParams<{ productId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   // Core product data
   const [product, setProduct] = useState<ProductDetail | null>(null);
@@ -139,6 +145,14 @@ export default function ProductDetailPage() {
   const [votersLoading, setVotersLoading] = useState(false);
   const [copiedCodeId, setCopiedCodeId] = useState<number | null>(null);
   const [creatingCode, setCreatingCode] = useState(false);
+
+  // Sharing state
+  const [shareEmail, setShareEmail] = useState('');
+  const [sharePermission, setSharePermission] = useState('view');
+  const [sharingInProgress, setSharingInProgress] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [editingMemberId, setEditingMemberId] = useState<number | null>(null);
+  const [confirmRemoveMemberId, setConfirmRemoveMemberId] = useState<number | null>(null);
 
   // Action state
   const [runningAction, setRunningAction] = useState<string | null>(null);
@@ -448,7 +462,69 @@ export default function ProductDetailPage() {
     setTimeout(() => setCopiedCodeId(null), 2000);
   };
 
-  // Load voter data when section is opened
+  const isCurrentUserOwner = product?.created_by_user_id === user?.id
+    || members.some(m => m.user_id === user?.id && m.permission_level === 'owner');
+
+  const handleShareAccess = async () => {
+    if (!productId || !shareEmail.trim()) return;
+    setSharingInProgress(true);
+    setShareError(null);
+    try {
+      await grantProductPermission(parseInt(productId), shareEmail.trim(), sharePermission);
+      await fetchVoterData();
+      setShareEmail('');
+      setSharePermission('view');
+      setActionMessage({ type: 'success', text: `Access shared with ${shareEmail.trim()}` });
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err.message || 'Failed to share access';
+      if (err?.response?.status === 404) {
+        const isAdmin = user?.role === UserRole.ADMIN;
+        setShareError(isAdmin
+          ? 'No user found with that email. You can create an account in User Management.'
+          : 'No user found with that email. Ask your admin to create an account first.');
+      } else {
+        setShareError(detail);
+      }
+    } finally {
+      setSharingInProgress(false);
+    }
+  };
+
+  const handleUpdatePermission = async (memberId: number, newLevel: string) => {
+    if (!productId) return;
+    try {
+      await updateProductPermission(parseInt(productId), memberId, newLevel);
+      await fetchVoterData();
+      setEditingMemberId(null);
+      setActionMessage({ type: 'success', text: 'Permission updated' });
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err.message || 'Failed to update permission';
+      setActionMessage({ type: 'error', text: detail });
+    }
+  };
+
+  const handleRemoveMember = async (memberId: number) => {
+    if (!productId) return;
+    try {
+      await revokeProductPermission(parseInt(productId), memberId);
+      await fetchVoterData();
+      setConfirmRemoveMemberId(null);
+      setActionMessage({ type: 'success', text: 'Access revoked' });
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err.message || 'Failed to revoke access';
+      setActionMessage({ type: 'error', text: detail });
+      setConfirmRemoveMemberId(null);
+    }
+  };
+
+  // Fetch members eagerly so isCurrentUserOwner resolves before section is opened
+  useEffect(() => {
+    if (productId) {
+      getProductMembers(parseInt(productId)).then(setMembers).catch(() => {});
+    }
+  }, [productId]);
+
+  // Load full voter data (invite codes + refresh members) when section is opened
   useEffect(() => {
     if (showVotersSection) {
       fetchVoterData();
@@ -836,7 +912,8 @@ export default function ProductDetailPage() {
           </div>
         </div>
 
-        {/* Voters & Access Section */}
+        {/* Voters & Access Section — only visible to product OWNERs */}
+        {isCurrentUserOwner && (
         <div className="bg-white rounded-lg shadow mb-6">
           <button
             onClick={() => setShowVotersSection(!showVotersSection)}
@@ -868,10 +945,10 @@ export default function ProductDetailPage() {
                 </div>
               ) : (
                 <div className="space-y-6">
-                  {/* Invite Codes */}
+                  {/* Invite Codes for Voters */}
                   <div>
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-medium text-gray-900">Invite Codes</h3>
+                      <h3 className="font-medium text-gray-900">Invite Codes for Voters</h3>
                       <button
                         onClick={handleCreateInviteCode}
                         disabled={creatingCode}
@@ -881,58 +958,106 @@ export default function ProductDetailPage() {
                       </button>
                     </div>
 
-                    {inviteCodes.length === 0 ? (
-                      <p className="text-sm text-gray-500">No invite codes yet. Create one to invite voters to this product.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {inviteCodes.map(code => (
-                          <div
-                            key={code.id}
-                            className={`flex items-center justify-between p-3 rounded-lg border ${
-                              code.is_active ? 'border-gray-200 bg-gray-50' : 'border-gray-100 bg-gray-100 opacity-60'
-                            }`}
-                          >
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <code className="text-sm font-mono text-gray-700">
-                                  {code.code.slice(0, 8)}...
-                                </code>
-                                <span className={`px-1.5 py-0.5 text-xs rounded ${
-                                  code.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                                }`}>
-                                  {code.is_active ? 'Active' : 'Inactive'}
-                                </span>
-                              </div>
-                              <div className="text-xs text-gray-500 mt-1">
-                                {code.current_uses}{code.max_uses ? `/${code.max_uses}` : ''} uses
-                                {' · '}
-                                Created {format(new Date(code.created_at), 'MMM d, yyyy')}
-                                {code.expires_at && ` · Expires ${format(new Date(code.expires_at), 'MMM d, yyyy')}`}
-                              </div>
+                    <p className="text-sm text-gray-500 mb-3">
+                      Voters can self-register to submit ideas and vote. Existing product owners or admins who redeem an invite code will also gain view access to all analyses and reports.
+                    </p>
+
+                    {(() => {
+                      const voterCount = members.filter(m => m.role === 'voter').length;
+                      const activeCodes = inviteCodes.filter(c => c.is_active);
+                      return (
+                        <>
+                          {voterCount > 0 && (
+                            <p className="text-sm text-gray-600 mb-3">
+                              {voterCount} {voterCount === 1 ? 'voter has' : 'voters have'} access to this product
+                            </p>
+                          )}
+                          {activeCodes.length === 0 ? (
+                            <p className="text-sm text-gray-500">No active invite codes. Create one to invite voters to this product.</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {activeCodes.map(code => (
+                                <div
+                                  key={code.id}
+                                  className="flex items-center justify-between p-3 rounded-lg border border-gray-200 bg-gray-50"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <code className="text-sm font-mono text-gray-700">
+                                        {code.code.slice(0, 8)}...
+                                      </code>
+                                      {code.permission_level !== 'view' && (
+                                        <span className="px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700">
+                                          {code.permission_level}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-xs text-gray-500 mt-1">
+                                      {code.current_uses}{code.max_uses ? `/${code.max_uses}` : ''} uses
+                                      {' · '}
+                                      Created {format(new Date(code.created_at), 'MMM d, yyyy')}
+                                      {code.expires_at && ` · Expires ${format(new Date(code.expires_at), 'MMM d, yyyy')}`}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2 ml-3">
+                                    <button
+                                      onClick={() => handleCopyLink(code)}
+                                      className="px-2.5 py-1 text-xs font-medium text-blue-600 hover:text-blue-800 border border-blue-200 rounded hover:bg-blue-50 transition-colors"
+                                    >
+                                      {copiedCodeId === code.id ? 'Copied!' : 'Copy Link'}
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeactivateCode(code.id)}
+                                      className="px-2.5 py-1 text-xs font-medium text-red-600 hover:text-red-800 border border-red-200 rounded hover:bg-red-50 transition-colors"
+                                    >
+                                      Deactivate
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                            <div className="flex items-center gap-2 ml-3">
-                              {code.is_active && (
-                                <>
-                                  <button
-                                    onClick={() => handleCopyLink(code)}
-                                    className="px-2.5 py-1 text-xs font-medium text-blue-600 hover:text-blue-800 border border-blue-200 rounded hover:bg-blue-50 transition-colors"
-                                  >
-                                    {copiedCodeId === code.id ? 'Copied!' : 'Copy Link'}
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeactivateCode(code.id)}
-                                    className="px-2.5 py-1 text-xs font-medium text-red-600 hover:text-red-800 border border-red-200 rounded hover:bg-red-50 transition-colors"
-                                  >
-                                    Deactivate
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
+
+                  {/* Share Access */}
+                  {isCurrentUserOwner && (
+                    <div>
+                      <h3 className="font-medium text-gray-900 mb-3">Share Access</h3>
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1">
+                          <input
+                            type="email"
+                            value={shareEmail}
+                            onChange={e => { setShareEmail(e.target.value); setShareError(null); }}
+                            placeholder="Enter email address"
+                            className="w-full h-9 px-3 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                          {shareError && (
+                            <p className="mt-1 text-xs text-red-600">{shareError}</p>
+                          )}
+                        </div>
+                        <select
+                          value={sharePermission}
+                          onChange={e => setSharePermission(e.target.value)}
+                          className="h-9 px-3 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="view">View</option>
+                          <option value="edit">Edit</option>
+                          <option value="owner">Owner</option>
+                        </select>
+                        <button
+                          onClick={handleShareAccess}
+                          disabled={sharingInProgress || !shareEmail.trim()}
+                          className="h-9 px-4 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 whitespace-nowrap"
+                        >
+                          {sharingInProgress ? 'Sharing...' : 'Share'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Current Members */}
                   <div>
@@ -946,8 +1071,11 @@ export default function ProductDetailPage() {
                             <tr>
                               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">User</th>
                               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product Access</th>
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Access</th>
                               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Joined</th>
+                              {isCurrentUserOwner && (
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                              )}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-200">
@@ -956,13 +1084,75 @@ export default function ProductDetailPage() {
                                 <td className="px-4 py-2 text-sm text-gray-900">{member.username}</td>
                                 <td className="px-4 py-2 text-sm text-gray-500">{member.email}</td>
                                 <td className="px-4 py-2">
-                                  <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
-                                    {member.permission_level}
-                                  </span>
+                                  {(() => {
+                                    const isCreator = member.user_id === product?.created_by_user_id;
+                                    const isSelf = member.user_id === user?.id;
+                                    const isVoter = member.role === 'voter';
+                                    const canEdit = isCurrentUserOwner && !isCreator && !isSelf && !isVoter;
+                                    if (canEdit && editingMemberId === member.user_id) {
+                                      return (
+                                        <select
+                                          defaultValue={member.permission_level}
+                                          onChange={e => handleUpdatePermission(member.user_id, e.target.value)}
+                                          onBlur={() => setEditingMemberId(null)}
+                                          autoFocus
+                                          className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                        >
+                                          <option value="view">View</option>
+                                          <option value="edit">Edit</option>
+                                          <option value="owner">Owner</option>
+                                        </select>
+                                      );
+                                    }
+                                    return (
+                                      <span
+                                        className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                                          member.permission_level === 'owner' ? 'bg-purple-100 text-purple-800' :
+                                          member.permission_level === 'edit' ? 'bg-blue-100 text-blue-800' :
+                                          'bg-gray-100 text-gray-800'
+                                        } ${canEdit ? 'cursor-pointer hover:ring-2 hover:ring-blue-300' : ''}`}
+                                        onClick={() => canEdit && setEditingMemberId(member.user_id)}
+                                        title={isCreator ? 'Product creator — always owner' : isVoter ? 'Voters always have view access' : undefined}
+                                      >
+                                        {isVoter ? 'view' : member.permission_level}
+                                      </span>
+                                    );
+                                  })()}
                                 </td>
                                 <td className="px-4 py-2 text-sm text-gray-500">
                                   {format(new Date(member.granted_at), 'MMM d, yyyy')}
                                 </td>
+                                {isCurrentUserOwner && (
+                                  <td className="px-4 py-2">
+                                    {member.user_id === product?.created_by_user_id ? (
+                                      <span className="text-xs text-gray-400">Creator</span>
+                                    ) : member.user_id === user?.id ? (
+                                      <span className="text-xs text-gray-400">You</span>
+                                    ) : confirmRemoveMemberId === member.user_id ? (
+                                      <div className="flex items-center gap-1">
+                                        <button
+                                          onClick={() => handleRemoveMember(member.user_id)}
+                                          className="px-2 py-1 text-xs font-medium text-white bg-red-600 rounded hover:bg-red-700"
+                                        >
+                                          Confirm
+                                        </button>
+                                        <button
+                                          onClick={() => setConfirmRemoveMemberId(null)}
+                                          className="px-2 py-1 text-xs font-medium text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => setConfirmRemoveMemberId(member.user_id)}
+                                        className="px-2 py-1 text-xs font-medium text-red-600 hover:text-red-800 border border-red-200 rounded hover:bg-red-50 transition-colors"
+                                      >
+                                        Remove
+                                      </button>
+                                    )}
+                                  </td>
+                                )}
                               </tr>
                             ))}
                           </tbody>
@@ -975,6 +1165,7 @@ export default function ProductDetailPage() {
             </div>
           )}
         </div>
+        )}
 
         {/* Current Product Analysis */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">

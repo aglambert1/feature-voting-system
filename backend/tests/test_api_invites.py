@@ -361,3 +361,323 @@ class TestInviteInfo:
         """Info endpoint is public — no auth header needed."""
         resp = client.get(f"/invites/{test_invite_code.code}/info")
         assert resp.status_code == 200
+
+
+# ============================================================================
+# Permission Management — Grant / Update / Revoke
+# ============================================================================
+
+
+def _make_user(db_session, email, username, role):
+    from app.models.user import User
+    from app.utils.security import hash_password
+
+    user = User(
+        email=email,
+        username=username,
+        hashed_password=hash_password("pass123"),
+        role=role,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+class TestGrantPermission:
+
+    def test_owner_grants_view(self, client, po_user, test_product, db_session):
+        from app.models.user import UserRole
+        target = _make_user(db_session, "target@example.com", "target", UserRole.VOTER)
+
+        resp = client.post(
+            f"/products/{test_product.id}/members",
+            json={"email": target.email, "permission_level": "view"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["user_id"] == target.id
+        assert data["permission_level"] == "view"
+        assert data["email"] == target.email
+
+    def test_owner_grants_edit(self, client, po_user, test_product, db_session):
+        from app.models.user import UserRole
+        target = _make_user(db_session, "edit_target@example.com", "edit_target", UserRole.PRODUCT_OWNER)
+
+        resp = client.post(
+            f"/products/{test_product.id}/members",
+            json={"email": target.email, "permission_level": "edit"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 201
+        assert resp.json()["permission_level"] == "edit"
+
+    def test_owner_grants_owner(self, client, po_user, test_product, db_session):
+        from app.models.user import UserRole
+        target = _make_user(db_session, "owner_target@example.com", "owner_target", UserRole.PRODUCT_OWNER)
+
+        resp = client.post(
+            f"/products/{test_product.id}/members",
+            json={"email": target.email, "permission_level": "owner"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 201
+        assert resp.json()["permission_level"] == "owner"
+
+    def test_grant_updates_existing(self, client, po_user, test_product, voter_user, voter_product_access):
+        resp = client.post(
+            f"/products/{test_product.id}/members",
+            json={"email": voter_user.email, "permission_level": "edit"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 201
+        assert resp.json()["permission_level"] == "edit"
+
+    def test_non_owner_cannot_grant(self, client, test_product, voter_user, voter_product_access):
+        resp = client.post(
+            f"/products/{test_product.id}/members",
+            json={"email": "someone@example.com", "permission_level": "view"},
+            headers=auth_headers(voter_user),
+        )
+        assert resp.status_code == 403
+
+    def test_grant_to_nonexistent_user(self, client, po_user, test_product):
+        resp = client.post(
+            f"/products/{test_product.id}/members",
+            json={"email": "nobody@example.com", "permission_level": "view"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 404
+        assert "No user found" in resp.json()["detail"]
+
+    def test_grant_invalid_permission_level(self, client, po_user, test_product):
+        resp = client.post(
+            f"/products/{test_product.id}/members",
+            json={"email": "someone@example.com", "permission_level": "superadmin"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 400
+
+
+class TestUpdatePermission:
+
+    def test_owner_updates_member(self, client, po_user, test_product, voter_user, voter_product_access):
+        resp = client.patch(
+            f"/products/{test_product.id}/members/{voter_user.id}",
+            json={"permission_level": "edit"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["permission_level"] == "edit"
+
+    def test_non_owner_cannot_update(self, client, test_product, voter_user, voter_product_access):
+        resp = client.patch(
+            f"/products/{test_product.id}/members/{voter_user.id}",
+            json={"permission_level": "edit"},
+            headers=auth_headers(voter_user),
+        )
+        assert resp.status_code == 403
+
+    def test_update_nonexistent_member(self, client, po_user, test_product):
+        resp = client.patch(
+            f"/products/{test_product.id}/members/99999",
+            json={"permission_level": "edit"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 404
+
+    def test_cannot_change_own_permission(self, client, po_user, test_product, db_session):
+        """Users cannot change their own permission level."""
+        perm = ProductPermission(
+            product_id=test_product.id,
+            user_id=po_user.id,
+            permission_level=ProductPermissionLevel.OWNER,
+            granted_by_user_id=po_user.id,
+        )
+        db_session.add(perm)
+        db_session.commit()
+
+        resp = client.patch(
+            f"/products/{test_product.id}/members/{po_user.id}",
+            json={"permission_level": "view"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 400
+        assert "your own" in resp.json()["detail"].lower()
+
+    def test_cannot_demote_creator(self, client, po_user, test_product, db_session):
+        """The product creator can't be demoted by another OWNER."""
+        from app.models.user import UserRole
+        other_owner = _make_user(db_session, "other_owner@example.com", "other_owner", UserRole.PRODUCT_OWNER)
+        perm = ProductPermission(
+            product_id=test_product.id,
+            user_id=other_owner.id,
+            permission_level=ProductPermissionLevel.OWNER,
+            granted_by_user_id=po_user.id,
+        )
+        creator_perm = ProductPermission(
+            product_id=test_product.id,
+            user_id=po_user.id,
+            permission_level=ProductPermissionLevel.OWNER,
+            granted_by_user_id=po_user.id,
+        )
+        db_session.add_all([perm, creator_perm])
+        db_session.commit()
+
+        resp = client.patch(
+            f"/products/{test_product.id}/members/{po_user.id}",
+            json={"permission_level": "view"},
+            headers=auth_headers(other_owner),
+        )
+        assert resp.status_code == 400
+        assert "creator" in resp.json()["detail"].lower()
+
+    def test_cannot_demote_last_non_creator_owner(self, client, po_user, test_product, db_session):
+        """Can't demote the last non-creator OWNER if no other OWNERs exist."""
+        from app.models.user import UserRole
+        other_po = _make_user(db_session, "other_po@example.com", "other_po", UserRole.PRODUCT_OWNER)
+
+        # Grant other_po OWNER
+        perm = ProductPermission(
+            product_id=test_product.id,
+            user_id=other_po.id,
+            permission_level=ProductPermissionLevel.OWNER,
+            granted_by_user_id=po_user.id,
+        )
+        db_session.add(perm)
+        db_session.commit()
+
+        # Demote other_po — should succeed since creator is still implicit OWNER
+        resp = client.patch(
+            f"/products/{test_product.id}/members/{other_po.id}",
+            json={"permission_level": "view"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200
+
+
+class TestRevokePermission:
+
+    def test_owner_revokes_member(self, client, po_user, test_product, voter_user, voter_product_access):
+        resp = client.delete(
+            f"/products/{test_product.id}/members/{voter_user.id}",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 204
+
+        # Verify member is gone
+        members_resp = client.get(
+            f"/products/{test_product.id}/members",
+            headers=auth_headers(po_user),
+        )
+        member_ids = [m["user_id"] for m in members_resp.json()]
+        assert voter_user.id not in member_ids
+
+    def test_non_owner_cannot_revoke(self, client, test_product, voter_user, voter_product_access):
+        resp = client.delete(
+            f"/products/{test_product.id}/members/{voter_user.id}",
+            headers=auth_headers(voter_user),
+        )
+        assert resp.status_code == 403
+
+    def test_revoke_nonexistent_member(self, client, po_user, test_product):
+        resp = client.delete(
+            f"/products/{test_product.id}/members/99999",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 404
+
+    def test_cannot_revoke_own_access(self, client, po_user, test_product, db_session):
+        """Users cannot revoke their own access."""
+        perm = ProductPermission(
+            product_id=test_product.id,
+            user_id=po_user.id,
+            permission_level=ProductPermissionLevel.OWNER,
+            granted_by_user_id=po_user.id,
+        )
+        db_session.add(perm)
+        db_session.commit()
+
+        resp = client.delete(
+            f"/products/{test_product.id}/members/{po_user.id}",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 400
+        assert "your own" in resp.json()["detail"].lower()
+
+    def test_cannot_revoke_creator(self, client, po_user, test_product, db_session):
+        """Cannot revoke the product creator's access."""
+        from app.models.user import UserRole
+        other_owner = _make_user(db_session, "revoker@example.com", "revoker", UserRole.PRODUCT_OWNER)
+        perm = ProductPermission(
+            product_id=test_product.id,
+            user_id=other_owner.id,
+            permission_level=ProductPermissionLevel.OWNER,
+            granted_by_user_id=po_user.id,
+        )
+        creator_perm = ProductPermission(
+            product_id=test_product.id,
+            user_id=po_user.id,
+            permission_level=ProductPermissionLevel.OWNER,
+            granted_by_user_id=po_user.id,
+        )
+        db_session.add_all([perm, creator_perm])
+        db_session.commit()
+
+        resp = client.delete(
+            f"/products/{test_product.id}/members/{po_user.id}",
+            headers=auth_headers(other_owner),
+        )
+        assert resp.status_code == 400
+        assert "creator" in resp.json()["detail"].lower()
+
+
+class TestInviteCodePermissionLevel:
+
+    def test_create_invite_with_edit_permission(self, client, po_user, test_product):
+        resp = client.post(
+            f"/products/{test_product.id}/invite-codes",
+            json={"permission_level": "edit"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 201
+        assert resp.json()["permission_level"] == "edit"
+
+    def test_create_invite_with_owner_rejected(self, client, po_user, test_product):
+        resp = client.post(
+            f"/products/{test_product.id}/invite-codes",
+            json={"permission_level": "owner"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 400
+        assert "cannot grant OWNER" in resp.json()["detail"]
+
+    def test_redeem_edit_invite_grants_edit(self, client, db_session, po_user, test_product):
+        from app.models.product_invite import ProductInviteCode
+        from app.models.user import UserRole
+
+        invite = ProductInviteCode(
+            product_id=test_product.id,
+            code=ProductInviteCode.generate_code(),
+            created_by_user_id=po_user.id,
+            permission_level=ProductPermissionLevel.EDIT,
+        )
+        db_session.add(invite)
+        db_session.commit()
+
+        redeemer = _make_user(db_session, "redeemer@example.com", "redeemer", UserRole.VOTER)
+
+        resp = client.post(
+            "/invites/redeem",
+            json={"code": invite.code},
+            headers=auth_headers(redeemer),
+        )
+        assert resp.status_code == 200
+
+        perm = db_session.query(ProductPermission).filter(
+            ProductPermission.product_id == test_product.id,
+            ProductPermission.user_id == redeemer.id,
+        ).first()
+        assert perm is not None
+        assert perm.permission_level == ProductPermissionLevel.EDIT
