@@ -27,6 +27,7 @@ export default function UserManagementPage() {
   const [userProductsMap, setUserProductsMap] = useState<Record<number, UserProduct[]>>({});
   const [editingProductsUserId, setEditingProductsUserId] = useState<number | null>(null);
   const [editingProductIds, setEditingProductIds] = useState<number[]>([]);
+  const [editingPermissionLevels, setEditingPermissionLevels] = useState<Record<number, string>>({});
   const [createFormData, setCreateFormData] = useState<CreateFormData>({
     username: '',
     email: '',
@@ -161,10 +162,15 @@ export default function UserManagementPage() {
     if (!targetUser) return;
 
     try {
-      await setUserProducts(editingProductsUserId, editingProductIds);
+      const assignments = editingProductIds.map(pid => ({
+        product_id: pid,
+        permission_level: editingPermissionLevels[pid] || 'view',
+      }));
+      await setUserProducts(editingProductsUserId, assignments);
       setSuccessMessage(`Product assignments updated for ${targetUser.username}`);
       setEditingProductsUserId(null);
       setEditingProductIds([]);
+      setEditingPermissionLevels({});
       fetchUsers();
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
@@ -178,6 +184,9 @@ export default function UserManagementPage() {
     const currentProducts = userProductsMap[userId] || [];
     setEditingProductsUserId(userId);
     setEditingProductIds(currentProducts.map(p => p.product_id));
+    const levels: Record<number, string> = {};
+    currentProducts.forEach(p => { levels[p.product_id] = p.permission_level; });
+    setEditingPermissionLevels(levels);
   };
 
   const toggleProductId = (productId: number, list: number[], setter: (ids: number[]) => void) => {
@@ -320,24 +329,21 @@ export default function UserManagementPage() {
                         </select>
                       </td>
                       <td className="px-6 py-4">
-                        {u.role === 'admin' ? (
-                          <span className="text-xs text-gray-400">All products</span>
-                        ) : (
-                          <div className="flex flex-wrap gap-1">
-                            {(userProductsMap[u.id] || []).length === 0 ? (
-                              <span className="text-xs text-gray-400">None</span>
-                            ) : (
-                              (userProductsMap[u.id] || []).map(p => (
-                                <span
-                                  key={p.product_id}
-                                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800"
-                                >
-                                  {p.product_name}
-                                </span>
-                              ))
-                            )}
-                          </div>
-                        )}
+                        <div className="flex flex-wrap gap-1">
+                          {(userProductsMap[u.id] || []).length === 0 ? (
+                            <span className="text-xs text-gray-400">None</span>
+                          ) : (
+                            (userProductsMap[u.id] || []).map(p => (
+                              <span
+                                key={p.product_id}
+                                className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800"
+                              >
+                                {p.product_name}
+                                <span className="ml-1 text-purple-600">({p.permission_level})</span>
+                              </span>
+                            ))
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span
@@ -355,14 +361,12 @@ export default function UserManagementPage() {
                           <span className="text-gray-400">Cannot modify yourself</span>
                         ) : (
                           <div className="flex space-x-2">
-                            {u.role !== 'admin' && (
-                              <button
-                                onClick={() => handleEditProducts(u.id)}
-                                className="text-purple-600 hover:text-purple-900 font-medium"
-                              >
-                                Products
-                              </button>
-                            )}
+                            <button
+                              onClick={() => handleEditProducts(u.id)}
+                              className="text-purple-600 hover:text-purple-900 font-medium"
+                            >
+                              Products
+                            </button>
                             {u.is_active ? (
                               <button
                                 onClick={() => handleDeactivateUser(u.id, u.username)}
@@ -426,18 +430,36 @@ export default function UserManagementPage() {
               ) : (
                 <div className="border border-gray-300 rounded-lg max-h-60 overflow-y-auto">
                   {allProducts.map(product => (
-                    <label
+                    <div
                       key={product.id}
-                      className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                      className="flex items-center justify-between px-3 py-2 hover:bg-gray-50"
                     >
-                      <input
-                        type="checkbox"
-                        checked={editingProductIds.includes(product.id)}
-                        onChange={() => toggleProductId(product.id, editingProductIds, setEditingProductIds)}
-                        className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                      />
-                      <span className="ml-2 text-sm text-gray-700">{product.product_name}</span>
-                    </label>
+                      <label className="flex items-center cursor-pointer flex-1">
+                        <input
+                          type="checkbox"
+                          checked={editingProductIds.includes(product.id)}
+                          onChange={() => {
+                            toggleProductId(product.id, editingProductIds, setEditingProductIds);
+                            if (!editingProductIds.includes(product.id)) {
+                              setEditingPermissionLevels(prev => ({ ...prev, [product.id]: prev[product.id] || 'view' }));
+                            }
+                          }}
+                          className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                        />
+                        <span className="ml-2 text-sm text-gray-700">{product.product_name}</span>
+                      </label>
+                      {editingProductIds.includes(product.id) && (
+                        <select
+                          value={editingPermissionLevels[product.id] || 'view'}
+                          onChange={e => setEditingPermissionLevels(prev => ({ ...prev, [product.id]: e.target.value }))}
+                          className="ml-2 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        >
+                          <option value="view">View</option>
+                          <option value="edit">Edit</option>
+                          <option value="owner">Owner</option>
+                        </select>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}
@@ -547,7 +569,7 @@ export default function UserManagementPage() {
                   </select>
                 </div>
 
-                {createFormData.role !== 'admin' && allProducts.length > 0 && (
+                {allProducts.length > 0 && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Product Access

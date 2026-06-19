@@ -71,13 +71,22 @@ class TestListProducts:
         names = [p["product_name"] for p in resp.json()]
         assert "Test Product" in names
 
-    def test_list_products_admin_sees_all(self, client, admin_user, test_product):
+    def test_list_products_admin_sees_only_accessible(self, client, admin_user, db_session, test_product):
+        from app.models.competitor_intelligence import ProductPermission, ProductPermissionLevel
+        perm = ProductPermission(
+            product_id=test_product.id,
+            user_id=admin_user.id,
+            permission_level=ProductPermissionLevel.OWNER,
+            granted_by_user_id=admin_user.id,
+        )
+        db_session.add(perm)
+        db_session.commit()
         resp = client.get(
             "/product-intelligence/products",
             headers=auth_headers(admin_user)
         )
         assert resp.status_code == 200
-        assert len(resp.json()) >= 1
+        assert len(resp.json()) == 1
 
     def test_list_products_requires_auth(self, client):
         resp = client.get("/product-intelligence/products")

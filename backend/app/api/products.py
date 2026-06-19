@@ -167,7 +167,7 @@ def list_products(
     returned is filtered based on role and permissions (see permission_service.py).
 
     Returns products based on:
-    - User's role (VOTER sees all product names, PRODUCT_OWNER sees only their products, ADMIN sees all)
+    - User's role (ADMIN/PO see created + granted products, VOTER sees only granted)
     - User's default_product_access mode (SINGLE_USER vs TEAM_WIDE)
     - Explicit product permission grants
 

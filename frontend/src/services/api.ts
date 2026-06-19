@@ -1180,8 +1180,14 @@ export const getUserProducts = async (userId: number): Promise<UserProduct[]> =>
   return response.data;
 };
 
-export const setUserProducts = async (userId: number, productIds: number[]): Promise<UserProduct[]> => {
-  const response = await api.put<UserProduct[]>(`/auth/users/${userId}/products`, { product_ids: productIds });
+export const setUserProducts = async (
+  userId: number,
+  productAssignments: Array<{ product_id: number; permission_level: string }>
+): Promise<UserProduct[]> => {
+  const response = await api.put<UserProduct[]>(
+    `/auth/users/${userId}/products`,
+    { product_assignments: productAssignments }
+  );
   return response.data;
 };
 
