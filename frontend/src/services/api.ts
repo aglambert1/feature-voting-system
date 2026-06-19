@@ -1117,7 +1117,7 @@ export const redeemInviteCode = async (code: string): Promise<{ product_id: numb
 
 export const createInviteCode = async (
   productId: number,
-  options?: { max_uses?: number; expires_at?: string }
+  options?: { max_uses?: number; expires_at?: string; permission_level?: string }
 ): Promise<InviteCode> => {
   const response = await api.post<InviteCode>(
     `/products/${productId}/invite-codes`,
@@ -1138,6 +1138,37 @@ export const deactivateInviteCode = async (productId: number, codeId: number): P
 export const getProductMembers = async (productId: number): Promise<ProductMember[]> => {
   const response = await api.get<ProductMember[]>(`/products/${productId}/members`);
   return response.data;
+};
+
+export const grantProductPermission = async (
+  productId: number,
+  email: string,
+  permissionLevel: string = 'view'
+): Promise<ProductMember> => {
+  const response = await api.post<ProductMember>(
+    `/products/${productId}/members`,
+    { email, permission_level: permissionLevel }
+  );
+  return response.data;
+};
+
+export const updateProductPermission = async (
+  productId: number,
+  userId: number,
+  permissionLevel: string
+): Promise<ProductMember> => {
+  const response = await api.patch<ProductMember>(
+    `/products/${productId}/members/${userId}`,
+    { permission_level: permissionLevel }
+  );
+  return response.data;
+};
+
+export const revokeProductPermission = async (
+  productId: number,
+  userId: number
+): Promise<void> => {
+  await api.delete(`/products/${productId}/members/${userId}`);
 };
 
 // ============================================================================

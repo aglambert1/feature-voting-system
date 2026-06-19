@@ -36,6 +36,7 @@ router = APIRouter(tags=["Invites"])
 class CreateInviteCodeRequest(BaseModel):
     max_uses: Optional[int] = Field(None, ge=1, description="Max redemptions (null = unlimited)")
     expires_at: Optional[datetime] = Field(None, description="Expiration datetime (null = never)")
+    permission_level: Optional[str] = Field(None, description="Permission level: view or edit (default: view)")
 
 
 class InviteCodeResponse(BaseModel):
@@ -67,10 +68,20 @@ class InviteInfoResponse(BaseModel):
     message: str
 
 
+class GrantPermissionRequest(BaseModel):
+    email: str = Field(..., description="Email of the user to grant access to")
+    permission_level: str = Field("view", description="Permission level: view, edit, or owner")
+
+
+class UpdatePermissionRequest(BaseModel):
+    permission_level: str = Field(..., description="New permission level: view, edit, or owner")
+
+
 class ProductMemberResponse(BaseModel):
     user_id: int
     username: str
     email: str
+    role: str
     permission_level: str
     granted_at: datetime
 
@@ -83,6 +94,24 @@ def _build_invite_url(code: str) -> str:
     """Build the full invite URL for a code."""
     # Frontend will handle /join/:code route
     return f"/join/{code}"
+
+
+_VALID_PERMISSION_LEVELS = {
+    "view": ProductPermissionLevel.VIEW,
+    "edit": ProductPermissionLevel.EDIT,
+    "owner": ProductPermissionLevel.OWNER,
+}
+
+
+def _parse_permission_level(level_str: str) -> ProductPermissionLevel:
+    """Parse and validate a permission level string."""
+    parsed = _VALID_PERMISSION_LEVELS.get(level_str.lower())
+    if not parsed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid permission level: {level_str}. Must be one of: view, edit, owner"
+        )
+    return parsed
 
 
 def _check_po_access(db: Session, user: User, product_id: int) -> CIProduct:
@@ -108,6 +137,55 @@ def _check_po_access(db: Session, user: User, product_id: int) -> CIProduct:
     return product
 
 
+def _check_owner_access(db: Session, user: User, product_id: int) -> CIProduct:
+    """Verify product exists and user has OWNER permission."""
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product {product_id} not found"
+        )
+
+    permission_service = PermissionService(db)
+    if not permission_service.can_access_product(
+        user_id=user.id,
+        product_id=product_id,
+        required_level=ProductPermissionLevel.OWNER
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only product owners can manage permissions"
+        )
+
+    return product
+
+
+def _count_active_owners(db: Session, product_id: int) -> int:
+    """Count active users with OWNER permission on a product, including implicit creator."""
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+
+    explicit_owners = db.query(ProductPermission).join(
+        User, ProductPermission.user_id == User.id
+    ).filter(
+        ProductPermission.product_id == product_id,
+        ProductPermission.permission_level == ProductPermissionLevel.OWNER,
+        User.is_active == True,
+    ).all()
+
+    owner_user_ids = {p.user_id for p in explicit_owners}
+
+    # Include implicit creator if active and not already counted
+    if product and product.created_by_user_id:
+        creator = db.query(User).filter(
+            User.id == product.created_by_user_id,
+            User.is_active == True,
+        ).first()
+        if creator:
+            owner_user_ids.add(creator.id)
+
+    return len(owner_user_ids)
+
+
 # ============================================================================
 # PO Invite Code Management
 # ============================================================================
@@ -126,12 +204,21 @@ def create_invite_code(
     """Create a new invite code for a product."""
     _check_po_access(db, current_user, product_id)
 
+    perm_level = ProductPermissionLevel.VIEW
+    if request.permission_level:
+        perm_level = _parse_permission_level(request.permission_level)
+        if perm_level == ProductPermissionLevel.OWNER:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invite codes cannot grant OWNER permission. Use direct sharing instead."
+            )
+
     invite = ProductInviteCode(
         product_id=product_id,
         code=ProductInviteCode.generate_code(),
         created_by_user_id=current_user.id,
         max_uses=request.max_uses,
-        permission_level=ProductPermissionLevel.VIEW,
+        permission_level=perm_level,
         expires_at=request.expires_at,
     )
     db.add(invite)
@@ -223,6 +310,9 @@ def list_product_members(
     """List users with access to a product."""
     _check_po_access(db, current_user, product_id)
 
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    creator_user_id = product.created_by_user_id if product else None
+
     permissions = db.query(ProductPermission, User).join(
         User, ProductPermission.user_id == User.id
     ).filter(
@@ -234,11 +324,196 @@ def list_product_members(
             user_id=user.id,
             username=user.username,
             email=user.email,
-            permission_level=perm.permission_level.value,
+            role=user.role.value,
+            permission_level="owner" if user.id == creator_user_id else perm.permission_level.value,
             granted_at=perm.granted_at,
         )
         for perm, user in permissions
     ]
+
+
+@router.post(
+    "/products/{product_id}/members",
+    response_model=ProductMemberResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def grant_product_permission(
+    product_id: int,
+    request: GrantPermissionRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Grant a user access to a product by email."""
+    _check_owner_access(db, current_user, product_id)
+
+    perm_level = _parse_permission_level(request.permission_level)
+
+    target_user = db.query(User).filter(User.email == request.email).first()
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No user found with that email",
+        )
+
+    permission_service = PermissionService(db)
+    try:
+        perm = permission_service.grant_permission(
+            product_id=product_id,
+            user_id=target_user.id,
+            permission_level=perm_level,
+            granted_by_user_id=current_user.id,
+        )
+    except PermissionError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+
+    return ProductMemberResponse(
+        user_id=target_user.id,
+        username=target_user.username,
+        email=target_user.email,
+        role=target_user.role.value,
+        permission_level=perm.permission_level.value,
+        granted_at=perm.granted_at,
+    )
+
+
+@router.patch(
+    "/products/{product_id}/members/{user_id}",
+    response_model=ProductMemberResponse,
+)
+def update_product_permission(
+    product_id: int,
+    user_id: int,
+    request: UpdatePermissionRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Update a member's permission level."""
+    _check_owner_access(db, current_user, product_id)
+
+    new_level = _parse_permission_level(request.permission_level)
+
+    if current_user.id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot change your own permission level.",
+        )
+
+    # Product creator has implicit OWNER that can't be changed
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if product and product.created_by_user_id == user_id and new_level != ProductPermissionLevel.OWNER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot change the product creator's permission. They always have owner access.",
+        )
+
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    existing = db.query(ProductPermission).filter(
+        ProductPermission.product_id == product_id,
+        ProductPermission.user_id == user_id,
+    ).first()
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User does not have access to this product",
+        )
+
+    # Prevent demoting the last active OWNER
+    if (
+        existing.permission_level == ProductPermissionLevel.OWNER
+        and new_level != ProductPermissionLevel.OWNER
+        and _count_active_owners(db, product_id) <= 1
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot demote the last owner. Grant another user OWNER first.",
+        )
+
+    permission_service = PermissionService(db)
+    perm = permission_service.grant_permission(
+        product_id=product_id,
+        user_id=user_id,
+        permission_level=new_level,
+        granted_by_user_id=current_user.id,
+    )
+
+    return ProductMemberResponse(
+        user_id=target_user.id,
+        username=target_user.username,
+        email=target_user.email,
+        role=target_user.role.value,
+        permission_level=perm.permission_level.value,
+        granted_at=perm.granted_at,
+    )
+
+
+@router.delete(
+    "/products/{product_id}/members/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_product_permission(
+    product_id: int,
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Revoke a member's access to a product."""
+    _check_owner_access(db, current_user, product_id)
+
+    if current_user.id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot remove your own access.",
+        )
+
+    # Product creator has implicit OWNER that can't be revoked
+    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+    if product and product.created_by_user_id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot remove the product creator. They always have owner access.",
+        )
+
+    existing = db.query(ProductPermission).filter(
+        ProductPermission.product_id == product_id,
+        ProductPermission.user_id == user_id,
+    ).first()
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User does not have access to this product",
+        )
+
+    # Prevent removing the last active OWNER
+    if (
+        existing.permission_level == ProductPermissionLevel.OWNER
+        and _count_active_owners(db, product_id) <= 1
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot remove the last owner. Grant another user OWNER first.",
+        )
+
+    permission_service = PermissionService(db)
+    try:
+        permission_service.revoke_permission(
+            product_id=product_id,
+            user_id=user_id,
+            revoked_by_user_id=current_user.id,
+        )
+    except PermissionError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
 
 
 # ============================================================================
