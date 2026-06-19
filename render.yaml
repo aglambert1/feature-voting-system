@@ -7,6 +7,7 @@ services:
     name: feature-iq-api
     plan: starter
     runtime: docker
+    autoDeploy: false
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
     healthCheckPath: /health
@@ -45,6 +46,7 @@ services:
     name: feature-iq-worker
     plan: starter
     runtime: docker
+    autoDeploy: false
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
     dockerCommand: celery -A app.queue worker --beat --loglevel=info --pool=solo
@@ -77,6 +79,7 @@ services:
     name: feature-iq-mcp
     plan: starter
     runtime: docker
+    autoDeploy: false
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
     dockerCommand: python -m mcp_server.http_server
@@ -110,6 +113,7 @@ services:
   - type: web
     name: feature-iq
     runtime: static
+    autoDeploy: false
     buildCommand: cd frontend && npm ci && npm run build
     staticPublishPath: frontend/dist
     envVars:
