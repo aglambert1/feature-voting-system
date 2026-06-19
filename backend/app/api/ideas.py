@@ -170,8 +170,7 @@ def list_ideas(
     List ideas with vote counts, optionally filtered by product.
 
     Visibility rules:
-    - ADMIN: See all ideas (active and inactive) for all products
-    - PRODUCT_OWNER: See all ideas (active and inactive) for products they own
+    - ADMIN / PRODUCT_OWNER: See all ideas (active and inactive) for products they have access to
     - VOTER: See all their own submitted ideas (any status) + only active ideas from others
 
     Sort options:

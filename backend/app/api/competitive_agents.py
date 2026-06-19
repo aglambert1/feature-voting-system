@@ -308,7 +308,7 @@ def verify_product_access(
     """Verify product exists and user has the required permission level.
 
     Uses PermissionService for consistent access control across all API files.
-    Checks system admin bypass, product creator, team-wide access, and explicit grants.
+    Checks product creator, team-wide access, and explicit permission grants.
     """
     product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
     if not product:

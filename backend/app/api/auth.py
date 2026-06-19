@@ -146,7 +146,7 @@ def register(
         perm = ProductPermission(
             product_id=invite.product_id,
             user_id=new_user.id,
-            permission_level=invite.permission_level,
+            permission_level=ProductPermissionLevel.VIEW,
             granted_by_user_id=invite.created_by_user_id,
         )
         db.add(perm)
