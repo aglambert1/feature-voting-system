@@ -8,8 +8,8 @@ and FastAPI TestClient fixtures for API endpoint testing.
 import os
 import pytest
 from unittest.mock import Mock
-from sqlalchemy import create_engine, pool
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, pool, text
+from sqlalchemy.orm import sessionmaker, Session
 
 # Ensure test environment settings
 os.environ.setdefault("DEBUG", "true")
@@ -23,28 +23,73 @@ from app.models.user import User, UserRole
 from app.services.llm_service import LLMService
 from app.utils.security import hash_password, create_access_token
 
+_TEST_DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///:memory:")
+_USE_PG = _TEST_DATABASE_URL.startswith("postgresql")
+
+if _USE_PG:
+    _pg_engine = create_engine(_TEST_DATABASE_URL)
+else:
+    _pg_engine = None
+
+
+def _setup_pg_schema(engine):
+    _has_pgvector = False
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.commit()
+            _has_pgvector = True
+        except Exception:
+            conn.rollback()
+    Base.metadata.create_all(bind=engine)
+    if _has_pgvector:
+        with engine.connect() as conn:
+            for table, col in [
+                ("ideas", "embedding"),
+                ("ci_products", "embedding"),
+                ("product_features", "embedding"),
+                ("product_competitor_features", "embedding"),
+            ]:
+                try:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} vector(1024)"))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+
+
+if _USE_PG:
+    _setup_pg_schema(_pg_engine)
+
+
+def _truncate_all_pg_tables(engine):
+    with engine.connect() as conn:
+        conn.execute(text(
+            "DO $$ DECLARE r RECORD; BEGIN "
+            "FOR r IN SELECT tablename FROM pg_tables "
+            "WHERE schemaname = 'public' AND tablename != 'alembic_version' "
+            "LOOP EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE'; "
+            "END LOOP; END $$"
+        ))
+        conn.commit()
+
 
 @pytest.fixture(scope="function")
 def db_session():
-    """Create a temporary in-memory database for testing.
-
-    Each test function gets a fresh database with all tables created.
-    The session is automatically closed after the test.
-
-    Uses StaticPool so the same in-memory database is shared across
-    threads (FastAPI TestClient runs sync handlers in a worker thread,
-    which would otherwise get a separate empty in-memory DB).
-    """
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=pool.StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    SessionLocal = sessionmaker(bind=engine)
-    session = SessionLocal()
-    yield session
-    session.close()
+    if _USE_PG:
+        session = Session(bind=_pg_engine)
+        yield session
+        session.close()
+        _truncate_all_pg_tables(_pg_engine)
+    else:
+        engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=pool.StaticPool,
+        )
+        Base.metadata.create_all(bind=engine)
+        session = sessionmaker(bind=engine)()
+        yield session
+        session.close()
 
 
 @pytest.fixture
