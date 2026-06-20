@@ -8,7 +8,7 @@ and FastAPI TestClient fixtures for API endpoint testing.
 import os
 import pytest
 from unittest.mock import Mock
-from sqlalchemy import create_engine, pool, text
+from sqlalchemy import create_engine, event, pool, text
 from sqlalchemy.orm import sessionmaker, Session
 
 # Ensure test environment settings
@@ -61,25 +61,26 @@ if _USE_PG:
     _setup_pg_schema(_pg_engine)
 
 
-def _truncate_all_pg_tables(engine):
-    with engine.connect() as conn:
-        conn.execute(text(
-            "DO $$ DECLARE r RECORD; BEGIN "
-            "FOR r IN SELECT tablename FROM pg_tables "
-            "WHERE schemaname = 'public' AND tablename != 'alembic_version' "
-            "LOOP EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE'; "
-            "END LOOP; END $$"
-        ))
-        conn.commit()
-
-
 @pytest.fixture(scope="function")
 def db_session():
     if _USE_PG:
-        session = Session(bind=_pg_engine)
+        conn = _pg_engine.connect()
+        transaction = conn.begin()
+        session = Session(bind=conn)
+
+        nested = conn.begin_nested()
+
+        @event.listens_for(session, "after_transaction_end")
+        def restart_savepoint(session, transaction_inner):
+            nonlocal nested
+            if transaction_inner.nested and not transaction_inner.parent.nested:
+                nested = conn.begin_nested()
+
         yield session
+
         session.close()
-        _truncate_all_pg_tables(_pg_engine)
+        transaction.rollback()
+        conn.close()
     else:
         engine = create_engine(
             "sqlite:///:memory:",
