@@ -7,7 +7,7 @@ const GITHUB_URL = 'https://github.com/aglambert1/feature-voting-system';
 const GITHUB_DISCUSSIONS_URL = 'https://github.com/aglambert1/feature-voting-system/discussions';
 const GITHUB_ISSUES_URL = 'https://github.com/aglambert1/feature-voting-system/issues';
 const LICENSE_URL = 'https://github.com/aglambert1/feature-voting-system/blob/main/LICENSE';
-const FEEDBACK_EMAIL = 'aglambert@gmail.com';
+const FEEDBACK_EMAIL = 'featureiq@gmail.com';
 
 const SCREENSHOT_JOB_MAP = '/screenshots/jobmap.png';
 const SCREENSHOT_SYNTHESIS = '/screenshots/synthesis.png';

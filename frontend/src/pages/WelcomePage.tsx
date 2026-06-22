@@ -154,10 +154,10 @@ const WelcomePage = () => {
           <ul className="space-y-2 text-gray-700">
             <li>
               <span className="font-medium">Anything at all?</span>{' '}
-              <a href="mailto:aglambert@gmail.com" className="text-blue-600 hover:underline">
+              <a href="mailto:featureiq@gmail.com" className="text-blue-600 hover:underline">
                 Email me
               </a>{' '}
-              (aglambert@gmail.com) — happy to walk you through setup, the JTBD model, or what the
+              (featureiq@gmail.com) — happy to walk you through setup, the JTBD model, or what the
               system can do, and to share the reference docs.
             </li>
             <li>
