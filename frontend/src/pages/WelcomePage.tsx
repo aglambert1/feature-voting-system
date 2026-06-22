@@ -52,6 +52,8 @@ const WelcomePage = () => {
           </p>
         </header>
 
+        <IntroVideo loomVideoId="f3263c31da0947c3baf719798fc011b3" />
+
         <section className="mb-10">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">What you can do today</h2>
           <div className="space-y-3 text-gray-700">
@@ -63,7 +65,9 @@ const WelcomePage = () => {
             {isPO && (
               <p>
                 <span className="font-medium text-gray-900">Full ownership of products you create</span>{' '}
-                — create your own product, add your competitors, run analysis pipelines, invite voters.
+                — create your own product, add your competitors, run analysis pipelines, invite voters. 
+                As product creator, you control who can see your product and its ideas, and who can vote on them. 
+                You can also upload your own evidence (interview transcripts, competitive research, etc.) to enrich the factbase.
               </p>
             )}
           </div>
@@ -117,7 +121,7 @@ const WelcomePage = () => {
                 step="4"
                 title="Add a competitor and run an audit"
                 time="4 min wall time"
-                body="On your product, add one competitor by name + URL. Run the audit. It takes ~3 minutes (Stage 1 web research + Stage 2 structured assessment). When it lands, open the report — your first competitor's positions across your job map."
+                body="On your product, add one competitor by name + URL or the Market Discovery agent. Run the audit. It takes ~3 minutes (Stage 1 web research + Stage 2 structured assessment). When it lands, open the report — your first competitor's positions across your job map."
               />
             )}
           </div>
@@ -283,5 +287,30 @@ const ActionCard = ({
     </div>
   );
 };
+
+interface IntroVideoProps {
+  loomVideoId: string | null;
+}
+
+const IntroVideo = ({ loomVideoId }: IntroVideoProps) => (
+  <section className="mb-10">
+    <h2 className="text-xl font-semibold text-gray-900 mb-4">See it in 90 seconds</h2>
+    {loomVideoId ? (
+      <div className="relative w-full overflow-hidden rounded-lg border border-gray-200 shadow-sm" style={{ paddingBottom: '56.25%' }}>
+        <iframe
+          src={`https://www.loom.com/embed/${loomVideoId}?hide_owner=true&hide_share=true&hide_title=true`}
+          allowFullScreen
+          className="absolute inset-0 w-full h-full"
+          title="Feature-IQ intro video"
+        />
+      </div>
+    ) : (
+      <div className="flex items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-gray-100 text-gray-500 text-sm" style={{ aspectRatio: '16/9' }}>
+        Intro video coming soon
+      </div>
+    )}
+    <p className="mt-3 text-sm text-gray-500">An introduction to Feature-IQ.</p>
+  </section>
+);
 
 export default WelcomePage;

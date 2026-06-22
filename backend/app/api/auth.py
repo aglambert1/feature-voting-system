@@ -29,6 +29,7 @@ from app.schemas.auth import (
     UserLogin,
     UserResponse,
     Token,
+    ProfileUpdate,
     UserRoleUpdate,
     PasswordResetRequest,
     PasswordResetConfirm,
@@ -256,6 +257,29 @@ async def get_current_user_info(
     Returns:
         Current user's information
     """
+    return current_user
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_profile(
+    profile_update: ProfileUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    if profile_update.email is not None and profile_update.email != current_user.email:
+        existing = db.query(User).filter(User.email == profile_update.email).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        current_user.email = profile_update.email
+
+    if profile_update.full_name is not None:
+        current_user.full_name = profile_update.full_name
+
+    db.commit()
+    db.refresh(current_user)
     return current_user
 
 

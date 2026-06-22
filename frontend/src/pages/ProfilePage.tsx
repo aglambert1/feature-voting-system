@@ -111,7 +111,6 @@ export default function ProfilePage() {
     setProfileSuccess('');
 
     try {
-      // Note: This endpoint needs to be created in the backend
       const response = await api.patch('/auth/me', {
         email: profileData.email,
         full_name: profileData.full_name
