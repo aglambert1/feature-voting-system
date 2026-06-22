@@ -84,6 +84,11 @@ class TokenData(BaseModel):
     user_id: Optional[int] = None
 
 
+class ProfileUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = Field(None, max_length=200)
+
+
 class UserRoleUpdate(BaseModel):
     """
     Schema for updating a user's role.

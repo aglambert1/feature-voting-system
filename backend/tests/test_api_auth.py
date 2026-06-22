@@ -619,3 +619,37 @@ class TestPasswordChange:
             "new_password": "newpassword456"
         })
         assert resp.status_code == 401
+
+
+class TestProfileUpdate:
+
+    def test_update_full_name(self, client, voter_user):
+        resp = client.patch("/auth/me", json={
+            "full_name": "Updated Name"
+        }, headers=auth_headers(voter_user))
+        assert resp.status_code == 200
+        assert resp.json()["full_name"] == "Updated Name"
+
+    def test_update_email(self, client, voter_user):
+        resp = client.patch("/auth/me", json={
+            "email": "newemail@example.com"
+        }, headers=auth_headers(voter_user))
+        assert resp.status_code == 200
+        assert resp.json()["email"] == "newemail@example.com"
+
+    def test_update_email_duplicate(self, client, voter_user, admin_user):
+        resp = client.patch("/auth/me", json={
+            "email": admin_user.email
+        }, headers=auth_headers(voter_user))
+        assert resp.status_code == 400
+        assert "already registered" in resp.json()["detail"].lower()
+
+    def test_update_email_same_as_current(self, client, voter_user):
+        resp = client.patch("/auth/me", json={
+            "email": voter_user.email
+        }, headers=auth_headers(voter_user))
+        assert resp.status_code == 200
+
+    def test_update_requires_auth(self, client):
+        resp = client.patch("/auth/me", json={"full_name": "No Auth"})
+        assert resp.status_code == 401
