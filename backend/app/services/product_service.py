@@ -317,6 +317,7 @@ class ProductService:
                     text(query), {"pid": product_id}
                 ).scalar() or 0
             except Exception:
+                self.db.rollback()
                 table_counts[name] = -1  # table may not exist
 
         # Count preserved records (SET NULL, not deleted)
@@ -332,12 +333,14 @@ class ProductService:
                     text(query), {"pid": product_id}
                 ).scalar() or 0
             except Exception:
+                self.db.rollback()
                 preserved_counts[name] = -1
 
         # Count vector embeddings
         try:
             embedding_counts = VectorService.count_product_embeddings(self.db, product_id)
         except Exception:
+            self.db.rollback()
             embedding_counts = {}
 
         # Check for file-based reports
@@ -408,6 +411,7 @@ class ProductService:
         try:
             VectorService.delete_all_product_embeddings(self.db, product_id)
         except Exception as e:
+            self.db.rollback()
             logger.warning("Failed to delete vector embeddings for product %d: %s", product_id, e)
 
         # 2. Delete file-based reports

@@ -30,10 +30,10 @@ def upgrade():
 
     op.execute(sa.text(f"""
         INSERT INTO product_permissions (product_id, user_id, permission_level, granted_by_user_id)
-        SELECT cp.id, u.id, 'owner', u.id
+        SELECT cp.id, u.id, 'OWNER', u.id
         FROM ci_products cp
         CROSS JOIN users u
-        WHERE u.role = 'admin'
+        WHERE u.role = 'ADMIN'
           AND {active_filter}
           AND cp.status = 'active'
           AND NOT EXISTS (

@@ -42,6 +42,7 @@ Common patterns - verify against source if unsure:
   - Use `server_default='0'` for booleans, not `server_default=sa.text('false')`
   - Avoid PG-specific syntax (e.g., `CREATE TYPE`, `USING` casts)
   - In `op.execute`/`sa.text` DML, **never compare boolean columns with integers** (`= 1`, `= 0`, `THEN 1`). PostgreSQL has a strict boolean type and rejects these. Use bare column references (`deep_analysis_enabled`) or `true`/`false` literals instead. SQLite accepts both, so this bug passes locally but fails on prod.
+  - In `op.execute`/`sa.text` DML, **always use uppercase enum member NAMES** (e.g., `'ADMIN'`, `'OWNER'`) not lowercase Python values (`'admin'`, `'owner'`). No model in this codebase uses `values_callable`, so PG stores enum labels as the uppercase `.name`, not the `.value`. SQLite stores strings and accepts either casing, so this bug passes locally but 500s on prod.
 
 **When to update this section:**
 - Adding/renaming model fields
