@@ -90,6 +90,10 @@ class User(Base):
     # JWT tokens issued before this timestamp are rejected (force logout).
     tokens_valid_after = Column(DateTime(timezone=True), nullable=True)
 
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+    failed_login_attempts = Column(Integer, default=0, nullable=False, server_default="0")
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+
     # When the account was created
     # server_default=func.now() means the database sets this automatically
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

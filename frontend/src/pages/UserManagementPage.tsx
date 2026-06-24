@@ -2,8 +2,8 @@ import { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import Navigation from '../components/Navigation';
 import api from '../services/api';
-import { getUserProducts, setUserProducts, adminResetPassword } from '../services/api';
-import type { User, UserProduct, ProductListItem } from '../types';
+import { getUserProducts, setUserProducts, adminResetPassword, unlockUser, getUserLoginHistory } from '../services/api';
+import type { User, UserProduct, ProductListItem, LoginEvent } from '../types';
 import { AxiosError } from 'axios';
 import type { ApiError } from '../types';
 
@@ -41,6 +41,11 @@ export default function UserManagementPage() {
   // Password reset state
   const [resetPasswordResult, setResetPasswordResult] = useState<{username: string; temporary_password: string} | null>(null);
   const [resetPasswordCopied, setResetPasswordCopied] = useState(false);
+
+  // Login history modal state
+  const [loginHistoryUserId, setLoginHistoryUserId] = useState<number | null>(null);
+  const [loginHistory, setLoginHistory] = useState<LoginEvent[]>([]);
+  const [loginHistoryLoading, setLoginHistoryLoading] = useState(false);
 
   // Fetch users and products
   useEffect(() => {
@@ -211,6 +216,32 @@ export default function UserManagementPage() {
     }
   };
 
+  const handleUnlockUser = async (userId: number, username: string) => {
+    try {
+      await unlockUser(userId);
+      setSuccessMessage(`Account ${username} unlocked`);
+      fetchUsers();
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setError(error.response?.data?.detail || 'Failed to unlock user');
+      setTimeout(() => setError(''), 3000);
+    }
+  };
+
+  const handleShowLoginHistory = async (userId: number) => {
+    setLoginHistoryUserId(userId);
+    setLoginHistoryLoading(true);
+    try {
+      const events = await getUserLoginHistory(userId);
+      setLoginHistory(events);
+    } catch {
+      setLoginHistory([]);
+    } finally {
+      setLoginHistoryLoading(false);
+    }
+  };
+
   const handleEditProducts = (userId: number) => {
     const currentProducts = userProductsMap[userId] || [];
     setEditingProductsUserId(userId);
@@ -239,6 +270,30 @@ export default function UserManagementPage() {
       default:
         return 'bg-gray-100 text-gray-800';
     }
+  };
+
+  const formatRelativeTime = (dateStr: string | null): string => {
+    if (!dateStr) return 'Never';
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const minutes = Math.floor(diff / 60000);
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}d ago`;
+    return `${Math.floor(days / 30)}mo ago`;
+  };
+
+  const isUserLocked = (u: User): boolean => {
+    if (!u.locked_until) return false;
+    return new Date(u.locked_until) > new Date();
+  };
+
+  const isDormant = (u: User): boolean => {
+    if (!u.last_login_at) return true;
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    return new Date(u.last_login_at).getTime() < thirtyDaysAgo;
   };
 
   return (
@@ -316,6 +371,9 @@ export default function UserManagementPage() {
                       Products
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Last Login
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -377,15 +435,30 @@ export default function UserManagementPage() {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span
-                          className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                            u.is_active
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-red-100 text-red-800'
-                          }`}
+                        <button
+                          onClick={() => handleShowLoginHistory(u.id)}
+                          className={`text-sm hover:underline ${u.last_login_at ? 'text-blue-600' : 'text-gray-400'}`}
+                          title={u.last_login_at ? new Date(u.last_login_at).toLocaleString() : 'Never logged in'}
                         >
-                          {u.is_active ? 'Active' : 'Inactive'}
-                        </span>
+                          {formatRelativeTime(u.last_login_at)}
+                        </button>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {isUserLocked(u) ? (
+                          <span className="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-amber-100 text-amber-800">
+                            Locked
+                          </span>
+                        ) : (
+                          <span
+                            className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                              u.is_active
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-red-100 text-red-800'
+                            }`}
+                          >
+                            {u.is_active ? 'Active' : 'Inactive'}
+                          </span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {u.id === user?.id ? (
@@ -402,8 +475,16 @@ export default function UserManagementPage() {
                               onClick={() => handleResetPassword(u.id, u.username)}
                               className="text-amber-600 hover:text-amber-900 font-medium"
                             >
-                              Reset Password
+                              Reset PW
                             </button>
+                            {isUserLocked(u) && (
+                              <button
+                                onClick={() => handleUnlockUser(u.id, u.username)}
+                                className="text-blue-600 hover:text-blue-900 font-medium"
+                              >
+                                Unlock
+                              </button>
+                            )}
                             {u.is_active ? (
                               <button
                                 onClick={() => handleDeactivateUser(u.id, u.username)}
@@ -431,7 +512,7 @@ export default function UserManagementPage() {
         </div>
 
         {/* Statistics */}
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="bg-white shadow rounded-lg p-6">
             <h3 className="text-sm font-medium text-gray-500">Total Users</h3>
             <p className="mt-2 text-3xl font-bold text-gray-900">{users.length}</p>
@@ -443,6 +524,12 @@ export default function UserManagementPage() {
             </p>
           </div>
           <div className="bg-white shadow rounded-lg p-6">
+            <h3 className="text-sm font-medium text-gray-500">Dormant (30d+)</h3>
+            <p className="mt-2 text-3xl font-bold text-amber-600">
+              {users.filter((u) => u.is_active && isDormant(u)).length}
+            </p>
+          </div>
+          <div className="bg-white shadow rounded-lg p-6">
             <h3 className="text-sm font-medium text-gray-500">Admins</h3>
             <p className="mt-2 text-3xl font-bold text-red-600">
               {users.filter((u) => u.role === 'admin').length}
@@ -450,6 +537,61 @@ export default function UserManagementPage() {
           </div>
         </div>
       </main>
+
+      {/* Login History Modal */}
+      {loginHistoryUserId !== null && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative bg-white rounded-lg shadow-xl max-w-lg w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Login History — {users.find(u => u.id === loginHistoryUserId)?.username}
+              </h3>
+            </div>
+
+            <div className="px-6 py-4 max-h-80 overflow-y-auto">
+              {loginHistoryLoading ? (
+                <p className="text-sm text-gray-500">Loading...</p>
+              ) : loginHistory.length === 0 ? (
+                <p className="text-sm text-gray-500">No login events recorded.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium text-gray-600">Time</th>
+                      <th className="text-left px-3 py-2 font-medium text-gray-600">IP</th>
+                      <th className="text-left px-3 py-2 font-medium text-gray-600">Browser</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {loginHistory.map(e => (
+                      <tr key={e.id}>
+                        <td className="px-3 py-2 text-gray-900 whitespace-nowrap">
+                          {new Date(e.logged_in_at).toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
+                          {e.ip_address || '—'}
+                        </td>
+                        <td className="px-3 py-2 text-gray-600 truncate max-w-[200px]" title={e.user_agent || ''}>
+                          {e.user_agent ? e.user_agent.split(' ').slice(0, 3).join(' ') : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => { setLoginHistoryUserId(null); setLoginHistory([]); }}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit Products Modal */}
       {editingProductsUserId !== null && (

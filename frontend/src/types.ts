@@ -48,7 +48,17 @@ export interface User {
   is_active: boolean;
   has_seen_welcome: boolean;
   must_change_password: boolean;
+  last_login_at: string | null;
+  locked_until: string | null;
+  failed_login_attempts: number;
   created_at: string;
+}
+
+export interface LoginEvent {
+  id: number;
+  logged_in_at: string;
+  ip_address: string | null;
+  user_agent: string | null;
 }
 
 export interface LoginResponse {

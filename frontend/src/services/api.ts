@@ -38,6 +38,7 @@ import type {
   AgentCompetitor,
   AgentJobResponse,
   FeatureQueryResponse,
+  LoginEvent,
 } from '../types';
 
 // Create axios instance with base configuration
@@ -1495,6 +1496,20 @@ export interface AdminPasswordResetResponse {
 
 export const adminResetPassword = async (userId: number): Promise<AdminPasswordResetResponse> => {
   const response = await api.post<AdminPasswordResetResponse>(`/auth/users/${userId}/reset-password`);
+  return response.data;
+};
+
+// ============================================================================
+// ADMIN: Account Unlock & Login History
+// ============================================================================
+
+export const unlockUser = async (userId: number): Promise<User> => {
+  const response = await api.patch<User>(`/auth/users/${userId}/unlock`);
+  return response.data;
+};
+
+export const getUserLoginHistory = async (userId: number): Promise<LoginEvent[]> => {
+  const response = await api.get<LoginEvent[]>(`/auth/users/${userId}/login-history`);
   return response.data;
 };
 
