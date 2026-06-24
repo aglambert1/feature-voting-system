@@ -652,8 +652,8 @@ async def request_password_reset(
     db.add(reset_token)
     db.commit()
 
-    # Send OTP via email (Celery in production, direct in dev)
-    if email_service.is_live:
+    # Send OTP via email (Celery in production, direct in debug/dev)
+    if email_service.is_live and not settings.debug:
         from app.queue.email_tasks import send_email_task
         send_email_task.delay(
             email_type="password_reset_otp",
@@ -765,8 +765,8 @@ async def confirm_password_reset(
 
     db.commit()
 
-    # Send confirmation email (Celery in production, direct in dev)
-    if email_service.is_live:
+    # Send confirmation email (Celery in production, direct in debug/dev)
+    if email_service.is_live and not settings.debug:
         from app.queue.email_tasks import send_email_task
         send_email_task.delay(
             email_type="password_changed",
@@ -816,6 +816,7 @@ async def change_password(
         400 Bad Request: If current password is incorrect
     """
     from app.utils.email import email_service
+    from app.config import settings
 
     # Verify current password
     if not verify_password(password_change.current_password, current_user.hashed_password):
@@ -835,7 +836,7 @@ async def change_password(
     current_user.must_change_password = False
     db.commit()
 
-    if email_service.is_live:
+    if email_service.is_live and not settings.debug:
         from app.queue.email_tasks import send_email_task
         send_email_task.delay(
             email_type="password_changed",
