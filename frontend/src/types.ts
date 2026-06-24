@@ -47,12 +47,14 @@ export interface User {
   role: UserRole;
   is_active: boolean;
   has_seen_welcome: boolean;
+  must_change_password: boolean;
   created_at: string;
 }
 
 export interface LoginResponse {
   access_token: string;
   token_type: string;
+  must_change_password: boolean;
 }
 
 export interface RegisterData {

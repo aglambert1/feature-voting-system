@@ -63,6 +63,7 @@ const LoginPage = () => {
    * - Voter → /ideas
    */
   function defaultLandingFor(user: User): string {
+    if (user.must_change_password) return '/profile?force_password_change=1';
     const isPO = user.role === UserRole.ADMIN || user.role === UserRole.PRODUCT_OWNER;
     if (isPO && !user.has_seen_welcome) return '/welcome';
     if (isPO) return '/product-intelligence';

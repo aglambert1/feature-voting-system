@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, ChangeEvent, FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import api from '../services/api';
+import api, { getCurrentUser } from '../services/api';
 import { AxiosError } from 'axios';
 import type { ApiError } from '../types';
 import { UserRole } from '../types';
@@ -35,9 +35,13 @@ interface APIKeyCreateResponse extends APIKey {
 }
 
 export default function ProfilePage() {
-  const { user, setUser } = useAuth();
+  const { user, setUser, logout } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<ActiveTab>('profile');
+  const [searchParams] = useSearchParams();
+
+  const initialForce = user?.must_change_password || searchParams.get('force_password_change') === '1';
+  const [forcePasswordChange, setForcePasswordChange] = useState(initialForce);
+  const [activeTab, setActiveTab] = useState<ActiveTab>(initialForce ? 'password' : 'profile');
 
   const isPO = user?.role === UserRole.PRODUCT_OWNER;
 
@@ -151,12 +155,24 @@ export default function ProfilePage() {
         new_password: passwordData.new_password
       });
 
-      setPasswordSuccess('Password changed successfully!');
       setPasswordData({
         current_password: '',
         new_password: '',
         confirm_password: ''
       });
+
+      if (forcePasswordChange) {
+        setPasswordSuccess('Password changed successfully. Redirecting to login...');
+        setForcePasswordChange(false);
+        setTimeout(() => {
+          logout();
+          navigate('/login', { replace: true });
+        }, 2000);
+      } else {
+        setPasswordSuccess('Password changed successfully!');
+        const updatedUser = await getCurrentUser();
+        setUser(updatedUser);
+      }
     } catch (err) {
       const error = err as AxiosError<ApiError>;
       setPasswordError(error.response?.data?.detail || 'Failed to change password');
@@ -220,17 +236,26 @@ export default function ProfilePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-bold text-gray-900">My Profile</h1>
-            <button
-              onClick={() => navigate(-1)}
-              className="text-blue-600 hover:text-blue-800 transition-colors"
-            >
-              &larr; Back
-            </button>
+            {!forcePasswordChange && (
+              <button
+                onClick={() => navigate(-1)}
+                className="text-blue-600 hover:text-blue-800 transition-colors"
+              >
+                &larr; Back
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Forced password change banner */}
+        {forcePasswordChange && (
+          <div className="bg-amber-50 border border-amber-300 text-amber-800 px-4 py-3 rounded-lg mb-6 font-medium">
+            Your password must be changed before you can continue. Enter your temporary password as the current password, then choose a new one.
+          </div>
+        )}
+
         {/* User Info Card */}
         <div className="bg-white shadow rounded-lg p-6 mb-6">
           <div className="flex items-center">
@@ -252,12 +277,13 @@ export default function ProfilePage() {
           <div className="border-b border-gray-200">
             <nav className="flex -mb-px">
               <button
-                onClick={() => setActiveTab('profile')}
+                onClick={() => !forcePasswordChange && setActiveTab('profile')}
+                disabled={forcePasswordChange}
                 className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === 'profile'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
+                } ${forcePasswordChange ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 Edit Profile
               </button>
@@ -273,12 +299,13 @@ export default function ProfilePage() {
               </button>
               {isPO && (
                 <button
-                  onClick={() => setActiveTab('api-keys')}
+                  onClick={() => !forcePasswordChange && setActiveTab('api-keys')}
+                  disabled={forcePasswordChange}
                   className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
                     activeTab === 'api-keys'
                       ? 'border-blue-500 text-blue-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
+                  } ${forcePasswordChange ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   API Keys
                 </button>

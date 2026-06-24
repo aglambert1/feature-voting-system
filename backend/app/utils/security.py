@@ -65,11 +65,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
             minutes=settings.access_token_expire_minutes
         )
 
-    # Add expiration to the token data
-    to_encode.update({"exp": expire})
+    to_encode.update({
+        "exp": expire,
+        "iat": datetime.now(timezone.utc).timestamp(),
+    })
 
-    # Encode the token using our secret key
-    # The token is signed so we can verify it hasn't been tampered with
     encoded_jwt = jwt.encode(
         to_encode,
         settings.secret_key,
@@ -109,14 +109,12 @@ async def get_current_user(
     )
 
     try:
-        # Decode the JWT token
         payload = jwt.decode(
             token,
             settings.secret_key,
             algorithms=[settings.algorithm]
         )
 
-        # Extract username from token
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
@@ -124,21 +122,28 @@ async def get_current_user(
         token_data = TokenData(username=username)
 
     except JWTError:
-        # Token is invalid or expired
         raise credentials_exception
 
-    # Look up user in database
     user = db.query(User).filter(User.username == token_data.username).first()
 
     if user is None:
         raise credentials_exception
 
-    # Check if account is active
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled"
         )
+
+    if user.tokens_valid_after:
+        iat = payload.get("iat")
+        if iat is not None:
+            issued_at = datetime.fromtimestamp(iat, tz=timezone.utc)
+            valid_after = user.tokens_valid_after
+            if valid_after.tzinfo is None:
+                valid_after = valid_after.replace(tzinfo=timezone.utc)
+            if issued_at < valid_after:
+                raise credentials_exception
 
     return user
 

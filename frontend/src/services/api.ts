@@ -97,13 +97,15 @@ api.interceptors.response.use(
 
       // Return error with meaningful message
       // Handle Pydantic validation errors (422) where detail is an array of error objects
-      const detail = (error.response.data as any)?.detail;
+      const data = error.response.data as any;
+      const detail = data?.detail;
       let message: string;
       if (Array.isArray(detail)) {
-        // Pydantic validation error - extract the message from each error
         message = detail.map((e: { msg?: string }) => e.msg || 'Validation error').join(', ');
       } else if (typeof detail === 'string') {
         message = detail;
+      } else if (typeof data?.error === 'string') {
+        message = data.error;
       } else {
         message = 'An error occurred';
       }
@@ -155,10 +157,15 @@ export const login = async (username: string, password: string): Promise<LoginRe
 
     return response.data;
   } catch (error) {
-    // Handle login-specific errors with user-friendly messages
     const apiError = error as ApiError;
     if (apiError.status === 401) {
       throw new Error('Invalid username or password. Please try again.');
+    }
+    if (apiError.status === 403) {
+      throw new Error(apiError.message || 'Account is disabled. Contact an administrator.');
+    }
+    if (apiError.status === 429) {
+      throw new Error('Too many login attempts. Please wait a minute before trying again.');
     }
     throw new Error(apiError.message || 'Login failed. Please try again.');
   }
@@ -1475,6 +1482,21 @@ export const getSynthesisCompetitorsCfg = async (
   return response.data;
 };
 
+
+// ============================================================================
+// ADMIN: Password Reset
+// ============================================================================
+
+export interface AdminPasswordResetResponse {
+  message: string;
+  temporary_password: string;
+  username: string;
+}
+
+export const adminResetPassword = async (userId: number): Promise<AdminPasswordResetResponse> => {
+  const response = await api.post<AdminPasswordResetResponse>(`/auth/users/${userId}/reset-password`);
+  return response.data;
+};
 
 // Export the axios instance for custom requests
 export default api;

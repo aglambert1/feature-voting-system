@@ -59,6 +59,7 @@ class UserResponse(BaseModel):
     role: UserRole
     is_active: bool
     has_seen_welcome: bool = False
+    must_change_password: bool = False
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -72,6 +73,7 @@ class Token(BaseModel):
     """
     access_token: str
     token_type: str = "bearer"  # Always "bearer" for JWT
+    must_change_password: bool = False
 
 
 class TokenData(BaseModel):
@@ -163,3 +165,9 @@ class DevOTPResponse(BaseModel):
     otp: Optional[str] = None
     expires_at: Optional[datetime] = None
     message: str
+
+
+class AdminPasswordResetResponse(BaseModel):
+    message: str
+    temporary_password: str
+    username: str

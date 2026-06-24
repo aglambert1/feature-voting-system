@@ -621,6 +621,140 @@ class TestPasswordChange:
         assert resp.status_code == 401
 
 
+# ============================================================================
+# Admin Password Reset (POST /auth/users/{id}/reset-password)
+# ============================================================================
+
+
+class TestAdminPasswordReset:
+
+    def test_admin_resets_user_password(self, client, admin_user, voter_user, db_session):
+        resp = client.post(
+            f"/auth/users/{voter_user.id}/reset-password",
+            headers=auth_headers(admin_user)
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "temporary_password" in data
+        assert data["username"] == voter_user.username
+        assert len(data["temporary_password"]) >= 8
+
+        # Verify must_change_password is set
+        db_session.refresh(voter_user)
+        assert voter_user.must_change_password is True
+
+        # Verify the temp password works for login
+        login_resp = client.post("/auth/login", data={
+            "username": voter_user.username,
+            "password": data["temporary_password"],
+        })
+        assert login_resp.status_code == 200
+        assert login_resp.json()["must_change_password"] is True
+
+    def test_admin_cannot_reset_own_password(self, client, admin_user):
+        resp = client.post(
+            f"/auth/users/{admin_user.id}/reset-password",
+            headers=auth_headers(admin_user)
+        )
+        assert resp.status_code == 400
+        assert "own password" in resp.json()["detail"].lower()
+
+    def test_non_admin_gets_403(self, client, voter_user, admin_user):
+        resp = client.post(
+            f"/auth/users/{admin_user.id}/reset-password",
+            headers=auth_headers(voter_user)
+        )
+        assert resp.status_code == 403
+
+    def test_reset_nonexistent_user(self, client, admin_user):
+        resp = client.post(
+            "/auth/users/99999/reset-password",
+            headers=auth_headers(admin_user)
+        )
+        assert resp.status_code == 404
+
+    @patch("app.utils.email.email_service")
+    def test_password_change_clears_must_change_flag(self, mock_email_svc, client, admin_user, voter_user, db_session):
+        mock_email_svc.send_password_changed_notification = AsyncMock(return_value=True)
+
+        # Admin resets the password
+        reset_resp = client.post(
+            f"/auth/users/{voter_user.id}/reset-password",
+            headers=auth_headers(admin_user)
+        )
+        temp_password = reset_resp.json()["temporary_password"]
+
+        # Login with temp password to get a valid token
+        login_resp = client.post("/auth/login", data={
+            "username": voter_user.username,
+            "password": temp_password,
+        })
+        new_token = login_resp.json()["access_token"]
+        new_headers = {"Authorization": f"Bearer {new_token}"}
+
+        # Change password
+        change_resp = client.post("/auth/password/change", json={
+            "current_password": temp_password,
+            "new_password": "permanent_password_123",
+        }, headers=new_headers)
+        assert change_resp.status_code == 200
+
+        # Flag should be cleared
+        db_session.refresh(voter_user)
+        assert voter_user.must_change_password is False
+
+
+# ============================================================================
+# Session Invalidation (tokens_valid_after)
+# ============================================================================
+
+
+class TestSessionInvalidation:
+
+    def test_old_token_rejected_after_password_reset(self, client, admin_user, voter_user, db_session):
+        # Get a token before the reset
+        old_headers = auth_headers(voter_user)
+
+        # Admin resets the password
+        client.post(
+            f"/auth/users/{voter_user.id}/reset-password",
+            headers=auth_headers(admin_user)
+        )
+
+        # Old token should be rejected
+        resp = client.get("/auth/me", headers=old_headers)
+        assert resp.status_code == 401
+
+    def test_old_token_rejected_after_deactivation(self, client, admin_user, voter_user, db_session):
+        old_headers = auth_headers(voter_user)
+
+        client.patch(
+            f"/auth/users/{voter_user.id}/deactivate",
+            headers=auth_headers(admin_user)
+        )
+
+        resp = client.get("/auth/me", headers=old_headers)
+        assert resp.status_code in (401, 403)
+
+    def test_new_token_works_after_password_reset(self, client, admin_user, voter_user, db_session):
+        reset_resp = client.post(
+            f"/auth/users/{voter_user.id}/reset-password",
+            headers=auth_headers(admin_user)
+        )
+        temp_password = reset_resp.json()["temporary_password"]
+
+        login_resp = client.post("/auth/login", data={
+            "username": voter_user.username,
+            "password": temp_password,
+        })
+        assert login_resp.status_code == 200
+
+        new_token = login_resp.json()["access_token"]
+        me_resp = client.get("/auth/me", headers={"Authorization": f"Bearer {new_token}"})
+        assert me_resp.status_code == 200
+        assert me_resp.json()["username"] == voter_user.username
+
+
 class TestProfileUpdate:
 
     def test_update_full_name(self, client, voter_user):
