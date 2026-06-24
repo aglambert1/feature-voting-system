@@ -202,7 +202,7 @@ def _create_user_with_password(db_session, email, username, password, role, full
 def voter_user(db_session):
     """Create a VOTER user with a known password for API tests."""
     return _create_user_with_password(
-        db_session, "voter@example.com", "voter", "password123", UserRole.VOTER
+        db_session, "voter@example.com", "voter", "Voter@pass1", UserRole.VOTER
     )
 
 
@@ -210,7 +210,7 @@ def voter_user(db_session):
 def admin_user(db_session):
     """Create an ADMIN user with a known password for API tests."""
     return _create_user_with_password(
-        db_session, "apiadmin@example.com", "apiadmin", "adminpass123", UserRole.ADMIN
+        db_session, "apiadmin@example.com", "apiadmin", "Admin@pass1", UserRole.ADMIN
     )
 
 
@@ -218,7 +218,7 @@ def admin_user(db_session):
 def po_user(db_session):
     """Create a PRODUCT_OWNER user with a known password for API tests."""
     return _create_user_with_password(
-        db_session, "apiowner@example.com", "apiowner", "ownerpass123", UserRole.PRODUCT_OWNER
+        db_session, "apiowner@example.com", "apiowner", "Owner@pass1", UserRole.PRODUCT_OWNER
     )
 
 

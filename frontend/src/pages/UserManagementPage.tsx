@@ -2,7 +2,7 @@ import { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import Navigation from '../components/Navigation';
 import api from '../services/api';
-import { getUserProducts, setUserProducts } from '../services/api';
+import { getUserProducts, setUserProducts, adminResetPassword } from '../services/api';
 import type { User, UserProduct, ProductListItem } from '../types';
 import { AxiosError } from 'axios';
 import type { ApiError } from '../types';
@@ -37,6 +37,10 @@ export default function UserManagementPage() {
     role: 'voter',
     product_ids: [],
   });
+
+  // Password reset state
+  const [resetPasswordResult, setResetPasswordResult] = useState<{username: string; temporary_password: string} | null>(null);
+  const [resetPasswordCopied, setResetPasswordCopied] = useState(false);
 
   // Fetch users and products
   useEffect(() => {
@@ -187,6 +191,22 @@ export default function UserManagementPage() {
     } catch (err) {
       const error = err as AxiosError<ApiError>;
       setError(error.response?.data?.detail || 'Failed to update product assignments');
+      setTimeout(() => setError(''), 3000);
+    }
+  };
+
+  const handleResetPassword = async (userId: number, username: string) => {
+    if (!confirm(`Reset password for ${username}? This will invalidate all their active sessions.`)) {
+      return;
+    }
+
+    try {
+      const result = await adminResetPassword(userId);
+      setResetPasswordResult({ username: result.username, temporary_password: result.temporary_password });
+      setResetPasswordCopied(false);
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setError(error.response?.data?.detail || 'Failed to reset password');
       setTimeout(() => setError(''), 3000);
     }
   };
@@ -378,6 +398,12 @@ export default function UserManagementPage() {
                             >
                               Products
                             </button>
+                            <button
+                              onClick={() => handleResetPassword(u.id, u.username)}
+                              className="text-amber-600 hover:text-amber-900 font-medium"
+                            >
+                              Reset Password
+                            </button>
                             {u.is_active ? (
                               <button
                                 onClick={() => handleDeactivateUser(u.id, u.username)}
@@ -507,6 +533,55 @@ export default function UserManagementPage() {
         </div>
       )}
 
+      {/* Temporary Password Modal */}
+      {resetPasswordResult && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Password Reset — {resetPasswordResult.username}
+              </h3>
+            </div>
+
+            <div className="px-6 py-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+                <p className="text-sm font-medium text-amber-800 mb-1">
+                  Share this temporary password with the user securely.
+                </p>
+                <p className="text-xs text-amber-700">
+                  It will not be shown again. The user will be required to change it on next login.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <code className="flex-1 bg-gray-100 border border-gray-300 rounded px-3 py-2 text-sm font-mono text-gray-800 break-all select-all">
+                  {resetPasswordResult.temporary_password}
+                </code>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(resetPasswordResult.temporary_password);
+                    setResetPasswordCopied(true);
+                    setTimeout(() => setResetPasswordCopied(false), 2000);
+                  }}
+                  className="px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap"
+                >
+                  {resetPasswordCopied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => setResetPasswordResult(null)}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Create User Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
@@ -569,7 +644,7 @@ export default function UserManagementPage() {
                     value={createFormData.password}
                     onChange={(e: ChangeEvent<HTMLInputElement>) => setCreateFormData({...createFormData, password: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Min 8 characters"
+                    placeholder="Min 8 chars, upper/lower/digit/special"
                   />
                 </div>
 

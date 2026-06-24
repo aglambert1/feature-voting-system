@@ -84,6 +84,12 @@ class User(Base):
     # CTA on /welcome, NOT on mount — bouncing out should re-show next login.
     has_seen_welcome = Column(Boolean, default=False, nullable=False, server_default="0")
 
+    # Set True by admin password reset; forces user to change password on next login.
+    must_change_password = Column(Boolean, default=False, nullable=False, server_default="0")
+
+    # JWT tokens issued before this timestamp are rejected (force logout).
+    tokens_valid_after = Column(DateTime(timezone=True), nullable=True)
+
     # When the account was created
     # server_default=func.now() means the database sets this automatically
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -36,7 +36,8 @@ from app.schemas.auth import (
     PasswordChange,
     MessageResponse,
     PasswordResetResponse,
-    DevOTPResponse
+    DevOTPResponse,
+    AdminPasswordResetResponse,
 )
 from app.utils.security import (
     hash_password,
@@ -229,15 +230,14 @@ def login(
             detail="Account is disabled"
         )
 
-    # Create access token
-    # "sub" (subject) is a standard JWT claim for the user identifier
     access_token = create_access_token(
         data={"sub": user.username, "user_id": user.id}
     )
 
     return {
         "access_token": access_token,
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "must_change_password": user.must_change_password,
     }
 
 
@@ -416,8 +416,8 @@ async def deactivate_user(
             detail="You cannot deactivate your own account"
         )
 
-    # Deactivate the user
     user.is_active = False
+    user.tokens_valid_after = datetime.now(timezone.utc)
     db.commit()
     db.refresh(user)
 
@@ -461,6 +461,44 @@ async def activate_user(
     db.refresh(user)
 
     return user
+
+
+@router.post("/users/{user_id}/reset-password", response_model=AdminPasswordResetResponse)
+async def admin_reset_password(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Admin-initiated password reset. Generates a temporary password,
+    sets must_change_password flag, and invalidates existing sessions.
+    """
+    import secrets
+
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot reset your own password through this endpoint"
+        )
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    temporary_password = secrets.token_urlsafe(9)
+    user.hashed_password = hash_password(temporary_password)
+    user.must_change_password = True
+    user.tokens_valid_after = datetime.now(timezone.utc)
+    db.commit()
+
+    return AdminPasswordResetResponse(
+        message="Password has been reset. Share the temporary password with the user securely.",
+        temporary_password=temporary_password,
+        username=user.username,
+    )
 
 
 # =============================================================================
@@ -705,11 +743,10 @@ async def change_password(
             detail="New password must be different from current password"
         )
 
-    # Update password
     current_user.hashed_password = hash_password(password_change.new_password)
+    current_user.must_change_password = False
     db.commit()
 
-    # Send confirmation email
     await email_service.send_password_changed_notification(
         to_email=current_user.email,
         username=current_user.username
