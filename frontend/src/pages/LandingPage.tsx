@@ -59,7 +59,7 @@ const LandingPage = () => {
             and what to ignore. But every step of the workflow around that judgment will be
             transformed by AI agents.
           </p>
-          <p className="text-lg text-gray-700 leading-relaxed">
+          <p className="text-lg text-gray-700 leading-relaxed mb-8">
             Feature-IQ is one step of that workflow: a continuous fact-base for market and customer
             signal, synthesized through a Jobs-to-be-Done spine, with every claim traceable back to
             its source. It is intended
@@ -69,6 +69,14 @@ const LandingPage = () => {
             needs — and remove the administrative and project management overhead. When you use it,
             I want to hear what you think.
           </p>
+          {!user && (
+            <a
+              href={`mailto:${FEEDBACK_EMAIL}?subject=Feature-IQ access request`}
+              className="inline-block bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-5 py-2.5 rounded transition-colors"
+            >
+              Request access
+            </a>
+          )}
         </section>
 
         <section className="mb-16">
