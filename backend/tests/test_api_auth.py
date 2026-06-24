@@ -7,7 +7,7 @@ password reset, and password change flows.
 
 import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, Mock
 
 from app.models.user import User, UserRole
 from app.models.password_reset import PasswordResetToken
@@ -464,7 +464,8 @@ class TestPasswordReset:
 
     @patch("app.utils.email.email_service")
     def test_reset_request_valid_email(self, mock_email_svc, client, voter_user, db_session):
-        mock_email_svc.send_password_reset_otp = AsyncMock(return_value=True)
+        mock_email_svc.is_live = False
+        mock_email_svc.send_password_reset_otp = Mock(return_value=True)
         resp = client.post("/auth/password/reset-request", json={
             "email": voter_user.email
         })
@@ -485,8 +486,9 @@ class TestPasswordReset:
 
     @patch("app.utils.email.email_service")
     def test_reset_confirm_valid_otp(self, mock_email_svc, client, voter_user, db_session):
-        mock_email_svc.send_password_reset_otp = AsyncMock(return_value=True)
-        mock_email_svc.send_password_changed_notification = AsyncMock(return_value=True)
+        mock_email_svc.is_live = False
+        mock_email_svc.send_password_reset_otp = Mock(return_value=True)
+        mock_email_svc.send_password_changed_notification = Mock(return_value=True)
 
         # Create OTP token directly
         from app.utils.otp import generate_otp, get_otp_expiration
@@ -512,6 +514,7 @@ class TestPasswordReset:
 
     @patch("app.utils.email.email_service")
     def test_reset_confirm_expired_otp(self, mock_email_svc, client, voter_user, db_session):
+        mock_email_svc.is_live = False
         token = PasswordResetToken(
             user_id=voter_user.id,
             token="123456",
@@ -563,7 +566,8 @@ class TestPasswordReset:
 
     @patch("app.utils.email.email_service")
     def test_previous_otps_invalidated(self, mock_email_svc, client, voter_user, db_session):
-        mock_email_svc.send_password_reset_otp = AsyncMock(return_value=True)
+        mock_email_svc.is_live = False
+        mock_email_svc.send_password_reset_otp = Mock(return_value=True)
         # Create an existing unused OTP
         old_token = PasswordResetToken(
             user_id=voter_user.id,
@@ -600,7 +604,8 @@ class TestPasswordChange:
 
     @patch("app.utils.email.email_service")
     def test_change_password_success(self, mock_email_svc, client, voter_user):
-        mock_email_svc.send_password_changed_notification = AsyncMock(return_value=True)
+        mock_email_svc.is_live = False
+        mock_email_svc.send_password_changed_notification = Mock(return_value=True)
         resp = client.post("/auth/password/change", json={
             "current_password": "Voter@pass1",
             "new_password": "Changed@789"
@@ -686,7 +691,8 @@ class TestAdminPasswordReset:
 
     @patch("app.utils.email.email_service")
     def test_password_change_clears_must_change_flag(self, mock_email_svc, client, admin_user, voter_user, db_session):
-        mock_email_svc.send_password_changed_notification = AsyncMock(return_value=True)
+        mock_email_svc.is_live = False
+        mock_email_svc.send_password_changed_notification = Mock(return_value=True)
 
         # Admin resets the password
         reset_resp = client.post(

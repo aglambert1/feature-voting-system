@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     dev_otp_bypass: str = ""  # Set to "000000" in .env for local dev convenience
     dev_return_otp: bool = False  # Set to true in .env to see OTPs in API responses
 
+    # Email settings (SendGrid)
+    sendgrid_api_key: str = ""
+    sendgrid_from_email: str = ""
+    sendgrid_from_name: str = "Feature-IQ"
+
     # Configuration for pydantic to read from .env file
     # Use absolute path so .env is found regardless of working directory
     # (needed for MCP server launched by Claude Desktop)

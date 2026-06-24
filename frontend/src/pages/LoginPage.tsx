@@ -1,5 +1,5 @@
 import { useState, ChangeEvent, FormEvent } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { UserRole, type User } from '../types';
 
@@ -134,6 +134,16 @@ const LoginPage = () => {
                 placeholder="Enter password"
               />
             </div>
+          </div>
+
+          {/* Forgot Password Link */}
+          <div className="flex justify-end">
+            <Link
+              to="/forgot-password"
+              className="text-sm font-medium text-blue-600 hover:text-blue-500"
+            >
+              Forgot your password?
+            </Link>
           </div>
 
           {/* Submit Button */}
