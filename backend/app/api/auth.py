@@ -208,27 +208,56 @@ def login(
     Raises:
         401 Unauthorized: If credentials are incorrect
     """
-    # Try to find user by username first, then by email
-    user = db.query(User).filter(User.username == form_data.username).first()
+    from datetime import timedelta
+    from app.models.login_event import LoginEvent
 
+    user = db.query(User).filter(User.username == form_data.username).first()
     if not user:
-        # Try finding by email
         user = db.query(User).filter(User.email == form_data.username).first()
 
-    # If user doesn't exist or password is wrong
+    # Check lockout before verifying password
+    if user and user.locked_until:
+        lock_time = user.locked_until
+        if lock_time.tzinfo is None:
+            lock_time = lock_time.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) < lock_time:
+            remaining = int((lock_time - datetime.now(timezone.utc)).total_seconds() / 60) + 1
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Account is temporarily locked due to too many failed login attempts. Try again in {remaining} minute{'s' if remaining != 1 else ''}."
+            )
+
     if not user or not verify_password(form_data.password, user.hashed_password):
+        # Track failed attempt if user exists
+        if user:
+            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+            if user.failed_login_attempts >= 5:
+                user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+            db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Check if account is active
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled"
         )
+
+    # Successful login — reset lockout state and record event
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.last_login_at = datetime.now(timezone.utc)
+
+    login_event = LoginEvent(
+        user_id=user.id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:500],
+    )
+    db.add(login_event)
+    db.commit()
 
     access_token = create_access_token(
         data={"sub": user.username, "user_id": user.id}
@@ -461,6 +490,52 @@ async def activate_user(
     db.refresh(user)
 
     return user
+
+
+@router.post("/users/{user_id}/unlock", response_model=UserResponse)
+async def unlock_user(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Unlock a locked user account and reset failed login attempts. Admin only."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.get("/users/{user_id}/login-history")
+async def get_login_history(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get recent login events for a user. Admin only."""
+    from app.models.login_event import LoginEvent
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    events = db.query(LoginEvent).filter(
+        LoginEvent.user_id == user_id
+    ).order_by(LoginEvent.logged_in_at.desc()).limit(50).all()
+
+    return [
+        {
+            "id": e.id,
+            "logged_in_at": e.logged_in_at.isoformat() if e.logged_in_at else None,
+            "ip_address": e.ip_address,
+            "user_agent": e.user_agent,
+        }
+        for e in events
+    ]
 
 
 @router.post("/users/{user_id}/reset-password", response_model=AdminPasswordResetResponse)

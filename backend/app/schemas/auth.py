@@ -81,6 +81,9 @@ class UserResponse(BaseModel):
     is_active: bool
     has_seen_welcome: bool = False
     must_change_password: bool = False
+    last_login_at: Optional[datetime] = None
+    locked_until: Optional[datetime] = None
+    failed_login_attempts: int = 0
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

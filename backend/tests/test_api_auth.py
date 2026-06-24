@@ -766,6 +766,135 @@ class TestSessionInvalidation:
         assert me_resp.json()["username"] == voter_user.username
 
 
+# ============================================================================
+# Login Tracking & Account Lockout
+# ============================================================================
+
+
+class TestLoginTracking:
+
+    def test_successful_login_updates_last_login_at(self, client, voter_user, db_session):
+        resp = client.post("/auth/login", data={
+            "username": "voter", "password": "Voter@pass1"
+        })
+        assert resp.status_code == 200
+        db_session.refresh(voter_user)
+        assert voter_user.last_login_at is not None
+
+    def test_successful_login_creates_login_event(self, client, voter_user, db_session):
+        from app.models.login_event import LoginEvent
+        client.post("/auth/login", data={
+            "username": "voter", "password": "Voter@pass1"
+        })
+        events = db_session.query(LoginEvent).filter(
+            LoginEvent.user_id == voter_user.id
+        ).all()
+        assert len(events) == 1
+        assert events[0].ip_address is not None
+
+    def test_failed_login_increments_counter(self, client, voter_user, db_session):
+        client.post("/auth/login", data={
+            "username": "voter", "password": "WrongPass@1"
+        })
+        db_session.refresh(voter_user)
+        assert voter_user.failed_login_attempts == 1
+
+    def test_successful_login_resets_counter(self, client, voter_user, db_session):
+        voter_user.failed_login_attempts = 3
+        db_session.commit()
+        client.post("/auth/login", data={
+            "username": "voter", "password": "Voter@pass1"
+        })
+        db_session.refresh(voter_user)
+        assert voter_user.failed_login_attempts == 0
+
+
+class TestAccountLockout:
+
+    def test_account_locks_after_5_failures(self, client, voter_user, db_session):
+        for _ in range(5):
+            client.post("/auth/login", data={
+                "username": "voter", "password": "WrongPass@1"
+            })
+        db_session.refresh(voter_user)
+        assert voter_user.locked_until is not None
+        assert voter_user.failed_login_attempts == 5
+
+    def test_locked_account_returns_403(self, client, voter_user, db_session):
+        voter_user.failed_login_attempts = 5
+        voter_user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+        db_session.commit()
+        resp = client.post("/auth/login", data={
+            "username": "voter", "password": "Voter@pass1"
+        })
+        assert resp.status_code == 403
+        assert "temporarily locked" in resp.json()["detail"].lower()
+
+    def test_lockout_expires(self, client, voter_user, db_session):
+        voter_user.failed_login_attempts = 5
+        voter_user.locked_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db_session.commit()
+        resp = client.post("/auth/login", data={
+            "username": "voter", "password": "Voter@pass1"
+        })
+        assert resp.status_code == 200
+        db_session.refresh(voter_user)
+        assert voter_user.failed_login_attempts == 0
+        assert voter_user.locked_until is None
+
+    def test_admin_unlock_resets_lockout(self, client, admin_user, voter_user, db_session):
+        voter_user.failed_login_attempts = 5
+        voter_user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+        db_session.commit()
+        resp = client.post(
+            f"/auth/users/{voter_user.id}/unlock",
+            headers=auth_headers(admin_user)
+        )
+        assert resp.status_code == 200
+        db_session.refresh(voter_user)
+        assert voter_user.failed_login_attempts == 0
+        assert voter_user.locked_until is None
+
+    def test_unlock_requires_admin(self, client, voter_user):
+        resp = client.post(
+            f"/auth/users/{voter_user.id}/unlock",
+            headers=auth_headers(voter_user)
+        )
+        assert resp.status_code == 403
+
+
+class TestLoginHistory:
+
+    def test_admin_can_view_login_history(self, client, admin_user, voter_user, db_session):
+        # Create a login event
+        client.post("/auth/login", data={
+            "username": "voter", "password": "Voter@pass1"
+        })
+        resp = client.get(
+            f"/auth/users/{voter_user.id}/login-history",
+            headers=auth_headers(admin_user)
+        )
+        assert resp.status_code == 200
+        events = resp.json()
+        assert len(events) >= 1
+        assert "logged_in_at" in events[0]
+        assert "ip_address" in events[0]
+
+    def test_login_history_requires_admin(self, client, voter_user):
+        resp = client.get(
+            f"/auth/users/{voter_user.id}/login-history",
+            headers=auth_headers(voter_user)
+        )
+        assert resp.status_code == 403
+
+    def test_login_history_nonexistent_user(self, client, admin_user):
+        resp = client.get(
+            "/auth/users/99999/login-history",
+            headers=auth_headers(admin_user)
+        )
+        assert resp.status_code == 404
+
+
 class TestProfileUpdate:
 
     def test_update_full_name(self, client, voter_user):
