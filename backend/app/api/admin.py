@@ -102,6 +102,17 @@ def get_product_costs(
     return tracker.get_product_costs(product_id=product_id, days=days)
 
 
+@router.get("/costs/daily-series")
+def get_daily_cost_series(
+    days: int = Query(default=30, ge=1, le=365, description="Number of days to look back"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """Get daily cost series for trend visualization. Admin only."""
+    tracker = CostTrackingService(db)
+    return tracker.get_daily_cost_series(days=days)
+
+
 @router.get("/costs/today")
 def get_today_costs(
     db: Session = Depends(get_db),

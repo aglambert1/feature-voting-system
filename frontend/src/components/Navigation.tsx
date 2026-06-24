@@ -50,6 +50,12 @@ export default function Navigation() {
                     User Management
                   </a>
                   <a
+                    href="/admin/costs"
+                    className="text-gray-700 hover:text-blue-600 hover:bg-blue-50 px-2 lg:px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
+                  >
+                    Costs
+                  </a>
+                  <a
                     href="/admin/idea-settings"
                     className="text-gray-700 hover:text-blue-600 hover:bg-blue-50 px-2 lg:px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
                   >
@@ -203,6 +209,12 @@ export default function Navigation() {
                   className="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors border-t border-gray-100 mt-2 pt-3"
                 >
                   User Management
+                </a>
+                <a
+                  href="/admin/costs"
+                  className="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                >
+                  Costs
                 </a>
                 <a
                   href="/admin/idea-settings"

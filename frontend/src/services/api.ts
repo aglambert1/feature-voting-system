@@ -1513,5 +1513,34 @@ export const getUserLoginHistory = async (userId: number): Promise<LoginEvent[]>
   return response.data;
 };
 
+// ============================================================================
+// ADMIN: Cost Reporting
+// ============================================================================
+
+export const getCostSummary = async (days: number = 30) => {
+  const response = await api.get('/admin/costs/summary', { params: { days } });
+  return response.data;
+};
+
+export const getCostToday = async () => {
+  const response = await api.get('/admin/costs/today');
+  return response.data;
+};
+
+export const getUserCosts = async (userId: number, days: number = 30) => {
+  const response = await api.get(`/admin/costs/user/${userId}`, { params: { days } });
+  return response.data;
+};
+
+export const getProductCosts = async (productId: number, days: number = 30) => {
+  const response = await api.get(`/admin/costs/product/${productId}`, { params: { days } });
+  return response.data;
+};
+
+export const getDailyCostSeries = async (days: number = 30) => {
+  const response = await api.get('/admin/costs/daily-series', { params: { days } });
+  return response.data;
+};
+
 // Export the axios instance for custom requests
 export default api;

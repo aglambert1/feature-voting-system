@@ -34,6 +34,7 @@ import InternalFeedbackPage from './pages/CompetitorIntelligence/InternalFeedbac
 import SynthesisHubPage from './pages/CompetitorIntelligence/SynthesisHubPage';
 import EvidencePage from './pages/CompetitorIntelligence/EvidencePage';
 import IdeaLifecycleSettingsPage from './pages/IdeaLifecycleSettingsPage';
+import CostReportingPage from './pages/CostReportingPage';
 import JoinPage from './pages/JoinPage';
 import WelcomePage from './pages/WelcomePage';
 
@@ -115,6 +116,17 @@ function App() {
               <ProtectedRoute>
                 <AdminRoute>
                   <IdeaLifecycleSettingsPage />
+                </AdminRoute>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/admin/costs"
+            element={
+              <ProtectedRoute>
+                <AdminRoute>
+                  <CostReportingPage />
                 </AdminRoute>
               </ProtectedRoute>
             }
