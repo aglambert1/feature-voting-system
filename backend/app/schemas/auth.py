@@ -81,6 +81,7 @@ class UserResponse(BaseModel):
     is_active: bool
     has_seen_welcome: bool = False
     must_change_password: bool = False
+    totp_enabled: bool = False
     last_login_at: Optional[datetime] = None
     locked_until: Optional[datetime] = None
     failed_login_attempts: int = 0
@@ -94,10 +95,13 @@ class Token(BaseModel):
     Schema for JWT token response.
 
     This is returned after successful login.
+    When MFA is required, access_token is empty and mfa_token is set instead.
     """
-    access_token: str
-    token_type: str = "bearer"  # Always "bearer" for JWT
+    access_token: str = ""
+    token_type: str = "bearer"
     must_change_password: bool = False
+    mfa_required: bool = False
+    mfa_token: Optional[str] = None
 
 
 class TokenData(BaseModel):
@@ -205,3 +209,19 @@ class AdminPasswordResetResponse(BaseModel):
     message: str
     temporary_password: str
     username: str
+
+
+class MFASetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+    qr_code_data_uri: str
+
+class MFAVerifyRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+class MFADisableRequest(BaseModel):
+    password: str
+
+class MFAChallengeRequest(BaseModel):
+    mfa_token: str
+    code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")

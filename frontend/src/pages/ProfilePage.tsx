@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, ChangeEvent, FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import api, { getCurrentUser } from '../services/api';
+import api, { getCurrentUser, mfaSetup, mfaConfirm, mfaDisable, type MFASetupResponse } from '../services/api';
 import { AxiosError } from 'axios';
 import type { ApiError } from '../types';
 import { UserRole } from '../types';
 
-type ActiveTab = 'profile' | 'password' | 'api-keys';
+type ActiveTab = 'profile' | 'password' | 'security' | 'api-keys';
 
 interface ProfileFormData {
   email: string;
@@ -75,6 +75,14 @@ export default function ProfilePage() {
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
   const [revokingId, setRevokingId] = useState<number | null>(null);
+
+  // MFA state
+  const [mfaSetupData, setMfaSetupData] = useState<MFASetupResponse | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaLoading, setMfaLoading] = useState(false);
+  const [mfaError, setMfaError] = useState('');
+  const [mfaSuccess, setMfaSuccess] = useState('');
+  const [disablePassword, setDisablePassword] = useState('');
 
   // Initialize profile data
   useEffect(() => {
@@ -241,6 +249,61 @@ export default function ProfilePage() {
 
   const isExpired = (dateStr: string) => new Date(dateStr) < new Date();
 
+  const handleMfaSetup = async () => {
+    setMfaLoading(true);
+    setMfaError('');
+    setMfaSuccess('');
+    try {
+      const data = await mfaSetup();
+      setMfaSetupData(data);
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setMfaError(error.response?.data?.detail || 'Failed to set up MFA');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const handleMfaConfirm = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setMfaLoading(true);
+    setMfaError('');
+    try {
+      await mfaConfirm(mfaCode);
+      setMfaSuccess('MFA enabled successfully. You will be asked for a code on future logins.');
+      setMfaSetupData(null);
+      setMfaCode('');
+      const updatedUser = await getCurrentUser();
+      setUser(updatedUser);
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setMfaError(error.response?.data?.detail || 'Invalid code');
+      setMfaCode('');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const handleMfaDisable = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setMfaLoading(true);
+    setMfaError('');
+    setMfaSuccess('');
+    try {
+      await mfaDisable(disablePassword);
+      setMfaSuccess('MFA disabled.');
+      setDisablePassword('');
+      const updatedUser = await getCurrentUser();
+      setUser(updatedUser);
+    } catch (err) {
+      const error = err as AxiosError<ApiError>;
+      setMfaError(error.response?.data?.detail || 'Failed to disable MFA');
+      setDisablePassword('');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -308,6 +371,17 @@ export default function ProfilePage() {
                 }`}
               >
                 Change Password
+              </button>
+              <button
+                onClick={() => !forcePasswordChange && setActiveTab('security')}
+                disabled={forcePasswordChange}
+                className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'security'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } ${forcePasswordChange ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                Security
               </button>
               {isPO && (
                 <button
@@ -458,6 +532,128 @@ export default function ProfilePage() {
                   </button>
                 </div>
               </form>
+            )}
+
+            {/* Security Tab */}
+            {activeTab === 'security' && (
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900 mb-1">Two-Factor Authentication</h3>
+                  <p className="text-sm text-gray-600">
+                    Add an extra layer of security by requiring a code from an authenticator app when you sign in.
+                  </p>
+                </div>
+
+                {mfaError && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                    {mfaError}
+                  </div>
+                )}
+
+                {mfaSuccess && (
+                  <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg">
+                    {mfaSuccess}
+                  </div>
+                )}
+
+                {user?.totp_enabled ? (
+                  /* MFA is enabled — show disable form */
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Enabled</span>
+                      <span className="text-sm text-green-800">Two-factor authentication is active</span>
+                    </div>
+                    <form onSubmit={handleMfaDisable} className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Enter your password to disable MFA
+                        </label>
+                        <input
+                          type="password"
+                          value={disablePassword}
+                          onChange={(e) => { setDisablePassword(e.target.value); setMfaError(''); }}
+                          required
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={mfaLoading || !disablePassword}
+                        className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-red-300 disabled:cursor-not-allowed"
+                      >
+                        {mfaLoading ? 'Disabling...' : 'Disable MFA'}
+                      </button>
+                    </form>
+                  </div>
+                ) : mfaSetupData ? (
+                  /* Setup in progress — show QR code and verification */
+                  <div className="space-y-4">
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <p className="text-sm font-medium text-blue-800 mb-3">
+                        Scan this QR code with your authenticator app (Google Authenticator, Authy, 1Password, etc.)
+                      </p>
+                      <div className="flex justify-center mb-3">
+                        <img
+                          src={mfaSetupData.qr_code_data_uri}
+                          alt="MFA QR Code"
+                          className="rounded border border-blue-200"
+                          width={200}
+                          height={200}
+                        />
+                      </div>
+                      <p className="text-xs text-blue-700 text-center mb-1">
+                        Or enter this key manually:
+                      </p>
+                      <p className="text-sm font-mono text-center bg-white border border-blue-200 rounded px-3 py-2 break-all select-all">
+                        {mfaSetupData.secret}
+                      </p>
+                    </div>
+
+                    <form onSubmit={handleMfaConfirm} className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Enter the 6-digit code from your app to confirm
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          maxLength={6}
+                          value={mfaCode}
+                          onChange={(e) => { setMfaCode(e.target.value.replace(/\D/g, '')); setMfaError(''); }}
+                          className="w-full px-3 py-3 border border-gray-300 rounded-lg text-center text-2xl tracking-widest font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          placeholder="000000"
+                        />
+                      </div>
+                      <div className="flex gap-3">
+                        <button
+                          type="submit"
+                          disabled={mfaLoading || mfaCode.length !== 6}
+                          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
+                        >
+                          {mfaLoading ? 'Verifying...' : 'Verify & Enable'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setMfaSetupData(null); setMfaCode(''); setMfaError(''); }}
+                          className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                ) : (
+                  /* MFA not enabled — show setup button */
+                  <button
+                    onClick={handleMfaSetup}
+                    disabled={mfaLoading}
+                    className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
+                  >
+                    {mfaLoading ? 'Setting up...' : 'Set Up Two-Factor Authentication'}
+                  </button>
+                )}
+              </div>
             )}
 
             {/* API Keys Tab */}

@@ -111,11 +111,13 @@ PyJWT==2.11.0
 pypdf==5.8.0
 pypdfium2==5.2.0
 pyperclip==1.11.0
+PyOTP==2.10.0
 pytest==7.4.4
 pytest-asyncio==0.23.3
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
 python-dotenv==1.2.1
+qrcode==8.2
 python-jose==3.3.0
 python-magic==0.4.27
 python-multipart==0.0.22

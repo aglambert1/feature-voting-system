@@ -48,6 +48,7 @@ export interface User {
   is_active: boolean;
   has_seen_welcome: boolean;
   must_change_password: boolean;
+  totp_enabled: boolean;
   last_login_at: string | null;
   locked_until: string | null;
   failed_login_attempts: number;
@@ -65,6 +66,8 @@ export interface LoginResponse {
   access_token: string;
   token_type: string;
   must_change_password: boolean;
+  mfa_required?: boolean;
+  mfa_token?: string;
 }
 
 export interface RegisterData {
@@ -116,6 +119,8 @@ export interface AuthResult {
   success: boolean;
   error?: string;
   user?: User;
+  mfaRequired?: boolean;
+  mfaToken?: string;
 }
 
 // ============================================================================

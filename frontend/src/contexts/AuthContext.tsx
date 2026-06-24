@@ -88,17 +88,17 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     try {
       setError(null);
 
-      // Call login API
       const data = await api.login(username, password);
 
-      // Store token
+      if (data.mfa_required && data.mfa_token) {
+        return { success: false, mfaRequired: true, mfaToken: data.mfa_token };
+      }
+
       localStorage.setItem('access_token', data.access_token);
 
-      // Get user data
       const userData = await api.getCurrentUser();
       setUser(userData);
 
-      // Notify other components that user logged in (e.g., ProductContext)
       window.dispatchEvent(new Event('user-logged-in'));
 
       return { success: true, user: userData };

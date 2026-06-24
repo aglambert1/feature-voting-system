@@ -38,6 +38,10 @@ from app.schemas.auth import (
     PasswordResetResponse,
     DevOTPResponse,
     AdminPasswordResetResponse,
+    MFASetupResponse,
+    MFAVerifyRequest,
+    MFADisableRequest,
+    MFAChallengeRequest,
 )
 from app.utils.security import (
     hash_password,
@@ -258,6 +262,20 @@ def login(
     )
     db.add(login_event)
     db.commit()
+
+    if user.totp_enabled:
+        from datetime import timedelta
+        mfa_token = create_access_token(
+            data={"sub": user.username, "user_id": user.id, "purpose": "mfa"},
+            expires_delta=timedelta(minutes=5),
+        )
+        return {
+            "access_token": "",
+            "token_type": "bearer",
+            "must_change_password": False,
+            "mfa_required": True,
+            "mfa_token": mfa_token,
+        }
 
     access_token = create_access_token(
         data={"sub": user.username, "user_id": user.id}
@@ -852,6 +870,166 @@ async def change_password(
         message="Password successfully changed",
         detail="Your password has been updated."
     )
+
+
+# =============================================================================
+# MFA / TOTP ENDPOINTS
+# =============================================================================
+
+
+@router.post("/mfa/setup", response_model=MFASetupResponse)
+async def mfa_setup(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    import pyotp
+    import qrcode
+    import qrcode.image.svg
+    import io
+    import base64
+
+    if current_user.totp_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA is already enabled. Disable it first to re-enroll.",
+        )
+
+    secret = pyotp.random_base32()
+    current_user.totp_secret = secret
+    db.commit()
+
+    provisioning_uri = pyotp.totp.TOTP(secret).provisioning_uri(
+        name=current_user.email,
+        issuer_name="Feature-IQ",
+    )
+
+    img = qrcode.make(provisioning_uri)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    qr_data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    return MFASetupResponse(
+        secret=secret,
+        provisioning_uri=provisioning_uri,
+        qr_code_data_uri=qr_data_uri,
+    )
+
+
+@router.post("/mfa/confirm", response_model=MessageResponse)
+async def mfa_confirm(
+    body: MFAVerifyRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    import pyotp
+
+    if current_user.totp_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA is already enabled.",
+        )
+
+    if not current_user.totp_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Call /auth/mfa/setup first.",
+        )
+
+    totp = pyotp.TOTP(current_user.totp_secret)
+    if not totp.verify(body.code, valid_window=1):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid code. Make sure your authenticator app is synced and try again.",
+        )
+
+    current_user.totp_enabled = True
+    db.commit()
+
+    return MessageResponse(
+        message="MFA enabled successfully.",
+        detail="You will be asked for a code on future logins.",
+    )
+
+
+@router.post("/mfa/disable", response_model=MessageResponse)
+async def mfa_disable(
+    body: MFADisableRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    if not current_user.totp_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA is not enabled.",
+        )
+
+    if not verify_password(body.password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Incorrect password.",
+        )
+
+    current_user.totp_enabled = False
+    current_user.totp_secret = None
+    db.commit()
+
+    return MessageResponse(
+        message="MFA disabled.",
+        detail="Your account no longer requires a second factor to log in.",
+    )
+
+
+@router.post("/mfa/challenge", response_model=Token)
+@limiter.limit("10/minute")
+def mfa_challenge(
+    request: Request,
+    body: MFAChallengeRequest,
+    db: Session = Depends(get_db),
+):
+    import pyotp
+    from jose import jwt, JWTError
+    from app.config import settings
+
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired MFA token.",
+    )
+
+    try:
+        payload = jwt.decode(
+            body.mfa_token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+        )
+        if payload.get("purpose") != "mfa":
+            raise credentials_exception
+        username = payload.get("sub")
+        user_id = payload.get("user_id")
+        if not username or not user_id:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(User).filter(User.id == user_id, User.username == username).first()
+    if not user or not user.is_active or not user.totp_enabled or not user.totp_secret:
+        raise credentials_exception
+
+    totp = pyotp.TOTP(user.totp_secret)
+    if not totp.verify(body.code, valid_window=1):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid verification code.",
+        )
+
+    access_token = create_access_token(
+        data={"sub": user.username, "user_id": user.id}
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "must_change_password": user.must_change_password,
+    }
 
 
 # =============================================================================
