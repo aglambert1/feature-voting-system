@@ -243,6 +243,37 @@ export const logout = (): void => {
 };
 
 // ============================================================================
+// MFA API METHODS
+// ============================================================================
+
+export interface MFASetupResponse {
+  secret: string;
+  provisioning_uri: string;
+  qr_code_data_uri: string;
+}
+
+export const mfaSetup = async (): Promise<MFASetupResponse> => {
+  const response = await api.post<MFASetupResponse>('/auth/mfa/setup');
+  return response.data;
+};
+
+export const mfaConfirm = async (code: string): Promise<void> => {
+  await api.post('/auth/mfa/confirm', { code });
+};
+
+export const mfaDisable = async (password: string): Promise<void> => {
+  await api.post('/auth/mfa/disable', { password });
+};
+
+export const mfaChallenge = async (mfaToken: string, code: string): Promise<LoginResponse> => {
+  const response = await api.post<LoginResponse>('/auth/mfa/challenge', {
+    mfa_token: mfaToken,
+    code,
+  });
+  return response.data;
+};
+
+// ============================================================================
 // IDEAS API METHODS
 // ============================================================================
 

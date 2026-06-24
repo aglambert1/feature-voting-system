@@ -90,6 +90,9 @@ class User(Base):
     # JWT tokens issued before this timestamp are rejected (force logout).
     tokens_valid_after = Column(DateTime(timezone=True), nullable=True)
 
+    totp_secret = Column(String, nullable=True)
+    totp_enabled = Column(Boolean, default=False, nullable=False, server_default="0")
+
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     failed_login_attempts = Column(Integer, default=0, nullable=False, server_default="0")
     locked_until = Column(DateTime(timezone=True), nullable=True)
