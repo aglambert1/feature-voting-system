@@ -1504,7 +1504,7 @@ export const adminResetPassword = async (userId: number): Promise<AdminPasswordR
 // ============================================================================
 
 export const unlockUser = async (userId: number): Promise<User> => {
-  const response = await api.patch<User>(`/auth/users/${userId}/unlock`);
+  const response = await api.post<User>(`/auth/users/${userId}/unlock`);
   return response.data;
 };
 
