@@ -28,8 +28,10 @@ This is the load-bearing concept. Everything else is plumbing.
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                             FRONTEND (React + Vite)                        │
-│   Ideas board · Idea detail · Submit · Profile · Admin                    │
+│   Landing · Welcome · Login · Register · Join · Forgot Password           │
+│   Ideas board · Idea detail · Submit · Profile · PM Review                │
 │   CI Hub · Product detail · Job Map editor · Synthesis Hub · Evidence     │
+│   Admin: User Mgmt · Cost Reporting · Idea Lifecycle Settings             │
 └────────────────────────────────┬───────────────────────────────────────────┘
                                  │ HTTPS / JWT (sliding session)
 ┌────────────────────────────────▼───────────────────────────────────────────┐
@@ -37,7 +39,7 @@ This is the load-bearing concept. Everything else is plumbing.
 │                                                                             │
 │   API routers (app/api/)                                                   │
 │     /auth · /ideas · /votes · /submissions · /admin · /invites             │
-│     /product-intelligence/products · /competitive-agents                   │
+│     /product-intelligence/products · /competitive-agents · /job-map         │
 │     /pm-review · /monitoring · /internal-feedback                          │
 │     /synthesis · /evidence · /jobs · /api-keys                             │
 │                                                                             │
@@ -65,6 +67,7 @@ This is the load-bearing concept. Everything else is plumbing.
 │   synthesis_tasks            │   │  SynthesisConfig · SynthesisReport   │
 │   internal_tasks             │   │  WinLossTheme · SupportTheme         │
 │   jtbd_tasks                 │   │  Evidence · QueueJob                 │
+│   email_tasks                │   │                                      │
 │   scheduled_tasks (Beat)     │   │                                      │
 │                              │   │  (SQLite for local dev)              │
 └──────────┬───────────────────┘   └──────────────────────────────────────┘
@@ -76,7 +79,7 @@ This is the load-bearing concept. Everything else is plumbing.
    └────────────────┘
 
            ┌────────────────────────────────────────────────────────────┐
-           │  MCP SERVER (mcp_server/) — 79 tools across 10 files       │
+           │  MCP SERVER (mcp_server/) — ~78 tools across 10 files       │
            │  Stdio + HTTP/OAuth · exposes most of the API to Claude    │
            └────────────────────────────────────────────────────────────┘
 ```
@@ -90,7 +93,7 @@ This is the load-bearing concept. Everything else is plumbing.
 4. PMs review `NEEDS_REVIEW` ideas in the PM Review queue
 
 ### B. Running a competitor audit
-1. PO clicks "Run audit" on a competitor with `audit_enabled=True`
+1. PO clicks "Run audit" on a competitor with `tracked=True`
 2. `functional_audit_task` runs `FunctionalAuditAgent` in two stages:
    - **Stage 1** (~45s): web research + raw extraction
    - **Stage 2** (~90–150s): structured `job_assessments` per `ProductJob`
@@ -115,8 +118,8 @@ Embeddings are how everything stays connected. When any text-bearing record (Ide
 | **Models** | SQLAlchemy models — most domain logic is here | `backend/app/models/` |
 | **Services** | Cross-cutting — embeddings, LLM, vector search, queue, search | `backend/app/services/` |
 | **Agents** | LLM-driven analysts — each is a class subclassing `BaseAgent` | `backend/app/agents/` |
-| **Celery tasks** | Background jobs — split across 7 domain files | `backend/app/queue/` |
-| **MCP server** | 79 tools exposing the API to Claude Desktop | `backend/mcp_server/` |
+| **Celery tasks** | Background jobs — split across 8 domain files | `backend/app/queue/` |
+| **MCP server** | ~78 tools exposing the API to Claude Desktop | `backend/mcp_server/` |
 | **Migrations** | Alembic — must support SQLite (dev) and PostgreSQL (prod) | `backend/alembic/versions/` |
 
 ## Tech stack
@@ -126,7 +129,50 @@ Embeddings are how everything stays connected. When any text-bearing record (Ide
 - **Broker** — Redis 7
 - **AI** — Anthropic Claude (analysts), Voyage AI (embeddings, 1024 dims), Brave Search (web research)
 - **Frontend** — React 19, Vite, TailwindCSS v4, React Router v7
-- **Auth** — JWT with sliding-session refresh; OTP for password reset
+- **Auth** — JWT with sliding-session refresh; optional TOTP MFA; account lockout; self-service password reset via SendGrid OTP
+
+## Access control
+
+The system has two layers: **system roles** (who you are) and **product permissions** (what you can do with a specific product).
+
+### System roles (`UserRole`)
+
+| Role | Can create products | Product visibility |
+|---|---|---|
+| **ADMIN** | Yes | Products they created + explicitly granted |
+| **PRODUCT_OWNER** | Yes | Products they created + explicitly granted |
+| **VOTER** | No | Only products with an explicit permission grant |
+
+ADMINs have additional system-level powers (user management, cost reporting, password resets, account unlocks) but follow the same product-permission rules as everyone else — no implicit bypass.
+
+### Product permissions (`ProductPermission`)
+
+Each product has an access list. Permissions are hierarchical: **OWNER > EDIT > VIEW**.
+
+| Level | View | Edit product / run analyses | Manage members / delete product |
+|---|:---:|:---:|:---:|
+| **VIEW** | ✓ | | |
+| **EDIT** | ✓ | ✓ | |
+| **OWNER** | ✓ | ✓ | ✓ |
+
+**Resolution order** when checking access:
+
+1. **Product creator** → implicit OWNER (no `ProductPermission` row required)
+2. **Explicit grant** → `ProductPermission` row checked against the required level
+
+### How users get access
+
+- **Invite codes** — A user with EDIT+ creates a shareable code; redeeming it grants VIEW. Codes support max-use limits and expiration.
+- **Direct grant** — A product OWNER can grant VIEW, EDIT, or OWNER to any registered user by email (`POST /products/{id}/members`).
+- **Permission escalation** — OWNERs can update a member's level (`PATCH /products/{id}/members/{user_id}`). The last active OWNER cannot be demoted or removed.
+- **Revocation** — OWNERs can remove a member's access (`DELETE /products/{id}/members/{user_id}`). The product creator's implicit OWNER cannot be revoked.
+
+### Auth security
+
+- JWT sliding-session with `tokens_valid_after` per user — admin password resets invalidate all existing sessions
+- Optional TOTP MFA — users enable from Profile, login requires a second step when active
+- Account lockout after 5 failed logins within 15 minutes; admin unlock via `/users/{id}/unlock`
+- Self-service password reset via email OTP (SendGrid)
 
 ## Where to go next
 
