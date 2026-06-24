@@ -149,6 +149,18 @@ export default function ProfilePage() {
       return;
     }
 
+    const pw = passwordData.new_password;
+    const missing = [];
+    if (!/[A-Z]/.test(pw)) missing.push('one uppercase letter');
+    if (!/[a-z]/.test(pw)) missing.push('one lowercase letter');
+    if (!/\d/.test(pw)) missing.push('one digit');
+    if (!/[^A-Za-z0-9]/.test(pw)) missing.push('one special character');
+    if (missing.length > 0) {
+      setPasswordError(`Password must contain at least: ${missing.join(', ')}`);
+      setPasswordLoading(false);
+      return;
+    }
+
     try {
       await api.post('/auth/password/change', {
         current_password: passwordData.current_password,
@@ -408,7 +420,7 @@ export default function ProfilePage() {
                       minLength={8}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
-                    <p className="mt-1 text-sm text-gray-500">Minimum 8 characters</p>
+                    <p className="mt-1 text-sm text-gray-500">Min 8 characters with uppercase, lowercase, digit, and special character</p>
                   </div>
 
                   <div>

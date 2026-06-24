@@ -228,7 +228,7 @@ class TestRegistrationWithInviteCode:
         resp = client.post("/auth/register", json={
             "email": "invitee@example.com",
             "username": "invitee",
-            "password": "securepass123",
+            "password": "Secure@pass1",
             "full_name": "Invited User",
             "invite_code": test_invite_code.code,
         })
@@ -253,7 +253,7 @@ class TestRegistrationWithInviteCode:
         resp = client.post("/auth/register", json={
             "email": "nocode@example.com",
             "username": "nocode",
-            "password": "securepass123",
+            "password": "Secure@pass1",
         })
         assert resp.status_code == 400
         assert "invite code" in resp.json()["detail"].lower()
@@ -262,7 +262,7 @@ class TestRegistrationWithInviteCode:
         resp = client.post("/auth/register", json={
             "email": "badcode@example.com",
             "username": "badcode",
-            "password": "securepass123",
+            "password": "Secure@pass1",
             "invite_code": "INVALID_CODE",
         })
         assert resp.status_code == 400
@@ -275,7 +275,7 @@ class TestRegistrationWithInviteCode:
         resp = client.post("/auth/register", json={
             "email": "deactivated@example.com",
             "username": "deactivated",
-            "password": "securepass123",
+            "password": "Secure@pass1",
             "invite_code": test_invite_code.code,
         })
         assert resp.status_code == 400
@@ -284,7 +284,7 @@ class TestRegistrationWithInviteCode:
         resp = client.post("/auth/register", json={
             "email": "adminmade@example.com",
             "username": "adminmade",
-            "password": "securepass123",
+            "password": "Secure@pass1",
             "full_name": "Admin Made",
             "product_ids": [test_product.id],
         }, headers=auth_headers(admin_user))
@@ -295,7 +295,7 @@ class TestRegistrationWithInviteCode:
         resp = client.post("/auth/register", json={
             "email": "multiproduct@example.com",
             "username": "multiproduct",
-            "password": "securepass123",
+            "password": "Secure@pass1",
             "product_ids": [test_product.id, second_product.id],
         }, headers=auth_headers(admin_user))
         assert resp.status_code == 201
@@ -312,7 +312,7 @@ class TestRegistrationWithInviteCode:
         resp = client.post("/auth/register", json={
             "email": "newpo2@example.com",
             "username": "newpo2",
-            "password": "securepass123",
+            "password": "Secure@pass1",
             "role": "product_owner",
             "product_ids": [test_product.id],
         }, headers=auth_headers(admin_user))
@@ -331,7 +331,7 @@ class TestRegistrationWithInviteCode:
         resp = client.post("/auth/register", json={
             "email": "pobypass@example.com",
             "username": "pobypass",
-            "password": "securepass123",
+            "password": "Secure@pass1",
         }, headers=auth_headers(po_user))
         assert resp.status_code == 400
         assert "invite code" in resp.json()["detail"].lower()
@@ -341,7 +341,7 @@ class TestRegistrationWithInviteCode:
         resp = client.post("/auth/register", json={
             "email": "voterbypass@example.com",
             "username": "voterbypass",
-            "password": "securepass123",
+            "password": "Secure@pass1",
         }, headers=auth_headers(voter_user))
         assert resp.status_code == 400
         assert "invite code" in resp.json()["detail"].lower()

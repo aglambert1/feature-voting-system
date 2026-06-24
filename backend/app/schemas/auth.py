@@ -11,11 +11,27 @@ The difference between a Model and a Schema:
 - Schema = API data structure (Pydantic)
 """
 
+import re
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from typing import Optional, List
 
 from app.models.user import UserRole
+
+
+def _validate_password_strength(password: str) -> str:
+    errors = []
+    if not re.search(r'[A-Z]', password):
+        errors.append("one uppercase letter")
+    if not re.search(r'[a-z]', password):
+        errors.append("one lowercase letter")
+    if not re.search(r'\d', password):
+        errors.append("one digit")
+    if not re.search(r'[^A-Za-z0-9]', password):
+        errors.append("one special character")
+    if errors:
+        raise ValueError(f"Password must contain at least: {', '.join(errors)}")
+    return password
 
 
 class UserCreate(BaseModel):
@@ -33,6 +49,11 @@ class UserCreate(BaseModel):
     role: Optional[UserRole] = None
     invite_code: Optional[str] = Field(None, description="Required for self-registration")
     product_ids: Optional[List[int]] = Field(None, description="Product assignments (admin-created users only)")
+
+    @field_validator('password')
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return _validate_password_strength(v)
 
 
 class UserLogin(BaseModel):
@@ -119,6 +140,11 @@ class PasswordResetConfirm(BaseModel):
     otp: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
     new_password: str = Field(..., min_length=8, max_length=100)
 
+    @field_validator('new_password')
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return _validate_password_strength(v)
+
 
 class PasswordChange(BaseModel):
     """
@@ -128,6 +154,11 @@ class PasswordChange(BaseModel):
     """
     current_password: str
     new_password: str = Field(..., min_length=8, max_length=100)
+
+    @field_validator('new_password')
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return _validate_password_strength(v)
 
 
 class MessageResponse(BaseModel):

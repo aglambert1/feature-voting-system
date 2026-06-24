@@ -81,7 +81,7 @@ class TestRegistration:
         resp = client.post("/auth/register", json={
             "email": "new@example.com",
             "username": "newuser",
-            "password": "securepass123",
+            "password": "Secure@pass1",
             "full_name": "New User"
         }, headers=auth_headers(admin_user))
         assert resp.status_code == 201
@@ -97,7 +97,7 @@ class TestRegistration:
         resp = client.post("/auth/register", json={
             "email": "new@example.com",
             "username": "newuser",
-            "password": "securepass123",
+            "password": "Secure@pass1",
             "full_name": "New User"
         })
         assert resp.status_code == 400
@@ -107,7 +107,7 @@ class TestRegistration:
         resp = client.post("/auth/register", json={
             "email": voter_user.email,
             "username": "different",
-            "password": "securepass123"
+            "password": "Secure@pass1"
         }, headers=auth_headers(admin_user))
         assert resp.status_code == 400
         assert "Email already registered" in resp.json()["detail"]
@@ -116,7 +116,7 @@ class TestRegistration:
         resp = client.post("/auth/register", json={
             "email": "unique@example.com",
             "username": voter_user.username,
-            "password": "securepass123"
+            "password": "Secure@pass1"
         }, headers=auth_headers(admin_user))
         assert resp.status_code == 400
         assert "Username already taken" in resp.json()["detail"]
@@ -135,11 +135,22 @@ class TestRegistration:
         })
         assert resp.status_code == 422
 
+    def test_register_weak_password_rejected(self, client):
+        resp = client.post("/auth/register", json={
+            "email": "test@example.com",
+            "username": "testuser",
+            "password": "alllowercase1"
+        })
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        messages = [e.get("msg", "") for e in detail] if isinstance(detail, list) else [str(detail)]
+        assert any("uppercase" in m.lower() for m in messages)
+
     def test_register_short_username(self, client):
         resp = client.post("/auth/register", json={
             "email": "test@example.com",
             "username": "ab",
-            "password": "securepass123"
+            "password": "Secure@pass1"
         })
         assert resp.status_code == 422
 
@@ -147,7 +158,7 @@ class TestRegistration:
         resp = client.post("/auth/register", json={
             "email": "not-an-email",
             "username": "testuser",
-            "password": "securepass123"
+            "password": "Secure@pass1"
         })
         assert resp.status_code == 422
 
@@ -155,7 +166,7 @@ class TestRegistration:
         resp = client.post("/auth/register", json={
             "email": "roletest@example.com",
             "username": "roletest",
-            "password": "securepass123"
+            "password": "Secure@pass1"
         }, headers=auth_headers(admin_user))
         assert resp.status_code == 201
         assert resp.json()["role"] == "voter"
@@ -171,7 +182,7 @@ class TestLogin:
     def test_login_with_username(self, client, voter_user):
         resp = client.post("/auth/login", data={
             "username": "voter",
-            "password": "password123"
+            "password": "Voter@pass1"
         })
         assert resp.status_code == 200
         data = resp.json()
@@ -181,7 +192,7 @@ class TestLogin:
     def test_login_with_email(self, client, voter_user):
         resp = client.post("/auth/login", data={
             "username": "voter@example.com",
-            "password": "password123"
+            "password": "Voter@pass1"
         })
         assert resp.status_code == 200
         assert "access_token" in resp.json()
@@ -197,7 +208,7 @@ class TestLogin:
     def test_login_nonexistent_user(self, client):
         resp = client.post("/auth/login", data={
             "username": "nobody",
-            "password": "password123"
+            "password": "Voter@pass1"
         })
         assert resp.status_code == 401
 
@@ -206,7 +217,7 @@ class TestLogin:
         db_session.commit()
         resp = client.post("/auth/login", data={
             "username": "voter",
-            "password": "password123"
+            "password": "Voter@pass1"
         })
         assert resp.status_code == 403
         assert "disabled" in resp.json()["detail"].lower()
@@ -214,7 +225,7 @@ class TestLogin:
     def test_login_token_contains_correct_claims(self, client, voter_user):
         resp = client.post("/auth/login", data={
             "username": "voter",
-            "password": "password123"
+            "password": "Voter@pass1"
         })
         from jose import jwt
         from app.config import settings
@@ -398,7 +409,7 @@ class TestAccountManagement:
         )
         # Try to login
         resp = client.post("/auth/login", data={
-            "username": "voter", "password": "password123"
+            "username": "voter", "password": "Voter@pass1"
         })
         assert resp.status_code == 403
 
@@ -491,13 +502,13 @@ class TestPasswordReset:
         resp = client.post("/auth/password/reset-confirm", json={
             "email": voter_user.email,
             "otp": otp,
-            "new_password": "newpassword123"
+            "new_password": "NewPass@456"
         })
         assert resp.status_code == 200
 
         # Verify password was changed
         db_session.refresh(voter_user)
-        assert verify_password("newpassword123", voter_user.hashed_password)
+        assert verify_password("NewPass@456", voter_user.hashed_password)
 
     @patch("app.utils.email.email_service")
     def test_reset_confirm_expired_otp(self, mock_email_svc, client, voter_user, db_session):
@@ -512,7 +523,7 @@ class TestPasswordReset:
         resp = client.post("/auth/password/reset-confirm", json={
             "email": voter_user.email,
             "otp": "123456",
-            "new_password": "newpassword123"
+            "new_password": "NewPass@456"
         })
         assert resp.status_code == 400
         assert "expired" in resp.json()["detail"].lower()
@@ -530,7 +541,7 @@ class TestPasswordReset:
         resp = client.post("/auth/password/reset-confirm", json={
             "email": voter_user.email,
             "otp": "654321",
-            "new_password": "newpassword123"
+            "new_password": "NewPass@456"
         })
         assert resp.status_code == 400
 
@@ -546,7 +557,7 @@ class TestPasswordReset:
         resp = client.post("/auth/password/reset-confirm", json={
             "email": voter_user.email,
             "otp": "999999",
-            "new_password": "newpassword123"
+            "new_password": "NewPass@456"
         })
         assert resp.status_code == 400
 
@@ -575,7 +586,7 @@ class TestPasswordReset:
         resp = client.post("/auth/password/reset-confirm", json={
             "email": "nobody@example.com",
             "otp": "123456",
-            "new_password": "newpassword123"
+            "new_password": "NewPass@456"
         })
         assert resp.status_code == 404
 
@@ -591,8 +602,8 @@ class TestPasswordChange:
     def test_change_password_success(self, mock_email_svc, client, voter_user):
         mock_email_svc.send_password_changed_notification = AsyncMock(return_value=True)
         resp = client.post("/auth/password/change", json={
-            "current_password": "password123",
-            "new_password": "newpassword456"
+            "current_password": "Voter@pass1",
+            "new_password": "Changed@789"
         }, headers=auth_headers(voter_user))
         assert resp.status_code == 200
         assert "successfully changed" in resp.json()["message"].lower()
@@ -600,23 +611,23 @@ class TestPasswordChange:
     def test_change_password_wrong_current(self, client, voter_user):
         resp = client.post("/auth/password/change", json={
             "current_password": "wrongpassword",
-            "new_password": "newpassword456"
+            "new_password": "Changed@789"
         }, headers=auth_headers(voter_user))
         assert resp.status_code == 400
         assert "incorrect" in resp.json()["detail"].lower()
 
     def test_change_password_same_as_current(self, client, voter_user):
         resp = client.post("/auth/password/change", json={
-            "current_password": "password123",
-            "new_password": "password123"
+            "current_password": "Voter@pass1",
+            "new_password": "Voter@pass1"
         }, headers=auth_headers(voter_user))
         assert resp.status_code == 400
         assert "different" in resp.json()["detail"].lower()
 
     def test_change_password_requires_auth(self, client):
         resp = client.post("/auth/password/change", json={
-            "current_password": "password123",
-            "new_password": "newpassword456"
+            "current_password": "Voter@pass1",
+            "new_password": "Changed@789"
         })
         assert resp.status_code == 401
 
@@ -695,7 +706,7 @@ class TestAdminPasswordReset:
         # Change password
         change_resp = client.post("/auth/password/change", json={
             "current_password": temp_password,
-            "new_password": "permanent_password_123",
+            "new_password": "Permanent@123",
         }, headers=new_headers)
         assert change_resp.status_code == 200
 
