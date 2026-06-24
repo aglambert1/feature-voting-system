@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.models.cost_tracking import LLMUsageLog, OperationType
+from app.models.user import User
+from app.models.competitor_intelligence import CIProduct
 from app.services.cost_calculator import calculate_cost
 
 
@@ -148,15 +150,34 @@ class CostTrackingService:
             LLMUsageLog.created_at >= since
         ).group_by(LLMUsageLog.operation_type).all()
 
-        # By user (top 10)
+        # By user (top 10) with username/email
         by_user = self.db.query(
             LLMUsageLog.user_id,
+            User.username,
+            User.email,
             func.count(LLMUsageLog.id).label("count"),
             func.sum(LLMUsageLog.estimated_cost_usd).label("cost"),
+        ).join(
+            User, LLMUsageLog.user_id == User.id
         ).filter(
             LLMUsageLog.created_at >= since,
             LLMUsageLog.user_id.isnot(None)
-        ).group_by(LLMUsageLog.user_id).order_by(
+        ).group_by(LLMUsageLog.user_id, User.username, User.email).order_by(
+            func.sum(LLMUsageLog.estimated_cost_usd).desc()
+        ).limit(10).all()
+
+        # By product (top 10) with product name
+        by_product = self.db.query(
+            LLMUsageLog.product_id,
+            CIProduct.product_name,
+            func.count(LLMUsageLog.id).label("count"),
+            func.sum(LLMUsageLog.estimated_cost_usd).label("cost"),
+        ).join(
+            CIProduct, LLMUsageLog.product_id == CIProduct.id
+        ).filter(
+            LLMUsageLog.created_at >= since,
+            LLMUsageLog.product_id.isnot(None)
+        ).group_by(LLMUsageLog.product_id, CIProduct.product_name).order_by(
             func.sum(LLMUsageLog.estimated_cost_usd).desc()
         ).limit(10).all()
 
@@ -189,8 +210,12 @@ class CostTrackingService:
                 for model, count, cost in by_model
             },
             "top_users": [
-                {"user_id": uid, "count": count, "cost": round(cost, 4)}
-                for uid, count, cost in by_user
+                {"user_id": uid, "username": uname, "email": email, "count": count, "cost": round(cost, 4)}
+                for uid, uname, email, count, cost in by_user
+            ],
+            "top_products": [
+                {"product_id": pid, "product_name": pname, "count": count, "cost": round(cost, 4)}
+                for pid, pname, count, cost in by_product
             ],
         }
 
@@ -257,6 +282,30 @@ class CostTrackingService:
         ).scalar() or 0
 
         return total > limit_usd
+
+    def get_daily_cost_series(self, days: int = 30) -> list:
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+
+        rows = self.db.query(
+            func.date(LLMUsageLog.created_at).label("date"),
+            func.sum(LLMUsageLog.estimated_cost_usd).label("total_cost"),
+            func.count(LLMUsageLog.id).label("request_count"),
+        ).filter(
+            LLMUsageLog.created_at >= since
+        ).group_by(
+            func.date(LLMUsageLog.created_at)
+        ).order_by(
+            func.date(LLMUsageLog.created_at)
+        ).all()
+
+        return [
+            {
+                "date": str(row.date),
+                "total_cost_usd": round(row.total_cost or 0, 4),
+                "request_count": row.request_count or 0,
+            }
+            for row in rows
+        ]
 
     def get_daily_cost(self) -> float:
         """
