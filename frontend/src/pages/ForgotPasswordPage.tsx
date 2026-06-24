@@ -175,7 +175,7 @@ const ForgotPasswordPage = () => {
         {step === 'otp' && (
           <form className="mt-8 space-y-6" onSubmit={handleConfirmReset}>
             <p className="text-sm text-gray-600">
-              We sent a 6-digit code to <span className="font-medium">{email}</span>. It expires in 15 minutes.
+              If <span className="font-medium">{email}</span> is registered, we sent a 6-digit code to that address. The code expires in 15 minutes.
             </p>
             <div className="space-y-4">
               <div>
