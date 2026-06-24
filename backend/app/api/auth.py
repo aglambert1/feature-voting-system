@@ -652,12 +652,18 @@ async def request_password_reset(
     db.add(reset_token)
     db.commit()
 
-    # Send OTP via email
-    await email_service.send_password_reset_otp(
-        to_email=user.email,
-        otp=otp,
-        username=user.username
-    )
+    # Send OTP via email (Celery in production, direct in debug/dev)
+    if email_service.is_live and not settings.debug:
+        from app.queue.email_tasks import send_email_task
+        send_email_task.delay(
+            email_type="password_reset_otp",
+            to_email=user.email,
+            context={"otp": otp, "username": user.username},
+        )
+    else:
+        email_service.send_password_reset_otp(
+            to_email=user.email, otp=otp, username=user.username
+        )
 
     # In development mode, return the OTP in the response for easy testing
     response = PasswordResetResponse(
@@ -759,11 +765,18 @@ async def confirm_password_reset(
 
     db.commit()
 
-    # Send confirmation email
-    await email_service.send_password_changed_notification(
-        to_email=user.email,
-        username=user.username
-    )
+    # Send confirmation email (Celery in production, direct in debug/dev)
+    if email_service.is_live and not settings.debug:
+        from app.queue.email_tasks import send_email_task
+        send_email_task.delay(
+            email_type="password_changed",
+            to_email=user.email,
+            context={"username": user.username},
+        )
+    else:
+        email_service.send_password_changed_notification(
+            to_email=user.email, username=user.username
+        )
 
     return MessageResponse(
         message="Password successfully reset",
@@ -803,6 +816,7 @@ async def change_password(
         400 Bad Request: If current password is incorrect
     """
     from app.utils.email import email_service
+    from app.config import settings
 
     # Verify current password
     if not verify_password(password_change.current_password, current_user.hashed_password):
@@ -822,10 +836,17 @@ async def change_password(
     current_user.must_change_password = False
     db.commit()
 
-    await email_service.send_password_changed_notification(
-        to_email=current_user.email,
-        username=current_user.username
-    )
+    if email_service.is_live and not settings.debug:
+        from app.queue.email_tasks import send_email_task
+        send_email_task.delay(
+            email_type="password_changed",
+            to_email=current_user.email,
+            context={"username": current_user.username},
+        )
+    else:
+        email_service.send_password_changed_notification(
+            to_email=current_user.email, username=current_user.username
+        )
 
     return MessageResponse(
         message="Password successfully changed",

@@ -34,6 +34,7 @@ celery_app = Celery(
         'app.queue.internal_tasks',
         'app.queue.jtbd_tasks',
         'app.queue.synthesis_tasks',
+        'app.queue.email_tasks',
     ]
 )
 

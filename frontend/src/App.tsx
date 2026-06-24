@@ -37,6 +37,7 @@ import IdeaLifecycleSettingsPage from './pages/IdeaLifecycleSettingsPage';
 import CostReportingPage from './pages/CostReportingPage';
 import JoinPage from './pages/JoinPage';
 import WelcomePage from './pages/WelcomePage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
 
 // Redirect from old /report route to new V2 IntelligenceHub
 function ReportRedirect() {
@@ -58,6 +59,7 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/join/:code" element={<JoinPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           {/* Protected routes */}
           <Route
             path="/welcome"

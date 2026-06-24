@@ -180,6 +180,43 @@ export const register = async (userData: RegisterData): Promise<User> => {
   return response.data;
 };
 
+// ============================================================================
+// PASSWORD RESET API METHODS
+// ============================================================================
+
+export interface PasswordResetRequestResponse {
+  message: string;
+  detail?: string;
+  dev_otp?: string;
+}
+
+export interface PasswordResetConfirmResponse {
+  message: string;
+  detail?: string;
+}
+
+export const requestPasswordReset = async (email: string): Promise<PasswordResetRequestResponse> => {
+  const response = await api.post<PasswordResetRequestResponse>(
+    '/auth/password/reset-request',
+    { email },
+    { skipAuthRedirect: true }
+  );
+  return response.data;
+};
+
+export const confirmPasswordReset = async (
+  email: string,
+  otp: string,
+  new_password: string
+): Promise<PasswordResetConfirmResponse> => {
+  const response = await api.post<PasswordResetConfirmResponse>(
+    '/auth/password/reset-confirm',
+    { email, otp, new_password },
+    { skipAuthRedirect: true }
+  );
+  return response.data;
+};
+
 /**
  * Get current user profile
  */

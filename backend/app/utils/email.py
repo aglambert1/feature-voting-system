@@ -1,140 +1,108 @@
-"""
-Email service utilities.
-
-For MVP: This is a mock email service that logs to console.
-In production: Replace with actual SMTP service (SendGrid, AWS SES, etc.)
-"""
-
 import logging
-from typing import Optional
+from datetime import datetime, timezone
+from pathlib import Path
+
+from jinja2 import Environment, FileSystemLoader
 
 logger = logging.getLogger(__name__)
 
+_template_dir = Path(__file__).resolve().parent.parent / "templates" / "email"
+_jinja_env = Environment(loader=FileSystemLoader(str(_template_dir)), autoescape=True)
+
+
+def _render_template(template_name: str, **context) -> str:
+    return _jinja_env.get_template(template_name).render(**context)
+
 
 class EmailService:
-    """
-    Email service for sending emails.
-
-    MVP Implementation: Logs emails to console instead of sending them.
-    This allows testing without setting up an SMTP server.
-
-    Production TODO:
-    - Add SMTP configuration
-    - Use SendGrid/AWS SES/Postmark
-    - Add email templates
-    - Add retry logic
-    - Add email queue
-    """
 
     def __init__(self):
-        """Initialize email service."""
-        self.enabled = True  # Set to False to disable all emails
+        from app.config import settings
 
-    async def send_password_reset_otp(
-        self,
-        to_email: str,
-        otp: str,
-        username: str
-    ) -> bool:
-        """
-        Send password reset OTP to user's email.
+        self._api_key = settings.sendgrid_api_key
+        self._from_email = settings.sendgrid_from_email
+        self._from_name = settings.sendgrid_from_name
+        self._sg_client = None
 
-        Args:
-            to_email: Recipient email address
-            otp: 6-digit OTP code
-            username: User's username
+    @property
+    def sg(self):
+        if self._sg_client is None and self._api_key:
+            from sendgrid import SendGridAPIClient
+            self._sg_client = SendGridAPIClient(self._api_key)
+        return self._sg_client
 
-        Returns:
-            True if email was "sent" successfully
-        """
-        if not self.enabled:
-            logger.info(f"Emails disabled - would have sent OTP to {to_email}")
+    @property
+    def is_live(self) -> bool:
+        return bool(self._api_key)
+
+    def send_email(self, to_email: str, subject: str, html_content: str, plain_content: str | None = None) -> bool:
+        if not self.is_live:
+            logger.info(f"[EMAIL-DEV] To: {to_email} | Subject: {subject}")
+            print(f"\n{'=' * 60}")
+            print(f"EMAIL (console fallback)")
+            print(f"{'=' * 60}")
+            print(f"To: {to_email}")
+            print(f"Subject: {subject}")
+            print(f"{'=' * 60}\n")
+            return True
+
+        try:
+            from sendgrid.helpers.mail import Mail, Email, To
+
+            message = Mail(
+                from_email=Email(self._from_email, self._from_name),
+                to_emails=To(to_email),
+                subject=subject,
+                html_content=html_content,
+                plain_text_content=plain_content,
+            )
+            response = self.sg.send(message)
+            logger.info(f"Email sent to {to_email}: status={response.status_code}")
+            return 200 <= response.status_code < 300
+        except Exception:
+            logger.exception(f"Failed to send email to {to_email}")
             return False
 
-        # MVP: Log to console (in production, send actual email)
-        subject = "Password Reset Request - Feature-IQ"
-        body = f"""
-Hello {username},
+    def send_password_reset_otp(self, to_email: str, otp: str, username: str) -> bool:
+        subject = "Password Reset Code - Feature-IQ"
+        html = _render_template("password_reset_otp.html", username=username, otp=otp, expires_minutes=15)
+        plain = (
+            f"Hello {username},\n\n"
+            f"Your password reset code is: {otp}\n\n"
+            f"This code expires in 15 minutes.\n\n"
+            f"If you didn't request this, ignore this email."
+        )
 
-You requested to reset your password for Feature-IQ.
+        if not self.is_live:
+            print(f"\n{'=' * 60}")
+            print(f"PASSWORD RESET OTP")
+            print(f"{'=' * 60}")
+            print(f"To: {to_email}")
+            print(f"OTP Code: {otp}")
+            print(f"Expires: 15 minutes")
+            print(f"{'=' * 60}\n")
 
-Your One-Time Password (OTP) is: {otp}
+        return self.send_email(to_email, subject, html, plain)
 
-This code will expire in 15 minutes.
-
-If you didn't request this, please ignore this email.
-
-Best regards,
-The Feature-IQ Team
-        """
-
-        # Log the email (MVP implementation)
-        logger.info("=" * 60)
-        logger.info("📧 EMAIL (MVP - Console Only)")
-        logger.info("=" * 60)
-        logger.info(f"To: {to_email}")
-        logger.info(f"Subject: {subject}")
-        logger.info(f"Body:\n{body}")
-        logger.info("=" * 60)
-
-        print("\n" + "=" * 60)
-        print("📧 PASSWORD RESET EMAIL")
-        print("=" * 60)
-        print(f"To: {to_email}")
-        print(f"OTP Code: {otp}")
-        print(f"Expires: 15 minutes")
-        print("=" * 60 + "\n")
-
-        return True
-
-    async def send_password_changed_notification(
-        self,
-        to_email: str,
-        username: str
-    ) -> bool:
-        """
-        Send notification that password was changed.
-
-        Args:
-            to_email: Recipient email address
-            username: User's username
-
-        Returns:
-            True if email was "sent" successfully
-        """
-        if not self.enabled:
-            logger.info(f"Emails disabled - would have sent notification to {to_email}")
-            return False
-
+    def send_password_changed_notification(self, to_email: str, username: str) -> bool:
+        changed_at = datetime.now(timezone.utc).strftime("%B %d, %Y at %H:%M UTC")
         subject = "Password Changed - Feature-IQ"
-        body = f"""
-Hello {username},
+        html = _render_template("password_changed.html", username=username, changed_at=changed_at)
+        plain = (
+            f"Hello {username},\n\n"
+            f"Your Feature-IQ password was changed on {changed_at}.\n\n"
+            f"If you did not make this change, please reset your password immediately."
+        )
 
-Your password for Feature-IQ was successfully changed.
+        if not self.is_live:
+            print(f"\n{'=' * 60}")
+            print(f"PASSWORD CHANGED NOTIFICATION")
+            print(f"{'=' * 60}")
+            print(f"To: {to_email}")
+            print(f"Changed at: {changed_at}")
+            print(f"{'=' * 60}\n")
 
-If you didn't make this change, please contact support immediately.
-
-Best regards,
-The Feature-IQ Team
-        """
-
-        logger.info("=" * 60)
-        logger.info("📧 EMAIL (MVP - Console Only)")
-        logger.info("=" * 60)
-        logger.info(f"To: {to_email}")
-        logger.info(f"Subject: {subject}")
-        logger.info(f"Body:\n{body}")
-        logger.info("=" * 60)
-
-        print("\n" + "=" * 60)
-        print("📧 PASSWORD CHANGED NOTIFICATION")
-        print("=" * 60)
-        print(f"To: {to_email}")
-        print("Password was successfully changed")
-        print("=" * 60 + "\n")
-
-        return True
+        return self.send_email(to_email, subject, html, plain)
 
 
-# Global email service instance
 email_service = EmailService()
