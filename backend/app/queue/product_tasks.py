@@ -15,7 +15,7 @@ from app.models.competitor_intelligence import (
 from app.services.queue_service import QueueService
 from app.services.llm_service import LLMService
 from app.agents.product_analyzer import ProductAnalyzerAgent
-from app.queue.helpers import get_db, _fetch_source_urls
+from app.queue.helpers import get_db, _fetch_source_urls, fail_job
 
 
 @shared_task(bind=True, name='app.queue.product_tasks.analyze_product_task', soft_time_limit=300)
@@ -179,12 +179,7 @@ def analyze_product_task(self, job_id: int) -> Dict[str, Any]:
         print(f"[analyze_product_task] Error: {error_msg}")
         print(f"[analyze_product_task] Traceback: {error_tb}")
 
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception as inner_e:
-                print(f"[analyze_product_task] Failed to update job status: {inner_e}")
+        fail_job(db, job_id, error_msg, error_tb, task_name="analyze_product_task")
 
         raise
 

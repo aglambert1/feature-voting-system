@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from app.services.queue_service import QueueService
 from app.services.llm_service import LLMService
-from app.queue.helpers import get_db
+from app.queue.helpers import get_db, fail_job
 
 
 # ---------------------------------------------------------------------------
@@ -197,11 +197,7 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
         error_msg = traceback.format_exc()
         if db:
             db.rollback()
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg)
-            except Exception:
-                pass
+        fail_job(db, job_id, error_msg, task_name="extract_job_map_task")
         raise
 
     finally:

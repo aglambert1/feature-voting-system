@@ -40,9 +40,12 @@ import type {
   QueueJob,
 } from '../../../types';
 import { JobType, JobStatus } from '../../../types';
+import { isJobActive } from '../../../hooks/useJobPolling';
+import { formatDateTime } from '../../../utils/date';
 import AgentJobStatus from '../../../components/AgentJobStatus';
 import AddCompetitorModal from './AddCompetitorModal';
 import CompetitorEvidencePanel from './CompetitorEvidencePanel';
+import { useAutoDismiss } from '../../../hooks/useAutoDismiss';
 
 interface CompetitorRowProps {
   competitor: AgentCompetitor;
@@ -65,11 +68,7 @@ function CompetitorRow({
   onConfirmRemove, onRemoveCompetitor, productId,
 }: CompetitorRowProps) {
   const hasReport = !!report;
-  const isAuditActive = auditJob && (
-    auditJob.status === JobStatus.PENDING ||
-    auditJob.status === JobStatus.QUEUED ||
-    auditJob.status === JobStatus.RUNNING
-  );
+  const isAuditActive = auditJob && isJobActive(auditJob);
 
   return (
     <div className="p-4 hover:bg-gray-50">
@@ -254,7 +253,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
 
   // Action states
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useAutoDismiss<string | null>(null, 5000);
 
   // Untracked section expanded state — initialized once on mount
   const [untrackedExpanded, setUntrackedExpanded] = useState(false);
@@ -320,9 +319,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
       setAuditJobs(jobMap);
 
       // Check if any V2 pipeline jobs are still active
-      const pipelineActive = pipelineJobs.some(
-        j => j.status === JobStatus.PENDING || j.status === JobStatus.QUEUED || j.status === JobStatus.RUNNING
-      );
+      const pipelineActive = pipelineJobs.some(isJobActive);
       setV2PipelineActive(pipelineActive);
     } catch (err) {
       console.error('[CompetitorReportsTab] Failed to check audit jobs:', err);
@@ -336,12 +333,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
 
   // Poll while any audit jobs or V2 pipeline jobs are active
   useEffect(() => {
-    const hasActiveAudits = Array.from(auditJobs.values()).some(
-      (j) =>
-        j.status === JobStatus.PENDING ||
-        j.status === JobStatus.QUEUED ||
-        j.status === JobStatus.RUNNING
-    );
+    const hasActiveAudits = Array.from(auditJobs.values()).some(isJobActive);
     if (!hasActiveAudits && !v2PipelineActive) return;
 
     const interval = setInterval(async () => {
@@ -353,12 +345,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
 
   // Refresh data when an audit finishes (active count decreases)
   useEffect(() => {
-    const activeCount = Array.from(auditJobs.values()).filter(
-      (j) =>
-        j.status === JobStatus.PENDING ||
-        j.status === JobStatus.QUEUED ||
-        j.status === JobStatus.RUNNING
-    ).length;
+    const activeCount = Array.from(auditJobs.values()).filter(isJobActive).length;
 
     if (prevAuditJobCount.current > 0 && activeCount < prevAuditJobCount.current) {
       // An audit just finished — refresh reports
@@ -366,14 +353,6 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     }
     prevAuditJobCount.current = activeCount;
   }, [auditJobs, fetchAllData]);
-
-  // Clear success message after timeout
-  useEffect(() => {
-    if (successMessage) {
-      const timer = setTimeout(() => setSuccessMessage(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [successMessage]);
 
   // Helper to find report for a competitor
   const getReportForCompetitor = (competitorId: number): FunctionalReportSummary | undefined => {
@@ -606,12 +585,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
   const untrackedCompetitors = competitors.filter(c => !c.tracked);
   const trackedCount = trackedCompetitors.length;
   const competitorsWithReports = reports.length;
-  const activeAuditCount = Array.from(auditJobs.values()).filter(
-    (j) =>
-      j.status === JobStatus.PENDING ||
-      j.status === JobStatus.QUEUED ||
-      j.status === JobStatus.RUNNING
-  ).length;
+  const activeAuditCount = Array.from(auditJobs.values()).filter(isJobActive).length;
 
   if (loading) {
     return (
@@ -638,7 +612,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
               Functional Audit: {selectedReport.competitor_name}
             </h2>
             <p className="text-sm text-gray-500">
-              Generated: {new Date(selectedReport.generated_at).toLocaleString()} | Version {selectedReport.report_version}
+              Generated: {formatDateTime(selectedReport.generated_at)} | Version {selectedReport.report_version}
             </p>
           </div>
           <button

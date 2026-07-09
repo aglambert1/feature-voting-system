@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, List
 
 from app.database import SessionLocal
 from app.services.queue_service import QueueService
+from app.utils.vectors import cosine_similarity as _cosine_similarity
 
 
 def get_db():
@@ -19,6 +20,27 @@ def get_db():
     except Exception:
         db.close()
         raise
+
+
+def fail_job(
+    db,
+    job_id: int,
+    error_msg: str,
+    error_tb: Optional[str] = None,
+    *,
+    task_name: str = "",
+) -> None:
+    """Best-effort: mark a queue job as failed.
+
+    Never raises — a status-update failure must not mask the original task
+    exception the caller is about to re-raise.
+    """
+    if db is None:
+        return
+    try:
+        QueueService(db).mark_failure(job_id, error_msg, error_tb)
+    except Exception as inner:
+        print(f"[{task_name or 'fail_job'}] Failed to update job status: {inner}")
 
 
 def _fetch_source_urls(
@@ -71,28 +93,6 @@ def _fetch_source_urls(
             continue
 
     return fetched
-
-
-def _cosine_similarity(a: list, b: list) -> float:
-    """Compute cosine similarity between two embedding vectors.
-
-    Voyage AI embeddings are L2-normalized, so the dot product equals
-    the cosine similarity. We still normalize defensively to handle
-    embeddings from other sources or partially-corrupted vectors.
-    """
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    try:
-        import numpy as np
-        va = np.array(a, dtype=float)
-        vb = np.array(b, dtype=float)
-        na = np.linalg.norm(va)
-        nb = np.linalg.norm(vb)
-        if na == 0.0 or nb == 0.0:
-            return 0.0
-        return float(np.dot(va, vb) / (na * nb))
-    except Exception:
-        return 0.0
 
 
 # Similarity thresholds for job linkage.

@@ -16,10 +16,10 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, ValidationError
 from datetime import datetime
 
+from app.api.deps import verify_product_access
 from app.database import get_db
 from app.models.user import User, UserRole
-from app.models.competitor_intelligence import CIProduct, ProductPermissionLevel
-from app.services.permission_service import PermissionService
+from app.models.competitor_intelligence import ProductPermissionLevel
 from app.models.internal_feedback import (
     InternalFeedbackImport,
     WinLossTheme,
@@ -69,36 +69,6 @@ class ImportStatusResponse(BaseModel):
     winloss_theme_count: int
     support_theme_count: int
     error_message: Optional[str] = None
-
-
-# ============================================================================
-# Helpers
-# ============================================================================
-
-def verify_product_access(
-    db: Session,
-    product_id: int,
-    user: User,
-    required_level: ProductPermissionLevel = ProductPermissionLevel.VIEW
-) -> CIProduct:
-    """Verify product exists and user has the required permission level."""
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=user.id,
-        product_id=product_id,
-        required_level=required_level
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this product"
-        )
-    return product
 
 
 # ============================================================================

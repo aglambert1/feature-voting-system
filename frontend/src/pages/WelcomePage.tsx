@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { UserRole } from '../types';
 import { markWelcomed } from '../services/api';
 import Navigation from '../components/Navigation';
+import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 
 const WelcomePage = () => {
   const { user, setUser } = useAuth();
@@ -235,13 +236,11 @@ const ActionCard = ({
   copyValue,
   copyLabel,
 }: ActionCardProps) => {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(copyValue ?? '');
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      await copy(copyValue ?? '');
     } catch {
       // Clipboard can fail (permissions / insecure context) — the URL is also
       // printed in the body text, so the user still has it.

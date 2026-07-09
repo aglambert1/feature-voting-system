@@ -5,11 +5,12 @@
  * Supports multi-source documentation and re-analysis.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import api, { getProductJobs } from '../../services/api';
+import api from '../../services/api';
 import Navigation from '../../components/Navigation';
 import { MultiSourceInput } from '../../components/MultiSourceInput';
+import { useProductJobPolling } from '../../hooks/useJobPolling';
 import { ProductSource, QueueJob, JobStatus, JobType } from '../../types';
 
 interface ProductData {
@@ -29,7 +30,6 @@ export default function AnalyzeProductPage() {
   const [sources, setSources] = useState<ProductSource[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
-  const [activeJob, setActiveJob] = useState<QueueJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const initialSourcesLoaded = useRef<boolean>(false);
   const autoAnalyzeTriggered = useRef<boolean>(false);
@@ -37,72 +37,34 @@ export default function AnalyzeProductPage() {
   // Check if we should auto-analyze (navigated from CreateProductPage)
   const autoAnalyze = (location.state as { autoAnalyze?: boolean })?.autoAnalyze ?? false;
 
-  // Check for existing active analysis job on mount
-  const checkActiveJob = useCallback(async () => {
-    if (!productId) return;
-    try {
-      const jobs = await getProductJobs(parseInt(productId), 5, [JobType.PRODUCT_ANALYSIS]);
-      const active = jobs.find(j =>
-        j.status === JobStatus.PENDING ||
-        j.status === JobStatus.QUEUED ||
-        j.status === JobStatus.RUNNING
-      );
-      if (active) {
-        setActiveJob(active);
-        setAnalyzing(true);
-      } else {
-        setActiveJob(null);
-        setAnalyzing(false);
+  // Poll the product's analysis job; picks up in-flight jobs on mount too.
+  const { activeJob, refresh: refreshJobs } = useProductJobPolling({
+    productId: productId ? parseInt(productId) : null,
+    jobTypes: [JobType.PRODUCT_ANALYSIS],
+    limit: 5,
+    onComplete: (completed) => {
+      setAnalyzing(false);
+      if (completed?.status === JobStatus.SUCCESS) {
+        // Redirect to product page on success
+        navigate(`/product-intelligence/products/${productId}`);
+      } else if (completed?.status === JobStatus.FAILURE) {
+        setError(completed.error_message || 'Analysis failed. Please try again.');
       }
-    } catch (err) {
-      console.error('[AnalyzeProduct] Failed to check active job:', err);
+    },
+  });
+
+  // An in-flight job found by polling means we're analyzing.
+  useEffect(() => {
+    if (activeJob) {
+      setAnalyzing(true);
     }
-  }, [productId]);
+  }, [activeJob]);
 
   useEffect(() => {
     if (productId) {
       fetchProduct();
-      checkActiveJob();
     }
   }, [productId]);
-
-  // Poll for job status while analyzing
-  useEffect(() => {
-    if (!analyzing || !productId) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const jobs = await getProductJobs(parseInt(productId), 5, [JobType.PRODUCT_ANALYSIS]);
-        const active = jobs.find(j =>
-          j.status === JobStatus.PENDING ||
-          j.status === JobStatus.QUEUED ||
-          j.status === JobStatus.RUNNING
-        );
-
-        if (active) {
-          setActiveJob(active);
-        } else {
-          // Job completed - check if it succeeded
-          const completed = jobs.find(j =>
-            j.status === JobStatus.SUCCESS || j.status === JobStatus.FAILURE
-          );
-          setActiveJob(null);
-          setAnalyzing(false);
-
-          if (completed?.status === JobStatus.SUCCESS) {
-            // Redirect to product page on success
-            navigate(`/product-intelligence/products/${productId}`);
-          } else if (completed?.status === JobStatus.FAILURE) {
-            setError(completed.error_message || 'Analysis failed. Please try again.');
-          }
-        }
-      } catch (err) {
-        console.error('[AnalyzeProduct] Failed to poll job status:', err);
-      }
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [analyzing, productId, navigate]);
 
   // Parse existing product sources from source_data
   useEffect(() => {
@@ -214,7 +176,7 @@ export default function AnalyzeProductPage() {
       );
 
       console.log('[AnalyzeProduct] Analysis job queued:', response.data.job_uuid);
-      setActiveJob(response.data);
+      refreshJobs();
       // Stay on page - polling will handle completion
     } catch (err: any) {
       console.error('[AnalyzeProduct] Error during analysis:', err);
@@ -224,7 +186,7 @@ export default function AnalyzeProductPage() {
       if (statusCode === 409) {
         // Analysis already running - check for active job
         setError('Analysis is already in progress for this product.');
-        checkActiveJob();
+        refreshJobs();
       } else {
         setError(detail);
         setAnalyzing(false);

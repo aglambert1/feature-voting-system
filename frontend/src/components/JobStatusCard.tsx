@@ -8,10 +8,10 @@
  * - Auto-polling for running jobs
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { getJob } from '../services/api';
-import type { QueueJob, ApiError } from '../types';
+import type { QueueJob } from '../types';
 import { JobStatus, JobType } from '../types';
+import { isJobActive, useJobStatusPolling } from '../hooks/useJobPolling';
+import { parseUTCTimestamp } from '../utils/date';
 
 interface JobStatusCardProps {
   jobUuid: string;
@@ -28,46 +28,7 @@ const JobStatusCard = ({
   showDetails = false,
   compact = false,
 }: JobStatusCardProps) => {
-  const [job, setJob] = useState<QueueJob | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  // Keep callbacks in refs so fetchJob never needs them as dependencies.
-  const onCompleteRef = useRef(onComplete);
-  const onErrorRef = useRef(onError);
-  useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
-  useEffect(() => { onErrorRef.current = onError; }, [onError]);
-
-  const fetchJob = useCallback(async () => {
-    try {
-      const jobData = await getJob(jobUuid);
-      setJob(jobData);
-
-      if (jobData.status === JobStatus.SUCCESS) {
-        onCompleteRef.current?.(jobData);
-      } else if (jobData.status === JobStatus.FAILURE) {
-        onErrorRef.current?.(jobData);
-      }
-    } catch (err) {
-      setError((err as ApiError).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [jobUuid]);
-
-  useEffect(() => {
-    fetchJob();
-  }, [fetchJob]);
-
-  // Poll only while the job is active — interval depends only on fetchJob (stable).
-  useEffect(() => {
-    if (!job) return;
-    const isActive = job.status === JobStatus.RUNNING || job.status === JobStatus.QUEUED || job.status === JobStatus.PENDING;
-    if (!isActive) return;
-
-    const interval = setInterval(fetchJob, 2000);
-    return () => clearInterval(interval);
-  }, [fetchJob, job?.status]);
+  const { job, loading, error } = useJobStatusPolling(jobUuid, { onComplete, onError });
 
   const getStatusColor = (status: JobStatus) => {
     switch (status) {
@@ -150,7 +111,7 @@ const JobStatusCard = ({
     return null;
   }
 
-  const isActive = job.status === JobStatus.RUNNING || job.status === JobStatus.QUEUED || job.status === JobStatus.PENDING;
+  const isActive = isJobActive(job);
 
   return (
     <div className={`bg-white border border-gray-200 rounded-lg ${compact ? 'p-3' : 'p-4'} transition-all`}>
@@ -205,13 +166,13 @@ const JobStatusCard = ({
           {job.started_at && (
             <div className="flex justify-between">
               <span>Started:</span>
-              <span>{new Date(job.started_at).toLocaleTimeString()}</span>
+              <span>{parseUTCTimestamp(job.started_at).toLocaleTimeString()}</span>
             </div>
           )}
           {job.completed_at && (
             <div className="flex justify-between">
               <span>Completed:</span>
-              <span>{new Date(job.completed_at).toLocaleTimeString()}</span>
+              <span>{parseUTCTimestamp(job.completed_at).toLocaleTimeString()}</span>
             </div>
           )}
         </div>

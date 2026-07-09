@@ -14,6 +14,7 @@
 import { useState, useEffect } from 'react';
 import VoteButtons from './VoteButtons';
 import { getIdeaDetail } from '../services/api';
+import { formatDate } from '../utils/date';
 import type { IdeaListItem, IdeaDetail } from '../types';
 
 interface IdeaCardProps {
@@ -86,14 +87,6 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
   };
 
   // Format date
-  const formatDate = (dateString: string): string => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  };
 
   // Format vote status message
   const getVoteStatusMessage = (): string => {
@@ -102,13 +95,7 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
     }
 
     if (voteTimestamp) {
-      const date = new Date(voteTimestamp);
-      const formattedDate = date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      });
-      return `You voted +1 on ${formattedDate}`;
+      return `You voted +1 on ${formatDate(voteTimestamp)}`;
     }
 
     return 'You voted +1';
@@ -326,7 +313,7 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
                               )}
                               {/* Timestamp */}
                               <span className="text-xs text-gray-400 ml-auto">
-                                {new Date(entry.created_at).toLocaleDateString()}
+                                {formatDate(entry.created_at)}
                               </span>
                             </div>
                             {/* Comment */}

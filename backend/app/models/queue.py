@@ -28,7 +28,6 @@ class JobType(str, enum.Enum):
     Phase 2:
     - COMPETITOR_DISCOVERY: Discover competitors
     - FEATURE_EXTRACTION: Extract features from competitor
-    - FULL_WORKFLOW: Complete analysis workflow
 
     Phase 3+:
     - IDEA_NORMALIZATION: Normalize ideas from various sources
@@ -45,13 +44,13 @@ class JobType(str, enum.Enum):
     - LANDSCAPE_SYNTHESIS: Cross-competitor landscape opportunity synthesis
 
     DEPRECATED (kept for backwards compatibility):
-    - STRATEGIC_ANALYSIS_ONLY, PRICING_ANALYSIS, POSITIONING_ANALYSIS,
-    - CHANGES_TRACKING, MOMENTUM_ANALYSIS, FINANCIALS_ANALYSIS
+    - FULL_WORKFLOW, STRATEGIC_ANALYSIS_ONLY, PRICING_ANALYSIS,
+    - POSITIONING_ANALYSIS, CHANGES_TRACKING, MOMENTUM_ANALYSIS,
+    - FINANCIALS_ANALYSIS
     """
     PRODUCT_ANALYSIS = "product_analysis"
     COMPETITOR_DISCOVERY = "competitor_discovery"
     FEATURE_EXTRACTION = "feature_extraction"
-    FULL_WORKFLOW = "full_workflow"
     IDEA_NORMALIZATION = "idea_normalization"
     IDEA_TRIAGE = "idea_triage"
     COMPETITIVE_MONITORING = "competitive_monitoring"
@@ -80,6 +79,9 @@ class JobType(str, enum.Enum):
 
     # DEPRECATED: These job types are no longer used in the new two-step analysis system
     # Kept for backwards compatibility with existing job records
+    # (removing a member breaks deserialization of legacy rows; the PG enum
+    # label can only be dropped with a type-rebuild migration)
+    FULL_WORKFLOW = "full_workflow"  # DEPRECATED — workflow endpoints removed, no producer
     STRATEGIC_ANALYSIS_ONLY = "strategic_analysis_only"  # DEPRECATED
     PRICING_ANALYSIS = "pricing_analysis"  # DEPRECATED
     POSITIONING_ANALYSIS = "positioning_analysis"  # DEPRECATED

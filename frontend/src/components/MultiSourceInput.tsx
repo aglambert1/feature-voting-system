@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ProductSource, DocumentUploadResponse, URLFetchResponse } from '../types';
 import { FileUploadZone } from './FileUploadZone';
 import { URLFetchInput } from './URLFetchInput';
+import { formatDateTime } from '../utils/date';
 
 interface MultiSourceInputProps {
   sources: ProductSource[];
@@ -291,7 +292,7 @@ export const MultiSourceInput: React.FC<MultiSourceInputProps> = ({
                           <span>URL: {source.url}</span>
                         )}
                         {source.type === 'url' && source.fetch_timestamp && (
-                          <span>Fetched: {new Date(source.fetch_timestamp).toLocaleString()}</span>
+                          <span>Fetched: {formatDateTime(source.fetch_timestamp)}</span>
                         )}
                         <span>Characters: {fullText.length.toLocaleString()}</span>
                       </div>

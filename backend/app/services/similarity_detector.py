@@ -15,6 +15,7 @@ import sqlite_vec
 import enum
 
 from app.services.vector_service import VectorService
+from app.utils.vectors import cosine_similarity
 from app.services.embedding_service import generate_embedding as _generate_embedding
 from app.models.idea import Idea, IdeaStatus
 
@@ -393,7 +394,7 @@ class SimilarityDetectorService:
             feature_embedding = self.generate_embedding(feature_text)
 
             # Calculate cosine similarity
-            similarity = self._cosine_similarity(embedding, feature_embedding)
+            similarity = cosine_similarity(embedding, feature_embedding)
 
             if similarity >= similarity_threshold:
                 matches.append({
@@ -421,30 +422,6 @@ class SimilarityDetectorService:
             "matches": matches[:limit],
             "urgency": urgency_result.to_dict()
         }
-
-    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
-        """
-        Calculate cosine similarity between two vectors.
-
-        Args:
-            vec1: First embedding vector
-            vec2: Second embedding vector
-
-        Returns:
-            Similarity score between 0 and 1
-        """
-        import numpy as np
-        vec1 = np.array(vec1)
-        vec2 = np.array(vec2)
-
-        dot_product = np.dot(vec1, vec2)
-        norm1 = np.linalg.norm(vec1)
-        norm2 = np.linalg.norm(vec2)
-
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-
-        return float(dot_product / (norm1 * norm2))
 
     # DEPRECATED: _text_based_feature_matching, store_competitor_feature_embedding,
     # and bulk_store_competitor_feature_embeddings have been removed.

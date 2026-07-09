@@ -26,7 +26,7 @@ from app.models.competitor_intelligence import (
 )
 from app.services.queue_service import QueueService
 
-from app.queue.helpers import _extract_competitor_names
+from app.queue.helpers import _extract_competitor_names, fail_job
 from app.queue.competitor_tasks import functional_audit_task
 from app.queue.triage_tasks import triage_idea_task
 
@@ -271,12 +271,7 @@ def unified_synthesis_task(self, job_id: int):
         error_msg = str(e)
         error_tb = traceback.format_exc()
         print(f"[unified_synthesis_task] Error for job {job_id}: {error_msg}")
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
+        fail_job(db, job_id, error_msg, error_tb, task_name="unified_synthesis_task")
         raise self.retry(exc=e)
 
     finally:
@@ -324,12 +319,7 @@ def resume_unified_synthesis_task(self, audit_results, synthesis_job_id: int):
         error_msg = str(e)
         error_tb = traceback.format_exc()
         print(f"[resume_unified_synthesis_task] Error for job {synthesis_job_id}: {error_msg}")
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(synthesis_job_id, error_msg, error_tb)
-            except Exception:
-                pass
+        fail_job(db, synthesis_job_id, error_msg, error_tb, task_name="resume_unified_synthesis_task")
         raise self.retry(exc=e)
 
     finally:

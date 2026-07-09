@@ -15,6 +15,7 @@
 
 import { useState, useEffect } from 'react';
 import { CompetitiveAgentConfig, ScheduleFrequency } from '../../../types';
+import { formatDateTime } from '../../../utils/date';
 
 export interface SettingsFormData {
   competitor_discovery_mode?: 'manual' | 'scheduled';
@@ -211,7 +212,7 @@ export default function CompetitiveIntelligenceSettingsForm({ config, onChange, 
                       </select>
                       {showLastRunInfo && config?.competitor_discovery_last_run && (
                         <p className="text-xs text-gray-500 mt-1">
-                          Last run: {new Date(config.competitor_discovery_last_run).toLocaleString()}
+                          Last run: {formatDateTime(config.competitor_discovery_last_run)}
                         </p>
                       )}
                     </div>
@@ -230,7 +231,7 @@ export default function CompetitiveIntelligenceSettingsForm({ config, onChange, 
                       </select>
                       {showLastRunInfo && config?.deep_analysis_last_run && (
                         <p className="text-xs text-gray-500 mt-1">
-                          Last run: {new Date(config.deep_analysis_last_run).toLocaleString()}
+                          Last run: {formatDateTime(config.deep_analysis_last_run)}
                         </p>
                       )}
                     </div>
@@ -244,7 +245,7 @@ export default function CompetitiveIntelligenceSettingsForm({ config, onChange, 
         {/* Last run info (when not showing separate schedules) */}
         {showLastRunInfo && !useSeparateSchedules && config?.deep_analysis_last_run && (
           <p className="text-xs text-gray-500 mt-2">
-            Last run: {new Date(config.deep_analysis_last_run).toLocaleString()}
+            Last run: {formatDateTime(config.deep_analysis_last_run)}
           </p>
         )}
       </section>

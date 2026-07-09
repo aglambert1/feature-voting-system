@@ -19,7 +19,7 @@ Common patterns - verify against source if unsure:
 
 **Models** (`backend/app/models/`):
 - Product: `CIProduct` → `product_name`, `product_description`, `product_category`
-- Competitor: `ProductCompetitor` → `competitor_name`, `competitor_url`, `deep_analysis_enabled`
+- Competitor: `ProductCompetitor` → `competitor_name`, `competitor_url`, `tracked`
 - Feature: `ProductFeature` → `feature_name`, `feature_description`
 - Report: `CompetitorFunctionalReport`, `LandscapeOpportunityReport`
 

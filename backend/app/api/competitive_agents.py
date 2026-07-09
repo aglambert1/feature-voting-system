@@ -27,8 +27,8 @@ from app.models.competitive_reports import (
     CompetitorFunctionalReport, CompetitorAlert
 )
 from app.models.idea import Idea, IdeaStatus, SourceType
+from app.api.deps import verify_product_access
 from app.services.queue_service import QueueService
-from app.services.permission_service import PermissionService
 from app.services.competitive_report_metrics import count_gaps
 from app.models.competitor_intelligence import ProductPermissionLevel
 from app.utils.security import get_current_active_user, get_product_owner_or_admin
@@ -297,36 +297,6 @@ def get_or_create_config(db: Session, product_id: int) -> CompetitiveAgentConfig
         db.refresh(config)
 
     return config
-
-
-def verify_product_access(
-    db: Session,
-    product_id: int,
-    user: User,
-    required_level: ProductPermissionLevel = ProductPermissionLevel.VIEW
-) -> CIProduct:
-    """Verify product exists and user has the required permission level.
-
-    Uses PermissionService for consistent access control across all API files.
-    Checks product creator, team-wide access, and explicit permission grants.
-    """
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=user.id,
-        product_id=product_id,
-        required_level=required_level
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this product"
-        )
-    return product
 
 
 def get_competitor_or_404(
@@ -1065,83 +1035,6 @@ def create_ideas_from_features(
         send_task('triage_idea_task', resp.job_id)
 
     return results
-
-
-# ============================================================================
-# Strategic Analysis Results (DEPRECATED - V2 uses Functional Audit instead)
-# These endpoints are deprecated and return 410 Gone.
-# Use the V2 endpoints: /functional-reports, /landscape-report
-# ============================================================================
-
-@router.get("/{product_id}/competitors/{competitor_id}/pricing")
-def get_pricing_analysis(
-    product_id: int,
-    competitor_id: int,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """DEPRECATED: Pricing analysis is no longer available. Use V2 functional audit instead."""
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail="This endpoint is deprecated. Use GET /{product_id}/competitors/{competitor_id}/functional-report instead."
-    )
-
-
-@router.get("/{product_id}/competitors/{competitor_id}/positioning")
-def get_positioning_analysis(
-    product_id: int,
-    competitor_id: int,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """DEPRECATED: Positioning analysis is no longer available. Use V2 functional audit instead."""
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail="This endpoint is deprecated. Use GET /{product_id}/competitors/{competitor_id}/functional-report instead."
-    )
-
-
-@router.get("/{product_id}/competitors/{competitor_id}/changes")
-def get_change_events(
-    product_id: int,
-    competitor_id: int,
-    limit: int = Query(20, le=100),
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """DEPRECATED: Change events tracking is no longer available. Use V2 functional audit instead."""
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail="This endpoint is deprecated. Use GET /{product_id}/competitors/{competitor_id}/functional-report instead."
-    )
-
-
-@router.get("/{product_id}/competitors/{competitor_id}/momentum")
-def get_momentum_analysis(
-    product_id: int,
-    competitor_id: int,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """DEPRECATED: Momentum analysis is no longer available. Use V2 functional audit instead."""
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail="This endpoint is deprecated. Use GET /{product_id}/competitors/{competitor_id}/functional-report instead."
-    )
-
-
-@router.get("/{product_id}/competitors/{competitor_id}/financials")
-def get_financials_analysis(
-    product_id: int,
-    competitor_id: int,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """DEPRECATED: Financials analysis is no longer available. Use V2 functional audit instead."""
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail="This endpoint is deprecated. Use GET /{product_id}/competitors/{competitor_id}/functional-report instead."
-    )
 
 
 # ============================================================================

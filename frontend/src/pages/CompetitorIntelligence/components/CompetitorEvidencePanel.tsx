@@ -10,6 +10,7 @@ import { useNavigate } from "react-router-dom";
 import AddEvidenceForm from "./AddEvidenceForm";
 import { getEvidence, deleteEvidence } from "../../../services/api";
 import type { EvidenceRecord } from "../../../types";
+import { parseUTCTimestamp } from "../../../utils/date";
 
 const TYPE_LABELS: Record<string, string> = {
   competitive_intel: "Competitive",
@@ -67,7 +68,7 @@ export default function CompetitorEvidencePanel({
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("en-US", {
+    return parseUTCTimestamp(dateStr).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
     });

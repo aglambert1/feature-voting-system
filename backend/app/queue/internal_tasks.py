@@ -15,7 +15,7 @@ from celery import shared_task
 
 from app.database import SessionLocal
 from app.services.queue_service import QueueService
-from app.queue.helpers import _cosine_similarity, _maybe_suggest_need
+from app.queue.helpers import _cosine_similarity, _maybe_suggest_need, fail_job
 
 
 # =============================================================================
@@ -294,13 +294,11 @@ def internal_discovery_task(self, job_id: int):
         error_tb = traceback.format_exc()
         print(f"[internal_discovery_task] Error for job {job_id}: {error_msg}")
 
+        fail_job(db, job_id, error_msg, error_tb, task_name="internal_discovery_task")
         if db:
             try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-
                 # Update import record status
-                input_data = queue_service.get_job(job_id).input_data or {}
+                input_data = QueueService(db).get_job(job_id).input_data or {}
                 import_id = input_data.get('import_id')
                 if import_id:
                     import_record = db.query(InternalFeedbackImport).filter(
@@ -461,13 +459,11 @@ def activity_insight_task(self, job_id: int):
         error_tb = traceback.format_exc()
         print(f"[activity_insight_task] Error for job {job_id}: {error_msg}")
 
+        fail_job(db, job_id, error_msg, error_tb, task_name="activity_insight_task")
         if db:
             try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-
                 # Update import record status
-                input_data = queue_service.get_job(job_id).input_data or {}
+                input_data = QueueService(db).get_job(job_id).input_data or {}
                 import_id = input_data.get('import_id')
                 if import_id:
                     from app.models.activity_insights import ActivityImport

@@ -28,7 +28,7 @@ from app.models.synthesis import (
     DEFAULT_IDEA_PRIORITY_THRESHOLD,
     DEFAULT_INCLUDED_SOURCE_TYPES,
 )
-from app.services.permission_service import PermissionService
+from app.api.deps import verify_product_access as _verify_access
 from app.services.queue_service import QueueService
 from app.utils.security import get_current_active_user
 from app.utils.celery_utils import send_celery_task as send_task
@@ -111,20 +111,6 @@ class OpportunityCreateIdeaResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _verify_access(
-    db: Session,
-    product_id: int,
-    user: User,
-    level: ProductPermissionLevel = ProductPermissionLevel.VIEW,
-) -> CIProduct:
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-    if not PermissionService(db).can_access_product(user.id, product_id, level):
-        raise HTTPException(status_code=403, detail="Not authorized to access this product")
-    return product
-
 
 def _config_to_dict(config: SynthesisConfig) -> dict:
     return {

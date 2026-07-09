@@ -18,6 +18,7 @@ from app.services.queue_service import QueueService
 from app.services.llm_service import LLMService
 from app.queue.helpers import (
     get_db,
+    fail_job,
     _link_idea_to_job,
     _maybe_suggest_need,
     _sanitize_existing_feature_info,
@@ -465,12 +466,7 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         error_tb = traceback.format_exc()
         print(f"[triage_idea_task] Error: {error_msg}")
 
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
+        fail_job(db, job_id, error_msg, error_tb, task_name="triage_idea_task")
 
         raise
 
@@ -746,12 +742,7 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
         error_tb = traceback.format_exc()
         print(f"[submit_and_triage_idea_task] Error: {error_msg}")
 
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
+        fail_job(db, job_id, error_msg, error_tb, task_name="submit_and_triage_idea_task")
 
         raise
 

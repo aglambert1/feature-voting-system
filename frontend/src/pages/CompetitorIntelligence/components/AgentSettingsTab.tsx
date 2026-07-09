@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { getAgentConfig, updateAgentConfig } from '../../../services/api';
 import { CompetitiveAgentConfig } from '../../../types';
 import CompetitiveIntelligenceSettingsForm, { SettingsFormData } from './CompetitiveIntelligenceSettingsForm';
+import { useAutoDismiss } from '../../../hooks/useAutoDismiss';
 
 interface Props {
   productId: number;
@@ -19,7 +20,7 @@ export default function AgentSettingsTab({ productId }: Props) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useAutoDismiss<string | null>(null, 3000);
   const [hasChanges, setHasChanges] = useState(false);
   const [formData, setFormData] = useState<SettingsFormData>({});
 
@@ -41,14 +42,6 @@ export default function AgentSettingsTab({ productId }: Props) {
   useEffect(() => {
     fetchConfig();
   }, [fetchConfig]);
-
-  // Clear success message after timeout
-  useEffect(() => {
-    if (successMessage) {
-      const timer = setTimeout(() => setSuccessMessage(null), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [successMessage]);
 
   const handleFormChange = (data: SettingsFormData) => {
     setFormData(data);

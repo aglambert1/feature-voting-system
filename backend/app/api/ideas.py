@@ -37,6 +37,7 @@ from app.models.vote import Vote
 from app.models.user import User, UserRole
 from app.models.queue import JobType
 from app.models.competitor_intelligence import CIProduct, ProductPermission, ProductPermissionLevel
+from app.api.deps import verify_product_access
 from app.schemas.idea import IdeaCreate, IdeaResponse, IdeaListItem, IdeaListResponse, VoteCount, SimilarIdeaResponse
 from app.services.permission_service import PermissionService
 from app.services.vector_service import VectorService
@@ -429,34 +430,6 @@ class TriageQueueResponse(BaseModel):
     needs_review_count: int
 
 
-def check_product_permission(
-    db: Session,
-    user: User,
-    product_id: int,
-    required_level: ProductPermissionLevel = ProductPermissionLevel.VIEW
-) -> CIProduct:
-    """Check user has permission for product and return product."""
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
-
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=user.id,
-        product_id=product_id,
-        required_level=required_level
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have {required_level.value} permission for product {product_id}"
-        )
-
-    return product
-
-
 # ============================================================================
 # Phase 3: Idea Pending Review (must be before /{idea_id} catch-all)
 # ============================================================================
@@ -477,7 +450,7 @@ def get_pending_review_list(
     Requires EDIT permission on the product.
     """
     # Check permission
-    check_product_permission(db, current_user, product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     # Build query
     query = db.query(Idea).filter(Idea.product_id == product_id)
@@ -575,7 +548,7 @@ async def find_similar_ideas(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Product with id {product_id} not found"
         )
-    check_product_permission(db, current_user, product_id, ProductPermissionLevel.VIEW)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Generate query embedding
     try:
@@ -654,7 +627,7 @@ def get_idea(
         )
 
     # Check product permission
-    check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.VIEW)
+    verify_product_access(db, idea.product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Get vote counts
     vote_counts = get_vote_counts(db, idea.id)
@@ -817,7 +790,7 @@ def submit_idea_with_triage(
     from app.utils.celery_utils import send_celery_task as send_task
 
     # Check permission (VIEW is sufficient to submit ideas)
-    product = check_product_permission(db, current_user, request.product_id, ProductPermissionLevel.VIEW)
+    product = verify_product_access(db, request.product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Validate input
     has_freeform = bool(request.freeform_text and request.freeform_text.strip())
@@ -902,7 +875,7 @@ def create_idea_from_feature(
     from app.models.competitor_intelligence import ProductCompetitorFeature, ProductCompetitor
 
     # Check permission
-    product = check_product_permission(db, current_user, request.product_id, ProductPermissionLevel.EDIT)
+    product = verify_product_access(db, request.product_id, current_user, ProductPermissionLevel.EDIT)
 
     # Verify feature exists
     feature = db.query(ProductCompetitorFeature).filter(
@@ -991,7 +964,7 @@ def get_idea_triage_details(
         )
 
     # Check permission
-    check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, idea.product_id, current_user, ProductPermissionLevel.EDIT)
 
     # Get duplicate info if set
     similar_ideas = []
@@ -1049,7 +1022,7 @@ def review_idea(
         )
 
     # Check permission
-    check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, idea.product_id, current_user, ProductPermissionLevel.EDIT)
 
     # Validate action
     valid_actions = ['approve', 'reject', 'merge']
@@ -1142,7 +1115,7 @@ def publish_idea(
         )
 
     # Check permission
-    check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, idea.product_id, current_user, ProductPermissionLevel.EDIT)
 
     # Check status - can publish from PENDING or NEEDS_REVIEW
     if idea.status not in (IdeaStatus.PENDING, IdeaStatus.NEEDS_REVIEW):
@@ -1226,7 +1199,7 @@ def get_idea_detail(
         )
 
     # Check product permission
-    check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.VIEW)
+    verify_product_access(db, idea.product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Get product name
     product_name = None
@@ -1539,7 +1512,7 @@ def add_comment(
         )
 
     # Verify user has VIEW access to the idea's product
-    check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.VIEW)
+    verify_product_access(db, idea.product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Check permission for non-active ideas
     is_submitter = idea.submitter_id == current_user.id
@@ -1593,7 +1566,7 @@ def get_comments(
         )
 
     # Verify user has VIEW access to the idea's product
-    check_product_permission(db, current_user, idea.product_id, ProductPermissionLevel.VIEW)
+    verify_product_access(db, idea.product_id, current_user, ProductPermissionLevel.VIEW)
 
     comments = []
     for comment in idea.comments:

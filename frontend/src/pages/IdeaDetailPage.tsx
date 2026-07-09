@@ -19,6 +19,7 @@ import IdeaResponseModal from '../components/IdeaResponseModal';
 import { getIdeaDetail, addIdeaComment, checkCanRespond } from '../services/api';
 import { IdeaDetail, UserRole } from '../types';
 import { useAuth } from '../contexts/AuthContext';
+import { formatDateTime } from '../utils/date';
 
 export default function IdeaDetailPage() {
   const { ideaId } = useParams<{ ideaId: string }>();
@@ -110,15 +111,6 @@ export default function IdeaDetailPage() {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
 
   if (loading) {
     return (
@@ -214,7 +206,7 @@ export default function IdeaDetailPage() {
                   <div className="flex items-center gap-3 text-sm text-gray-500">
                     <span>Submitted by {idea.submitter_username || 'Unknown'}</span>
                     <span>•</span>
-                    <span>{formatDate(idea.created_at)}</span>
+                    <span>{formatDateTime(idea.created_at)}</span>
                     {idea.product_name && (
                       <>
                         <span>•</span>
@@ -298,7 +290,7 @@ export default function IdeaDetailPage() {
                   <span className="text-gray-900">{idea.reviewer_username}</span>
                   {idea.reviewed_at && (
                     <span className="text-gray-400 ml-1">
-                      on {formatDate(idea.reviewed_at)}
+                      on {formatDateTime(idea.reviewed_at)}
                     </span>
                   )}
                 </div>
@@ -438,7 +430,7 @@ export default function IdeaDetailPage() {
                       <span className="font-medium text-gray-900">{comment.username}</span>
                     )}
                     <span className="text-xs text-gray-500">
-                      {formatDate(comment.created_at)}
+                      {formatDateTime(comment.created_at)}
                     </span>
                   </div>
                   <p className="text-gray-700">{comment.comment_text}</p>
@@ -515,7 +507,7 @@ export default function IdeaDetailPage() {
                           <span className="text-xs text-purple-600">({entry.confidence}% confidence)</span>
                         )}
                       </div>
-                      <span className="text-xs text-gray-400">{formatDate(entry.created_at)}</span>
+                      <span className="text-xs text-gray-400">{formatDateTime(entry.created_at)}</span>
                     </div>
                     {entry.comment && (
                       <p className="text-sm text-gray-600 mt-1 italic">"{entry.comment}"</p>

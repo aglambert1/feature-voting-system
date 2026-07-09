@@ -22,9 +22,9 @@ from app.models.pm_review import (
     CompetitorSnapshot,
     AlertType
 )
+from app.api.deps import verify_product_access
 from app.models.competitor_intelligence import ProductPermissionLevel, ProductCompetitor
 from app.services.pm_review_service import PMReviewService
-from app.services.permission_service import PermissionService
 
 
 router = APIRouter(prefix="/monitoring", tags=["Competitive Monitoring"])
@@ -99,40 +99,6 @@ class MonitoringTriggerResponse(BaseModel):
 
 
 # =============================================================================
-# Helper Functions
-# =============================================================================
-
-def check_product_permission(
-    db: Session,
-    user: User,
-    product_id: int,
-    required_level: ProductPermissionLevel = ProductPermissionLevel.EDIT
-):
-    """Check user has permission for product."""
-    from app.models.competitor_intelligence import CIProduct
-
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
-
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=user.id,
-        product_id=product_id,
-        required_level=required_level
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have {required_level.value} permission for product {product_id}"
-        )
-
-    return product
-
-
-# =============================================================================
 # Monitoring Configuration Endpoints
 # =============================================================================
 
@@ -149,7 +115,7 @@ def get_monitoring_config(
     creates a default one.
     """
     # Check permission
-    check_product_permission(db, current_user, product_id, ProductPermissionLevel.VIEW)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     service = PMReviewService(db)
     config = service.get_monitoring_config(product_id)
@@ -195,7 +161,7 @@ def update_monitoring_config(
     Requires EDIT permission on the product.
     """
     # Check permission
-    check_product_permission(db, current_user, product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     # Validate frequency
     valid_frequencies = ["daily", "weekly", "biweekly", "monthly"]
@@ -251,7 +217,7 @@ def enable_monitoring(
 
     Quick endpoint to turn on monitoring with default settings.
     """
-    check_product_permission(db, current_user, product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     service = PMReviewService(db)
     config = service.get_monitoring_config(product_id)
@@ -296,7 +262,7 @@ def disable_monitoring(
     """
     Disable monitoring for a product.
     """
-    check_product_permission(db, current_user, product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     service = PMReviewService(db)
     config = service.get_monitoring_config(product_id)
@@ -351,7 +317,7 @@ def get_snapshots(
 
     Returns historical snapshots showing competitive changes over time.
     """
-    check_product_permission(db, current_user, product_id, ProductPermissionLevel.VIEW)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Build query joining with ProductCompetitor
     query = db.query(CompetitorSnapshot).join(
@@ -405,7 +371,7 @@ def get_snapshot(
     """
     Get a single snapshot by ID.
     """
-    check_product_permission(db, current_user, product_id, ProductPermissionLevel.VIEW)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     snapshot = db.query(CompetitorSnapshot).get(snapshot_id)
     if not snapshot:

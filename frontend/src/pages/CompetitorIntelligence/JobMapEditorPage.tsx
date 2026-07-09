@@ -39,6 +39,7 @@ import JobRow from './components/JobRow';
 import AddJobForm from './components/AddJobForm';
 import GenerateJobMapDialog from './components/GenerateJobMapDialog';
 import NeedSuggestionPanel from './components/NeedSuggestionPanel';
+import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 
 interface ActionMessage {
   type: 'success' | 'error';
@@ -56,7 +57,7 @@ export default function JobMapEditorPage() {
   const [data, setData] = useState<JobMapResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [actionMessage, setActionMessage] = useState<ActionMessage | null>(null);
+  const [actionMessage, setActionMessage] = useAutoDismiss<ActionMessage | null>(null, 5000);
   const [showGenerateDialog, setShowGenerateDialog] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [suggestions, setSuggestions] = useState<NeedSuggestion[]>([]);
@@ -92,13 +93,6 @@ export default function JobMapEditorPage() {
     fetchJobMap();
     fetchSuggestions();
   }, [fetchJobMap, fetchSuggestions]);
-
-  useEffect(() => {
-    if (actionMessage) {
-      const timer = setTimeout(() => setActionMessage(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [actionMessage]);
 
   const handleSaveTargetCustomer = async (profile: TargetCustomerProfile) => {
     await updateTargetCustomer(numProductId, profile);

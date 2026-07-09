@@ -16,6 +16,7 @@ import {
   SimilarIdea,
 } from '../types';
 import { respondToIdea, getTriageRecommendation, findSimilarIdeas } from '../services/api';
+import { formatDateTime } from '../utils/date';
 
 interface IdeaResponseModalProps {
   ideaId: number;
@@ -736,7 +737,7 @@ export default function IdeaResponseModal({
 
                               {/* Timestamp */}
                               <span className="text-xs text-gray-400">
-                                {new Date(entry.created_at).toLocaleString()}
+                                {formatDateTime(entry.created_at)}
                               </span>
                             </div>
 
