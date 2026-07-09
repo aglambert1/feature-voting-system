@@ -30,6 +30,7 @@ import {
 import type { CompetitorAlert } from '../services/api';
 import type { PMReviewQueueStats, MonitoringConfig, QueueJob, ApiError, TriageSettings, IdeaFunnelData, AgentCompetitor } from '../types';
 import { JobStatus } from '../types';
+import { formatRelativeDate } from '../utils/date';
 
 const ProductDashboardPage = () => {
   const { productId } = useParams<{ productId: string }>();
@@ -225,19 +226,6 @@ const ProductDashboardPage = () => {
     return 'Active';
   };
 
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return 'Never';
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffHours < 1) return 'Just now';
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
-  };
 
   if (!numProductId) {
     return (
@@ -449,7 +437,7 @@ const ProductDashboardPage = () => {
                         <p className="text-sm text-gray-500 truncate">{alert.message}</p>
                       </div>
                       <span className="text-xs text-gray-400 whitespace-nowrap">
-                        {formatDate(alert.created_at)}
+                        {formatRelativeDate(alert.created_at)}
                       </span>
                     </div>
                   ))}
@@ -473,7 +461,7 @@ const ProductDashboardPage = () => {
                       <div className="text-sm text-gray-500">
                         {getMonitoringStatusText()}
                         {monitoringConfig?.last_monitored_at && (
-                          <> · Last run: {formatDate(monitoringConfig.last_monitored_at)}</>
+                          <> · Last run: {formatRelativeDate(monitoringConfig.last_monitored_at)}</>
                         )}
                       </div>
                     </div>

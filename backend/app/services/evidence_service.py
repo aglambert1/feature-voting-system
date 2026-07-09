@@ -11,6 +11,7 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 
 from app.models.evidence import Evidence, EvidenceType
+from app.utils.vectors import cosine_similarity
 from app.models.competitor_intelligence import ProductCompetitor
 
 logger = logging.getLogger(__name__)
@@ -124,20 +125,12 @@ def _link_evidence_to_job(db: Session, evidence: Evidence, product_id: int) -> N
     if not jobs:
         return
 
-    # Cosine similarity
-    import numpy as np
-    evidence_emb = np.array(evidence.jtbd_embedding)
-
     best_job = None
     best_sim = 0.0
     for job in jobs:
         if not job.statement_embedding:
             continue
-        job_emb = np.array(job.statement_embedding)
-        sim = float(
-            np.dot(evidence_emb, job_emb)
-            / (np.linalg.norm(evidence_emb) * np.linalg.norm(job_emb) + 1e-8)
-        )
+        sim = cosine_similarity(evidence.jtbd_embedding, job.statement_embedding)
         if sim > best_sim and sim > 0.5:  # threshold
             best_sim = sim
             best_job = job

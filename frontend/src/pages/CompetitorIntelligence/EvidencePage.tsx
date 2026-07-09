@@ -12,6 +12,7 @@ import Navigation from "../../components/Navigation";
 import AddEvidenceForm from "./components/AddEvidenceForm";
 import { getEvidence, getAgentCompetitors, deleteEvidence } from "../../services/api";
 import api from "../../services/api";
+import { formatDate } from "../../utils/date";
 import type { EvidenceRecord, EvidenceType, AgentCompetitor } from "../../types";
 
 // Type badge styling
@@ -134,13 +135,6 @@ export default function EvidencePage() {
     fetchEvidence();
   };
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  };
 
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "#f9fafb" }}>

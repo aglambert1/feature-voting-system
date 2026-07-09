@@ -46,7 +46,7 @@ This is the load-bearing concept. Everything else is plumbing.
 │   Services (app/services/)        Agents (app/agents/)                     │
 │     queue_service                   ProductAnalyzerAgent                   │
 │     embedding_service (Voyage)      CompetitorResearcherAgent              │
-│     vector_service (pgvector)       FunctionalAuditAgent (2-stage)         │
+│     vector_service (pgvector)       CompetitorFunctionalAuditAgent (2-stage)│
 │     llm_service (Claude)            IdeaTriageAgent                        │
 │     search_service (Brave)          UnifiedSynthesisAgent                  │
 │                                     JobMapExtractorAgent                   │
@@ -87,14 +87,14 @@ This is the load-bearing concept. Everything else is plumbing.
 ## Key data flows
 
 ### A. Submitting an idea
-1. User submits raw text via `/ideas` or the Submit page
+1. User submits raw text via `/ideas` or the Submit page — the `Idea` starts as `PENDING`
 2. `submit_and_triage_idea_task` (Celery) creates the `Idea` row, then runs `IdeaTriageAgent`
-3. Triage classifies (`APPROVED`, `NEEDS_REVIEW`, `DUPLICATE`, `NOT_APPROPRIATE`), checks for existing competitive coverage, and links to the closest `ProductJob` via embedding similarity
+3. Triage classifies (`ACCEPTED`, `NEEDS_REVIEW`, `DUPLICATE`, `FEATURE_EXISTS`, `NOT_APPROPRIATE`), checks for existing competitive coverage, and links to the closest `ProductJob` via embedding similarity
 4. PMs review `NEEDS_REVIEW` ideas in the PM Review queue
 
 ### B. Running a competitor audit
 1. PO clicks "Run audit" on a competitor with `tracked=True`
-2. `functional_audit_task` runs `FunctionalAuditAgent` in two stages:
+2. `functional_audit_task` runs `CompetitorFunctionalAuditAgent` in two stages:
    - **Stage 1** (~45s): web research + raw extraction
    - **Stage 2** (~90–150s): structured `job_assessments` per `ProductJob`
 3. Result lands as `CompetitorFunctionalReport.job_assessments` — each entry has a position (advantage/gap/parity) and supporting evidence
@@ -114,11 +114,11 @@ Embeddings are how everything stays connected. When any text-bearing record (Ide
 | Layer | What it does | Where |
 |---|---|---|
 | **Frontend** | React SPA — voters, PMs, POs all use the same UI with role-based features | `frontend/src/pages/` |
-| **API** | FastAPI routers grouped by domain | `backend/app/api/` |
+| **API** | FastAPI routers grouped by domain; shared product-access check in `deps.py` | `backend/app/api/` |
 | **Models** | SQLAlchemy models — most domain logic is here | `backend/app/models/` |
 | **Services** | Cross-cutting — embeddings, LLM, vector search, queue, search | `backend/app/services/` |
 | **Agents** | LLM-driven analysts — each is a class subclassing `BaseAgent` | `backend/app/agents/` |
-| **Celery tasks** | Background jobs — split across 8 domain files | `backend/app/queue/` |
+| **Celery tasks** | Background jobs — 8 domain files plus shared utilities in `helpers.py` (job-failure handling, job linkage, vector math via `app/utils/vectors.py`) | `backend/app/queue/` |
 | **MCP server** | ~78 tools exposing the API to Claude Desktop | `backend/mcp_server/` |
 | **Migrations** | Alembic — must support SQLite (dev) and PostgreSQL (prod) | `backend/alembic/versions/` |
 
@@ -178,6 +178,7 @@ Each product has an access list. Permissions are hierarchical: **OWNER > EDIT > 
 
 - **Want to use the system?** → [Quickstart](quickstart.md)
 - **Want to know what features exist?** → [Tour](tour.md)
+- **Want to trace flows A–C step by step?** → [Sequence diagrams](sequence-diagrams.puml) (PlantUML)
 - **Want to deploy?** → [DEPLOYMENT_GUIDE.md](../../DEPLOYMENT_GUIDE.md)
 - **Want to set up vector search?** → [backend/VECTOR_SEARCH_SETUP.md](../../backend/VECTOR_SEARCH_SETUP.md)
 - **Want to use the MCP server?** → [backend/scripts/README.md](../../backend/scripts/README.md)

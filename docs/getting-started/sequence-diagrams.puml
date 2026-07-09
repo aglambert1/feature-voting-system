@@ -1,0 +1,171 @@
+' Feature-IQ core flow sequence diagrams.
+' Companion to architecture.md "Key data flows" — flows A, B, and C.
+'
+' Render with: plantuml sequence-diagrams.puml   (or any PlantUML viewer)
+' Each @startuml block is a separate diagram.
+
+@startuml idea-submission-and-triage
+title Flow A — Idea submission + AI triage
+
+actor User
+participant "Frontend\n(React)" as FE
+participant "FastAPI\nsubmissions/ideas router" as API
+participant "QueueService" as QS
+database "PostgreSQL\n(+pgvector)" as DB
+queue "Redis\n(Celery broker)" as Redis
+participant "Celery worker\nsubmit_and_triage_idea_task" as Task
+participant "IdeaTriageAgent" as Agent
+participant "Claude API" as Claude
+participant "Voyage AI\n(embeddings)" as Voyage
+
+User -> FE : submit idea text
+FE -> API : POST /submissions/submit
+API -> DB : verify product access\n(app/api/deps.py)
+API -> DB : create Idea (status=PENDING)\n+ IdeaStatusHistory
+API -> QS : create_job(IDEA_TRIAGE)
+QS -> Redis : dispatch task, mark_queued
+API --> FE : 202 { job_uuid }
+
+Redis -> Task : deliver job
+Task -> QS : mark_running
+Task -> DB : normalize idea\n(IdeaNormalizerService)
+Task -> DB : detect duplicates + competitive matches\n(SimilarityDetectorService)
+Task -> Agent : execute(idea + product context)
+Agent -> Claude : classify idea
+Claude --> Agent : triage verdict + reasoning
+Agent --> Task : status, confidence, JTBD statement
+Task -> Voyage : generate_embedding(jtbd)
+Voyage --> Task : 1024-dim vector
+Task -> DB : link idea to best ProductJob\n(_link_idea_to_job: cosine >= 0.88 auto,\n0.75-0.88 LLM-validated)
+Task -> DB : persist status\n(ACCEPTED / NEEDS_REVIEW / DUPLICATE /\nFEATURE_EXISTS / NOT_APPROPRIATE)
+Task -> QS : mark_success(output_data)
+
+loop every 2s until job finishes
+  FE -> API : GET /products/jobs/{job_uuid}
+  API -> QS : get_job_by_uuid
+  QS --> FE : status, progress, output_data
+end
+FE --> User : triage result (or PM review queue)
+@enduml
+
+
+@startuml competitor-audit
+title Flow B — Competitor functional audit
+
+actor "Product Owner" as PO
+participant "Frontend\n(React)" as FE
+participant "FastAPI\ncompetitive_agents router" as API
+participant "QueueService" as QS
+database "PostgreSQL\n(+pgvector)" as DB
+queue "Redis\n(Celery broker\n+ research cache)" as Redis
+participant "Celery worker\nfunctional_audit_task" as Task
+participant "CompetitorFunctionalAuditAgent" as Agent
+participant "Brave Search" as Brave
+participant "Claude API" as Claude
+
+PO -> FE : Run audit (tracked competitor)
+FE -> API : POST audit endpoint
+API -> DB : verify EDIT access, resolve competitor
+API -> QS : create_job(FUNCTIONAL_AUDIT)
+QS -> Redis : dispatch task, mark_queued
+API --> FE : 202 { job_uuid }
+
+Redis -> Task : deliver job
+Task -> QS : mark_running
+Task -> DB : load product context + job map
+alt research cached (24h TTL)
+  Task -> Redis : CompetitorResearchCache hit
+else cache miss
+  Task -> Brave : web research (search_service)
+  Brave --> Task : sources
+  Task -> Redis : cache research (24h)
+end
+
+Task -> Agent : execute_stage_1(context + research)
+Agent -> Claude : functional comparison (~45s)
+Claude --> Agent : raw functional analysis
+Task -> Agent : execute_stage_2(stage 1 output)
+Agent -> Claude : job_assessments per ProductJob (~90-150s)
+Claude --> Agent : structured assessments + evidence
+Agent --> Task : merged report
+
+Task -> DB : write CompetitorFunctionalReport\n(job_assessments: advantage / gap / parity)
+Task -> QS : mark_success
+note right of Task
+  If parented by a synthesis job,
+  bumps parent progress
+  (_bump_parent_synthesis_progress)
+end note
+
+loop every 2s until job finishes
+  FE -> API : GET /products/jobs/{job_uuid}
+  API -> QS : get_job_by_uuid
+  QS --> FE : status, progress
+end
+FE --> PO : report ready (gaps, advantages per job)
+@enduml
+
+
+@startuml unified-synthesis
+title Flow C — Unified synthesis (cross-pillar)
+
+actor "Product Owner" as PO
+participant "Frontend / MCP" as FE
+participant "FastAPI\nunified_synthesis router" as API
+participant "QueueService" as QS
+database "PostgreSQL\n(+pgvector)" as DB
+queue "Redis\n(Celery broker)" as Redis
+participant "Celery worker\nunified_synthesis_task" as Task
+collections "functional_audit_task\n(one per competitor)" as Audits
+participant "resume_unified_synthesis_task\n(chord callback)" as Resume
+participant "UnifiedSynthesisAgent" as Agent
+participant "Claude API" as Claude
+
+PO -> FE : Run synthesis
+FE -> API : POST /synthesis run
+API -> DB : verify access, load SynthesisConfig
+API -> QS : create_job(UNIFIED_SYNTHESIS)
+QS -> Redis : dispatch task, mark_queued
+API --> FE : 202 { job_uuid }
+
+Redis -> Task : deliver job
+Task -> QS : mark_running
+Task -> DB : check tracked competitors for missing audits
+
+alt audits missing
+  Task -> Redis : Celery chord of functional_audit_tasks\ncallback = resume_unified_synthesis_task
+  Redis -> Audits : run audits in parallel (Flow B each)
+  Audits --> Resume : audit results
+  note right of Resume
+    If all audits failed,
+    synthesis job is marked failed.
+  end note
+  Resume -> Resume : _run_unified_synthesis_post_audits
+else all audits present
+  Task -> Task : _run_unified_synthesis_post_audits
+end
+
+group _run_unified_synthesis_post_audits
+  Task -> DB : gather competitor reports, ideas,\nwin/loss + support themes, evidence
+  Task -> Agent : execute(combined input)
+  Agent -> Claude : synthesize opportunities
+  Claude --> Agent : job scorecard + opportunities
+  Agent --> Task : SynthesisReport payload
+  Task -> DB : write SynthesisReport +\nSynthesizedOpportunity rows (scored, tiered,\njob_id_key-tagged)
+
+  opt auto_generate_ideas and score > threshold
+    Task -> DB : create Idea per qualifying opportunity
+    Task -> QS : create_job(IDEA_TRIAGE) per idea
+    QS -> Redis : dispatch triage_idea_task\n(re-enters Flow A triage)
+  end
+
+  Task -> QS : mark_success
+end
+
+loop every 2s until job finishes
+  FE -> API : GET /products/jobs/{job_uuid}
+  API -> QS : get_job_by_uuid
+  QS --> FE : status, progress
+end
+FE --> PO : synthesis report (opportunities per job)
+@enduml

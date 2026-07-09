@@ -16,6 +16,7 @@ from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel, Field
 
+from app.api.deps import verify_product_access
 from app.database import get_db
 from app.models.user import User
 from app.models.competitor_intelligence import (
@@ -113,29 +114,6 @@ def _parse_permission_level(level_str: str) -> ProductPermissionLevel:
     return parsed
 
 
-def _check_po_access(db: Session, user: User, product_id: int) -> CIProduct:
-    """Verify product exists and user has EDIT permission."""
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
-
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.EDIT
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to manage this product"
-        )
-
-    return product
-
-
 def _check_owner_access(db: Session, user: User, product_id: int) -> CIProduct:
     """Verify product exists and user has OWNER permission."""
     product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
@@ -201,7 +179,7 @@ def create_invite_code(
     db: Session = Depends(get_db)
 ):
     """Create a new invite code for a product."""
-    _check_po_access(db, current_user, product_id)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     invite = ProductInviteCode(
         product_id=product_id,
@@ -236,7 +214,7 @@ def list_invite_codes(
     db: Session = Depends(get_db)
 ):
     """List all invite codes for a product."""
-    _check_po_access(db, current_user, product_id)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     codes = db.query(ProductInviteCode).filter(
         ProductInviteCode.product_id == product_id
@@ -270,7 +248,7 @@ def deactivate_invite_code(
     db: Session = Depends(get_db)
 ):
     """Deactivate an invite code (soft delete)."""
-    _check_po_access(db, current_user, product_id)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     invite = db.query(ProductInviteCode).filter(
         ProductInviteCode.id == code_id,
@@ -298,7 +276,7 @@ def list_product_members(
     db: Session = Depends(get_db)
 ):
     """List users with access to a product."""
-    _check_po_access(db, current_user, product_id)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
     creator_user_id = product.created_by_user_id if product else None

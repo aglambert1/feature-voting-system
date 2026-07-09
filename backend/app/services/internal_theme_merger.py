@@ -25,6 +25,7 @@ from app.models.activity_insights import (
     SupportActivityInsight
 )
 from app.services.embedding_service import generate_embedding as _generate_embedding
+from app.utils.vectors import cosine_similarity
 from app.services.embedding_service import generate_embeddings_batch as _generate_embeddings_batch
 
 
@@ -113,11 +114,7 @@ class InternalThemeMergerService:
 
     def compute_similarity(self, emb1: List[float], emb2: List[float]) -> float:
         """Compute cosine similarity between two embeddings."""
-        import numpy as np
-        a = np.array(emb1)
-        b = np.array(emb2)
-        # Voyage embeddings are L2-normalized, so dot product = cosine similarity
-        return float(np.dot(a, b))
+        return cosine_similarity(emb1, emb2)
 
     def merge_internal_evidence(self, product_id: int) -> MergedInternalEvidence:
         """

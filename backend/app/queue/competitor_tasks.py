@@ -30,6 +30,7 @@ from app.queue.helpers import (
     get_db,
     _fetch_source_urls,
     _bump_parent_synthesis_progress,
+    fail_job,
 )
 
 
@@ -218,12 +219,7 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
         print(f"[discover_competitors_task] Error: {error_msg}")
         print(f"[discover_competitors_task] Traceback: {error_tb}")
 
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception as inner_e:
-                print(f"[discover_competitors_task] Failed to update job status: {inner_e}")
+        fail_job(db, job_id, error_msg, error_tb, task_name="discover_competitors_task")
 
         raise
 
@@ -600,16 +596,14 @@ def functional_audit_task(self, job_id: int):
         error_tb = traceback.format_exc()
         print(f"[functional_audit_task] Error for job {job_id}: {error_msg}")
 
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-                # Even on failure, bump the parent so users see the failed
-                # audit count toward the "N of M complete" total.
-                if job and job.parent_job_id:
-                    _bump_parent_synthesis_progress(db, job.parent_job_id)
-            except Exception:
-                pass
+        fail_job(db, job_id, error_msg, error_tb, task_name="functional_audit_task")
+        # Even on failure, bump the parent so users see the failed
+        # audit count toward the "N of M complete" total.
+        try:
+            if db and job and job.parent_job_id:
+                _bump_parent_synthesis_progress(db, job.parent_job_id)
+        except Exception:
+            pass
 
         raise self.retry(exc=e)
 
@@ -659,12 +653,7 @@ def mark_audits_complete(self, audit_results: list, parent_job_id: int):
         error_tb = traceback.format_exc()
         print(f"[mark_audits_complete] Error: {error_msg}")
 
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(parent_job_id, error_msg, error_tb)
-            except Exception:
-                pass
+        fail_job(db, parent_job_id, error_msg, error_tb, task_name="mark_audits_complete")
 
         raise
 
@@ -761,12 +750,7 @@ def run_competitive_analysis_v2(self, job_id: int):
         error_tb = traceback.format_exc()
         print(f"[run_competitive_analysis_v2] Error for job {job_id}: {error_msg}")
 
-        if db:
-            try:
-                queue_service = QueueService(db)
-                queue_service.mark_failure(job_id, error_msg, error_tb)
-            except Exception:
-                pass
+        fail_job(db, job_id, error_msg, error_tb, task_name="run_competitive_analysis_v2")
 
         raise
 

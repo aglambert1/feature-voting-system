@@ -39,6 +39,7 @@ import type {
   SupportActivityInsight,
 } from "../../types";
 import api from "../../services/api";
+import { formatDateTime } from "../../utils/date";
 
 // Tab types - simplified to just import and themes
 type TabId = "import" | "themes";
@@ -436,15 +437,6 @@ export default function InternalFeedbackPage() {
   };
 
   // Format date
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
 
   // Build unified import list sorted by date
   const unifiedImports: UnifiedImport[] = [
@@ -704,7 +696,7 @@ export default function InternalFeedbackPage() {
                               {imp.data_summary}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {formatDate(imp.imported_at)}
+                              {formatDateTime(imp.imported_at)}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                               {(imp.status === "completed" || imp.status === "failed") && (

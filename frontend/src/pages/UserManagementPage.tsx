@@ -1,9 +1,12 @@
 import { useState, useEffect, ChangeEvent, FormEvent } from 'react';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
+import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { useAuth } from '../contexts/AuthContext';
 import Navigation from '../components/Navigation';
 import api from '../services/api';
 import { getUserProducts, setUserProducts, adminResetPassword, unlockUser, getUserLoginHistory } from '../services/api';
 import type { User, UserProduct, ProductListItem, LoginEvent } from '../types';
+import { formatDateTime } from '../utils/date';
 import { AxiosError } from 'axios';
 import type { ApiError } from '../types';
 
@@ -20,8 +23,8 @@ export default function UserManagementPage() {
   const { user } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>('');
-  const [successMessage, setSuccessMessage] = useState<string>('');
+  const [error, setError] = useAutoDismiss<string>('', 3000);
+  const [successMessage, setSuccessMessage] = useAutoDismiss<string>('', 3000);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [allProducts, setAllProducts] = useState<ProductListItem[]>([]);
   const [userProductsMap, setUserProductsMap] = useState<Record<number, UserProduct[]>>({});
@@ -40,7 +43,7 @@ export default function UserManagementPage() {
 
   // Password reset state
   const [resetPasswordResult, setResetPasswordResult] = useState<{username: string; temporary_password: string} | null>(null);
-  const [resetPasswordCopied, setResetPasswordCopied] = useState(false);
+  const { copied: resetPasswordCopied, copy: copyResetPassword } = useCopyToClipboard();
 
   // Login history modal state
   const [loginHistoryUserId, setLoginHistoryUserId] = useState<number | null>(null);
@@ -107,11 +110,9 @@ export default function UserManagementPage() {
       await api.patch(`/auth/users/${userId}/deactivate`);
       setSuccessMessage(`User ${username} deactivated successfully`);
       fetchUsers(); // Refresh list
-      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       const error = err as AxiosError<ApiError>;
       setError(error.response?.data?.detail || 'Failed to deactivate user');
-      setTimeout(() => setError(''), 3000);
     }
   };
 
@@ -120,11 +121,9 @@ export default function UserManagementPage() {
       await api.patch(`/auth/users/${userId}/activate`);
       setSuccessMessage(`User ${username} activated successfully`);
       fetchUsers(); // Refresh list
-      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       const error = err as AxiosError<ApiError>;
       setError(error.response?.data?.detail || 'Failed to activate user');
-      setTimeout(() => setError(''), 3000);
     }
   };
 
@@ -137,11 +136,9 @@ export default function UserManagementPage() {
       await api.patch(`/auth/users/${userId}/role`, { role: newRole });
       setSuccessMessage(`User ${username}'s role changed to ${newRole}`);
       fetchUsers(); // Refresh list
-      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       const error = err as AxiosError<ApiError>;
       setError(error.response?.data?.detail || 'Failed to change role');
-      setTimeout(() => setError(''), 3000);
     }
   };
 
@@ -168,11 +165,9 @@ export default function UserManagementPage() {
         product_ids: [],
       });
       fetchUsers(); // Refresh list
-      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       const error = err as AxiosError<ApiError>;
       setError(error.response?.data?.detail || 'Failed to create user');
-      setTimeout(() => setError(''), 3000);
     }
   };
 
@@ -192,11 +187,9 @@ export default function UserManagementPage() {
       setEditingProductIds([]);
       setEditingPermissionLevels({});
       fetchUsers();
-      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       const error = err as AxiosError<ApiError>;
       setError(error.response?.data?.detail || 'Failed to update product assignments');
-      setTimeout(() => setError(''), 3000);
     }
   };
 
@@ -208,11 +201,9 @@ export default function UserManagementPage() {
     try {
       const result = await adminResetPassword(userId);
       setResetPasswordResult({ username: result.username, temporary_password: result.temporary_password });
-      setResetPasswordCopied(false);
     } catch (err) {
       const error = err as AxiosError<ApiError>;
       setError(error.response?.data?.detail || 'Failed to reset password');
-      setTimeout(() => setError(''), 3000);
     }
   };
 
@@ -221,11 +212,9 @@ export default function UserManagementPage() {
       await unlockUser(userId);
       setSuccessMessage(`Account ${username} unlocked`);
       fetchUsers();
-      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       const error = err as AxiosError<ApiError>;
       setError(error.response?.data?.detail || 'Failed to unlock user');
-      setTimeout(() => setError(''), 3000);
     }
   };
 
@@ -438,7 +427,7 @@ export default function UserManagementPage() {
                         <button
                           onClick={() => handleShowLoginHistory(u.id)}
                           className={`text-sm hover:underline ${u.last_login_at ? 'text-blue-600' : 'text-gray-400'}`}
-                          title={u.last_login_at ? new Date(u.last_login_at).toLocaleString() : 'Never logged in'}
+                          title={u.last_login_at ? formatDateTime(u.last_login_at) : 'Never logged in'}
                         >
                           {formatRelativeTime(u.last_login_at)}
                         </button>
@@ -566,7 +555,7 @@ export default function UserManagementPage() {
                     {loginHistory.map(e => (
                       <tr key={e.id}>
                         <td className="px-3 py-2 text-gray-900 whitespace-nowrap">
-                          {new Date(e.logged_in_at).toLocaleString()}
+                          {formatDateTime(e.logged_in_at)}
                         </td>
                         <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
                           {e.ip_address || '—'}
@@ -700,11 +689,7 @@ export default function UserManagementPage() {
                   {resetPasswordResult.temporary_password}
                 </code>
                 <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(resetPasswordResult.temporary_password);
-                    setResetPasswordCopied(true);
-                    setTimeout(() => setResetPasswordCopied(false), 2000);
-                  }}
+                  onClick={() => copyResetPassword(resetPasswordResult.temporary_password)}
                   className="px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap"
                 >
                   {resetPasswordCopied ? 'Copied!' : 'Copy'}

@@ -15,6 +15,7 @@ import type {
   SynthesisConfigData,
   SynthesisSourceType,
 } from '../../../types';
+import { useAutoDismiss } from '../../../hooks/useAutoDismiss';
 
 const ALL_SOURCES: { type: SynthesisSourceType; label: string; description: string }[] = [
   { type: 'competitive', label: 'Competitive', description: 'Competitor functional audits' },
@@ -33,7 +34,7 @@ export default function SynthesisConfigPanel({ productId }: SynthesisConfigPanel
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [savedAt, setSavedAt] = useAutoDismiss<number | null>(null, 3000);
 
   // Draft state — only committed on explicit Save.
   const [draftSources, setDraftSources] = useState<SynthesisSourceType[]>([]);
@@ -58,13 +59,6 @@ export default function SynthesisConfigPanel({ productId }: SynthesisConfigPanel
   useEffect(() => {
     loadConfig();
   }, [loadConfig]);
-
-  useEffect(() => {
-    if (savedAt !== null) {
-      const t = setTimeout(() => setSavedAt(null), 3000);
-      return () => clearTimeout(t);
-    }
-  }, [savedAt]);
 
   const isDirty = useMemo(() => {
     if (!config) return false;

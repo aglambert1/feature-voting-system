@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import uuid
 from pathlib import Path
 
+from app.api.deps import verify_product_access
 from app.database import get_db
 from app.models.user import User
 from app.models.competitor_intelligence import ProductPermissionLevel, CIProduct
@@ -301,27 +302,8 @@ def get_detailed_features(
         404: If product or analysis version not found
     """
     from app.models.competitor_intelligence import ProductFeature, CIProduct
-    from app.services.permission_service import PermissionService
 
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.VIEW
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have VIEW permission for product {product_id}"
-        )
-
-    # Get product
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
+    product = verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Use latest version if not specified
     if analysis_version is None:
@@ -389,28 +371,9 @@ def query_product_features(
         403: If user lacks VIEW permission
         404: If product not found
     """
-    from app.services.permission_service import PermissionService
     from app.services.similarity_detector import SimilarityDetectorService
 
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.VIEW
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have VIEW permission for product {product_id}"
-        )
-
-    # Get product
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
+    product = verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Check product is analyzed
     if not product.structured_product_data:
@@ -755,18 +718,7 @@ def update_scoring_weights(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
-    # Check EDIT permission
-    from app.services.permission_service import PermissionService
-    perm_service = PermissionService(db)
-    if not perm_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.EDIT
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="EDIT permission required to modify scoring weights"
-        )
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     # Validate weight values are reasonable
     valid_top_keys = set(DEFAULT_SCORING_WEIGHTS.keys())
@@ -815,17 +767,7 @@ def get_delete_preview(
     Returns counts of related rows, file paths, and embedding counts
     without making any changes. Requires OWNER permission.
     """
-    from app.services.permission_service import PermissionService
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.OWNER
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User {current_user.id} does not have OWNER permission for product {product_id}"
-        )
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.OWNER)
 
     service = ProductService(db)
     preview = service.get_delete_preview(product_id)
@@ -1163,7 +1105,6 @@ def queue_product_analysis(
         404: If product not found
         409: If analysis job already running for this product
     """
-    from app.services.permission_service import PermissionService
     from app.queue.product_tasks import analyze_product_task
     from app.services.scoped_input_validator import validate_scoped_inputs, ScopedInputError
 
@@ -1177,25 +1118,7 @@ def queue_product_analysis(
             raise HTTPException(status_code=400, detail=err.payload)
         web_research = request.web_research
 
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.EDIT
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have EDIT permission for product {product_id}"
-        )
-
-    # Get product
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
+    product = verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     # Check for existing active job
     queue_service = QueueService(db)
@@ -1289,19 +1212,8 @@ def list_product_jobs(
     Returns:
         List of jobs for the product
     """
-    from app.services.permission_service import PermissionService
 
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.VIEW
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have VIEW permission for product {product_id}"
-        )
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Convert string filters to enums
     status_filter = None
@@ -1507,25 +1419,6 @@ def cancel_job(
 # Phase 2: Workflow and Advanced Queue Endpoints
 # ============================================================================
 
-class WorkflowStartRequest(BaseModel):
-    """Schema for starting a full analysis workflow."""
-    skip_analysis: bool = Field(
-        default=False,
-        description="Skip product analysis (use existing) if already analyzed"
-    )
-    competitor_ids: Optional[List[int]] = Field(
-        default=None,
-        description="Specific competitor IDs to analyze (skip discovery if provided)"
-    )
-
-
-class WorkflowStatusResponse(BaseModel):
-    """Schema for workflow status response."""
-    workflow: dict
-    steps: List[dict]
-    summary: dict
-
-
 class CompetitorDiscoveryRequest(BaseModel):
     """Schema for competitor discovery request."""
     max_competitors: int = Field(default=5, ge=1, le=20)
@@ -1535,102 +1428,6 @@ class FeatureExtractionRequest(BaseModel):
     """Schema for feature extraction request."""
     competitor_ids: List[int] = Field(..., min_length=1)
     parallel: bool = Field(default=True)
-
-
-@router.post("/{product_id}/workflows/full-analysis", response_model=JobResponse)
-def start_full_analysis_workflow(
-    product_id: int,
-    request: WorkflowStartRequest = None,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Start a full analysis workflow for a product (Phase 2).
-
-    This workflow chains multiple jobs:
-    1. Product Analysis (if not skipped)
-    2. Competitor Discovery (if no specific competitors provided)
-    3. Feature Extraction (parallel for all competitors)
-
-    Use GET /jobs/{job_uuid} to track the parent workflow job.
-    Use GET /jobs/{job_uuid}/workflow to see all child job statuses.
-
-    Requires EDIT permission on the product.
-
-    Returns:
-        Parent workflow job for tracking
-
-    Raises:
-        400: If product not analyzed and skip_analysis=True
-        403: If user lacks EDIT permission
-        404: If product not found
-        409: If workflow already running for this product
-    """
-    from app.services.permission_service import PermissionService
-    from app.queue.workflows import WorkflowService, WorkflowError
-
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.EDIT
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have EDIT permission for product {product_id}"
-        )
-
-    # Check for existing active workflow
-    queue_service = QueueService(db)
-    active_jobs = queue_service.get_active_jobs(product_id=product_id)
-    workflow_jobs = [j for j in active_jobs if j.job_type == JobType.FULL_WORKFLOW]
-    if workflow_jobs:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Workflow already active for product {product_id}. "
-                   f"Job ID: {workflow_jobs[0].job_uuid}"
-        )
-
-    # Parse request
-    skip_analysis = False
-    competitor_ids = None
-    if request:
-        skip_analysis = request.skip_analysis
-        competitor_ids = request.competitor_ids
-
-    # Start workflow
-    workflow_service = WorkflowService(db)
-    try:
-        workflow_job = workflow_service.start_full_analysis_workflow(
-            product_id=product_id,
-            user_id=current_user.id,
-            skip_analysis=skip_analysis,
-            competitor_ids=competitor_ids,
-        )
-    except WorkflowError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-
-    return JobResponse(
-        id=workflow_job.id,
-        job_uuid=workflow_job.job_uuid,
-        job_type=workflow_job.job_type.value,
-        status=workflow_job.status.value,
-        priority=workflow_job.priority.value,
-        progress_percent=workflow_job.progress_percent,
-        progress_message=workflow_job.progress_message,
-        error_message=workflow_job.error_message,
-        created_at=workflow_job.created_at,
-        queued_at=workflow_job.queued_at,
-        started_at=workflow_job.started_at,
-        completed_at=workflow_job.completed_at,
-        duration_seconds=workflow_job.duration_seconds,
-        product_id=workflow_job.product_id,
-        output_data=workflow_job.output_data,
-    )
 
 
 @router.post("/{product_id}/competitors/discover/queue", response_model=JobResponse)
@@ -1658,28 +1455,9 @@ def queue_competitor_discovery(
         404: If product not found
         409: If discovery job already running
     """
-    from app.services.permission_service import PermissionService
     from app.queue.competitor_tasks import discover_competitors_task
 
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.EDIT
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have EDIT permission for product {product_id}"
-        )
-
-    # Get product
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
+    product = verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     # Check product is analyzed
     if not product.structured_product_data:
@@ -1764,20 +1542,9 @@ def list_product_competitors(
     Returns:
         List of competitors with metadata
     """
-    from app.services.permission_service import PermissionService
     from app.models.competitor_intelligence import ProductCompetitor, ProductCompetitorFeature
 
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.VIEW
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have VIEW permission for product {product_id}"
-        )
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Build query
     query = db.query(ProductCompetitor).filter(ProductCompetitor.product_id == product_id)
@@ -1828,20 +1595,9 @@ def list_competitor_features(
     Returns:
         List of features with metadata
     """
-    from app.services.permission_service import PermissionService
     from app.models.competitor_intelligence import ProductCompetitor, ProductCompetitorFeature
 
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.VIEW
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have VIEW permission for product {product_id}"
-        )
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Verify competitor belongs to product
     competitor = db.query(ProductCompetitor).filter(
@@ -1878,71 +1634,6 @@ def list_competitor_features(
         }
         for f in features
     ]
-
-
-@jobs_router.get("/{job_uuid}/workflow", response_model=WorkflowStatusResponse)
-def get_workflow_status(
-    job_uuid: str,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Get detailed workflow status including all child jobs (Phase 2).
-
-    For workflow jobs (FULL_WORKFLOW type), returns the parent job
-    and all child jobs with progress summary.
-
-    Requires VIEW permission on the associated product.
-
-    Returns:
-        Workflow status with all child job details
-
-    Raises:
-        400: If job is not a workflow job
-        403: If user lacks permission
-        404: If job not found
-    """
-    from app.services.permission_service import PermissionService
-    from app.queue.workflows import WorkflowService, WorkflowError
-
-    queue_service = QueueService(db)
-    job = queue_service.get_job_by_uuid(job_uuid)
-
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job {job_uuid} not found"
-        )
-
-    # Check this is a workflow job
-    if job.job_type != JobType.FULL_WORKFLOW:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Job {job_uuid} is not a workflow job. Type: {job.job_type.value}"
-        )
-
-    # Check permission
-    if job.product_id:
-        permission_service = PermissionService(db)
-        if not permission_service.can_access_product(
-            user_id=current_user.id,
-            product_id=job.product_id,
-            required_level=ProductPermissionLevel.VIEW
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to view this workflow"
-            )
-
-    workflow_service = WorkflowService(db)
-    try:
-        status_data = workflow_service.get_workflow_status(job.id)
-        return WorkflowStatusResponse(**status_data)
-    except WorkflowError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
 
 
 # DEPRECATED: backfill-embeddings endpoint has been removed.
@@ -1996,29 +1687,10 @@ def get_product_pending_counts(
 
     Requires VIEW permission on the product.
     """
-    from app.services.permission_service import PermissionService
     from app.models.idea import Idea, IdeaStatus
     from app.models.pm_review import PMReviewQueue, ReviewQueueStatus, ReviewQueueType
 
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.VIEW
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have VIEW permission for product {product_id}"
-        )
-
-    # Verify product exists
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Count ideas with PENDING status
     ideas_pending = db.query(Idea).filter(
@@ -2062,26 +1734,11 @@ def get_idea_funnel(
     Requires VIEW permission on the product.
     """
     from sqlalchemy import func as sql_func
-    from app.services.permission_service import PermissionService
     from app.models.idea import Idea, IdeaStatus
     from app.models.idea_status_history import IdeaStatusHistory
     from app.models.idea_lifecycle_status import IdeaLifecycleStatus
 
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.VIEW
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have VIEW permission for product {product_id}"
-        )
-
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Product {product_id} not found")
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     # Count ideas by triage status
     status_rows = db.query(Idea.status, sql_func.count(Idea.id)).filter(
@@ -2139,27 +1796,8 @@ def get_triage_settings(
 
     Requires VIEW permission on the product.
     """
-    from app.services.permission_service import PermissionService
 
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.VIEW
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have VIEW permission for product {product_id}"
-        )
-
-    # Get product
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
+    product = verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     return TriageSettingsResponse(
         product_id=product_id,
@@ -2184,27 +1822,8 @@ def update_triage_settings(
 
     Requires EDIT permission on the product.
     """
-    from app.services.permission_service import PermissionService
 
-    # Check permission
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=current_user.id,
-        product_id=product_id,
-        required_level=ProductPermissionLevel.EDIT
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have EDIT permission for product {product_id}"
-        )
-
-    # Get product
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
+    product = verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     # Update settings
     product.idea_triage_auto_enabled = request.auto_enabled

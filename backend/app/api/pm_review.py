@@ -24,9 +24,9 @@ from app.models.pm_review import (
     ReviewQueuePriority,
     AlertType
 )
+from app.api.deps import verify_product_access
 from app.models.competitor_intelligence import ProductPermissionLevel
 from app.services.pm_review_service import PMReviewService
-from app.services.permission_service import PermissionService
 
 
 router = APIRouter(prefix="/pm-review", tags=["PM Review"])
@@ -107,36 +107,6 @@ class AssignRequest(BaseModel):
 # Helper Functions
 # =============================================================================
 
-def check_product_permission(
-    db: Session,
-    user: User,
-    product_id: int,
-    required_level: ProductPermissionLevel = ProductPermissionLevel.EDIT
-):
-    """Check user has permission for product."""
-    from app.models.competitor_intelligence import CIProduct
-
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {product_id} not found"
-        )
-
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=user.id,
-        product_id=product_id,
-        required_level=required_level
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User does not have {required_level.value} permission for product {product_id}"
-        )
-
-    return product
-
-
 def queue_item_to_response(item: PMReviewQueue) -> QueueItemResponse:
     """Convert queue item to response schema."""
     return QueueItemResponse(
@@ -188,7 +158,7 @@ def get_review_queue(
     """
     # Check permission if specific product requested
     if product_id:
-        check_product_permission(db, current_user, product_id, ProductPermissionLevel.EDIT)
+        verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     service = PMReviewService(db)
 
@@ -267,7 +237,7 @@ def get_queue_item(
         )
 
     # Check permission
-    check_product_permission(db, current_user, item.product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, item.product_id, current_user, ProductPermissionLevel.EDIT)
 
     return queue_item_to_response(item)
 
@@ -285,7 +255,7 @@ def get_queue_stats(
     Requires VIEW permission on the product.
     """
     # Check permission
-    check_product_permission(db, current_user, product_id, ProductPermissionLevel.VIEW)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
 
     service = PMReviewService(db)
     stats = service.get_queue_stats(product_id)
@@ -319,7 +289,7 @@ def assign_queue_item(
         )
 
     # Check permission
-    check_product_permission(db, current_user, item.product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, item.product_id, current_user, ProductPermissionLevel.EDIT)
 
     try:
         updated = service.assign_item(item_id, request.assigned_to_user_id)
@@ -352,7 +322,7 @@ def start_review(
         )
 
     # Check permission
-    check_product_permission(db, current_user, item.product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, item.product_id, current_user, ProductPermissionLevel.EDIT)
 
     try:
         updated = service.start_review(item_id, current_user.id)
@@ -387,7 +357,7 @@ def approve_queue_item(
         )
 
     # Check permission
-    check_product_permission(db, current_user, item.product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, item.product_id, current_user, ProductPermissionLevel.EDIT)
 
     try:
         updated = service.approve_item(
@@ -428,7 +398,7 @@ def reject_queue_item(
         )
 
     # Check permission
-    check_product_permission(db, current_user, item.product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, item.product_id, current_user, ProductPermissionLevel.EDIT)
 
     try:
         updated = service.reject_item(
@@ -467,7 +437,7 @@ def defer_queue_item(
         )
 
     # Check permission
-    check_product_permission(db, current_user, item.product_id, ProductPermissionLevel.EDIT)
+    verify_product_access(db, item.product_id, current_user, ProductPermissionLevel.EDIT)
 
     try:
         updated = service.defer_item(
@@ -527,7 +497,7 @@ def batch_approve(
                 continue
 
             # Check permission
-            check_product_permission(db, current_user, item.product_id, ProductPermissionLevel.EDIT)
+            verify_product_access(db, item.product_id, current_user, ProductPermissionLevel.EDIT)
 
             service.approve_item(
                 item_id,
@@ -576,7 +546,7 @@ def batch_reject(
                 continue
 
             # Check permission
-            check_product_permission(db, current_user, item.product_id, ProductPermissionLevel.EDIT)
+            verify_product_access(db, item.product_id, current_user, ProductPermissionLevel.EDIT)
 
             service.reject_item(
                 item_id,

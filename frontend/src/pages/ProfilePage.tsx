@@ -5,6 +5,8 @@ import api, { getCurrentUser, mfaSetup, mfaConfirm, mfaDisable, type MFASetupRes
 import { AxiosError } from 'axios';
 import type { ApiError } from '../types';
 import { UserRole } from '../types';
+import { formatDate } from '../utils/date';
+import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 
 type ActiveTab = 'profile' | 'password' | 'security' | 'api-keys';
 
@@ -73,7 +75,7 @@ export default function ProfilePage() {
   const [creatingKey, setCreatingKey] = useState<boolean>(false);
   const [showNewKeyForm, setShowNewKeyForm] = useState<boolean>(false);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
-  const [copied, setCopied] = useState<boolean>(false);
+  const { copied, copy } = useCopyToClipboard();
   const [revokingId, setRevokingId] = useState<number | null>(null);
 
   // MFA state
@@ -234,18 +236,9 @@ export default function ProfilePage() {
   };
 
   const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    copy(text);
   };
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  };
 
   const isExpired = (dateStr: string) => new Date(dateStr) < new Date();
 

@@ -170,3 +170,35 @@ class TestSanitizeExistingFeatureInfo:
     def test_passthrough_for_non_dict(self):
         assert _sanitize_existing_feature_info(None) is None
         assert _sanitize_existing_feature_info("string") == "string"
+
+
+class TestFailJob:
+    """`fail_job` is the shared best-effort failure marker used by all Celery
+    task except-blocks. It must mark the job failed when possible and never
+    raise — a status-update failure must not mask the original task error."""
+
+    def test_marks_job_failed_with_traceback(self, db_session):
+        from app.models.queue import JobType, JobStatus
+        from app.queue.helpers import fail_job
+        from app.services.queue_service import QueueService
+
+        job = QueueService(db_session).create_job(
+            job_type=JobType.PRODUCT_ANALYSIS, input_data={}
+        )
+        fail_job(db_session, job.id, "boom", "Traceback: ...", task_name="test_task")
+
+        db_session.refresh(job)
+        assert job.status == JobStatus.FAILURE
+        assert job.error_message == "boom"
+        assert job.error_traceback == "Traceback: ..."
+
+    def test_none_db_is_noop(self):
+        from app.queue.helpers import fail_job
+
+        fail_job(None, 123, "boom")  # must not raise
+
+    def test_swallows_status_update_failure(self, db_session):
+        from app.queue.helpers import fail_job
+
+        # Nonexistent job id → QueueService raises internally; fail_job swallows.
+        fail_job(db_session, 999999, "boom", "tb")

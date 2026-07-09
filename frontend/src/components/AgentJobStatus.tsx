@@ -5,24 +5,10 @@
  * or last completed/failed time.
  */
 
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { format, formatDistanceToNow, parseISO } from 'date-fns';
-import { QueueJob, JobStatus, JobType } from '../types';
-import { getProductJobs } from '../services/api';
-
-/**
- * Parse a UTC timestamp string from the backend.
- * Backend returns timestamps without timezone indicator, so we append 'Z' to treat as UTC.
- */
-function parseUTCTimestamp(timestamp: string): Date {
-  // If timestamp already has timezone info, parse as-is
-  if (timestamp.endsWith('Z') || timestamp.includes('+') || timestamp.includes('-', 10)) {
-    return parseISO(timestamp);
-  }
-  // Otherwise, treat as UTC by appending Z
-  // Replace space with T for ISO format compatibility
-  return parseISO(timestamp.replace(' ', 'T') + 'Z');
-}
+import { format, formatDistanceToNow } from 'date-fns';
+import { JobStatus, JobType } from '../types';
+import { useProductJobPolling } from '../hooks/useJobPolling';
+import { parseUTCTimestamp } from '../utils/date';
 
 interface AgentJobStatusProps {
   productId: number;
@@ -37,69 +23,11 @@ export default function AgentJobStatus({
   onJobComplete,
   className = ''
 }: AgentJobStatusProps) {
-  const [activeJob, setActiveJob] = useState<QueueJob | null>(null);
-  const [lastCompletedJob, setLastCompletedJob] = useState<QueueJob | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  // Track previous active state and last job UUID we fired onJobComplete for.
-  const wasActiveRef = useRef(false);
-  const lastFiredJobUuidRef = useRef<string | null>(null);
-  // Keep onJobComplete in a ref so fetchJobs never needs it as a dependency,
-  // preventing the infinite loop where onJobComplete identity changes → fetchJobs
-  // identity changes → polling effect restarts → onJobComplete fires → re-render → repeat.
-  const onJobCompleteRef = useRef(onJobComplete);
-  useEffect(() => { onJobCompleteRef.current = onJobComplete; }, [onJobComplete]);
-
-  const fetchJobs = useCallback(async () => {
-    try {
-      const jobs = await getProductJobs(productId, 10, jobTypes);
-
-      const relevantJobs = jobs.filter(j =>
-        jobTypes.includes(j.job_type as JobType)
-      );
-
-      // Find active job (pending, queued, or running)
-      const active = relevantJobs.find(j =>
-        j.status === JobStatus.PENDING ||
-        j.status === JobStatus.QUEUED ||
-        j.status === JobStatus.RUNNING
-      );
-
-      // Find last completed job (success or failure)
-      const completed = relevantJobs.find(j =>
-        j.status === JobStatus.SUCCESS ||
-        j.status === JobStatus.FAILURE
-      );
-
-      setActiveJob(active || null);
-      setLastCompletedJob(completed || null);
-
-      // Fire onJobComplete on genuine active→complete transition only.
-      const justCompleted = !active && wasActiveRef.current;
-      if (justCompleted && onJobCompleteRef.current) {
-        lastFiredJobUuidRef.current = completed?.job_uuid ?? null;
-        onJobCompleteRef.current();
-      }
-
-      wasActiveRef.current = !!active;
-    } catch (err) {
-      console.error('Failed to fetch job status:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [productId, jobTypes]);
-
-  useEffect(() => {
-    fetchJobs();
-  }, [productId, jobTypes]);
-
-  // Poll while there's an active job
-  useEffect(() => {
-    if (!activeJob) return;
-
-    const interval = setInterval(fetchJobs, 2000);
-    return () => clearInterval(interval);
-  }, [activeJob, fetchJobs]);
+  const { activeJob, lastCompletedJob, loading } = useProductJobPolling({
+    productId,
+    jobTypes,
+    onComplete: () => onJobComplete?.(),
+  });
 
   if (loading) {
     return null;

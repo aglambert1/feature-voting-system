@@ -10,13 +10,11 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
+from app.api.deps import verify_product_access
 from app.database import get_db
 from app.models.user import User
 from app.models.evidence import Evidence, EvidenceType
-from app.models.competitor_intelligence import (
-    CIProduct, ProductCompetitor, ProductPermissionLevel
-)
-from app.services.permission_service import PermissionService
+from app.models.competitor_intelligence import ProductCompetitor, ProductPermissionLevel
 from app.services.evidence_service import (
     create_evidence, suggest_competitor, resolve_competitor_by_name
 )
@@ -26,36 +24,6 @@ router = APIRouter(
     prefix="/product-intelligence/products",
     tags=["Evidence"]
 )
-
-
-# ============================================================================
-# Helpers
-# ============================================================================
-
-def verify_product_access(
-    db: Session,
-    product_id: int,
-    user: User,
-    required_level: ProductPermissionLevel = ProductPermissionLevel.VIEW
-) -> CIProduct:
-    """Verify product exists and user has the required permission level."""
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
-    permission_service = PermissionService(db)
-    if not permission_service.can_access_product(
-        user_id=user.id,
-        product_id=product_id,
-        required_level=required_level,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions for this product"
-        )
-    return product
 
 
 # ============================================================================
@@ -166,7 +134,7 @@ def create_evidence_endpoint(
                 product_id=product_id,
                 competitor_name=request.competitor_name,
                 competitor_url=request.competitor_url or None,
-                deep_analysis_enabled=True,
+                tracked=True,
                 status="active",
             )
             db.add(new_competitor)

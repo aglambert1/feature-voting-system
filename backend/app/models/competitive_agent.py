@@ -65,7 +65,7 @@ class CompetitiveAgentConfig(Base):
     alert_on_disappeared_competitors = Column(Boolean, nullable=False, default=True)
 
     # === Deep Analysis Settings (Feature Extraction + Strategic Analysis) ===
-    # Deep analysis runs for all competitors marked with deep_analysis_enabled=True
+    # Deep analysis runs for all competitors marked with tracked=True
     deep_analysis_mode = Column(Enum(AgentMode), nullable=False, default=AgentMode.MANUAL)
     deep_analysis_schedule = Column(String(50), nullable=True)
     deep_analysis_next_run = Column(DateTime(timezone=True), nullable=True)

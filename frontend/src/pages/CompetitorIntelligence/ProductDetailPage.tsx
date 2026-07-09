@@ -23,7 +23,6 @@ import api, {
   getLatestUnifiedReport,
   getUnreadAlertCount,
   getFunctionalReports,
-  getProductJobs,
   createInviteCode,
   getInviteCodes,
   deactivateInviteCode,
@@ -35,11 +34,14 @@ import api, {
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
 import { useAuth } from '../../contexts/AuthContext';
-import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, TriageSettings, JobType, QueueJob, JobStatus, InviteCode, ProductMember, UserRole } from '../../types';
+import { ProductSource, ProductPendingCounts, CompetitiveAgentConfig, AgentCompetitor, TriageSettings, JobType, JobStatus, InviteCode, ProductMember, UserRole } from '../../types';
 import IdeaTriageSetupModal from './components/IdeaTriageSetupModal';
 import CompetitiveIntelligenceSetupModal from './components/CompetitiveIntelligenceSetupModal';
 import AgentJobStatus from '../../components/AgentJobStatus';
+import { useProductJobPolling } from '../../hooks/useJobPolling';
 import FeatureQueryChat from './components/FeatureQueryChat';
+import { useAutoDismiss } from '../../hooks/useAutoDismiss';
+import { useCopyToClipboard } from '../../hooks/useCopyToClipboard';
 
 interface StructuredProductData {
   core_features?: string[];
@@ -91,7 +93,6 @@ export default function ProductDetailPage() {
   const [sources, setSources] = useState<ProductSource[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeAnalysisJob, setActiveAnalysisJob] = useState<QueueJob | null>(null);
 
   // Agent-related state
   const [pendingCounts, setPendingCounts] = useState<ProductPendingCounts | null>(null);
@@ -143,7 +144,7 @@ export default function ProductDetailPage() {
   const [inviteCodes, setInviteCodes] = useState<InviteCode[]>([]);
   const [members, setMembers] = useState<ProductMember[]>([]);
   const [votersLoading, setVotersLoading] = useState(false);
-  const [copiedCodeId, setCopiedCodeId] = useState<number | null>(null);
+  const { copiedKey: copiedCodeId, copy: copyInviteLink } = useCopyToClipboard();
   const [creatingCode, setCreatingCode] = useState(false);
 
   // Sharing state
@@ -156,7 +157,7 @@ export default function ProductDetailPage() {
 
   // Action state
   const [runningAction, setRunningAction] = useState<string | null>(null);
-  const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [actionMessage, setActionMessage] = useAutoDismiss<{ type: 'success' | 'error'; text: string } | null>(null, 5000);
 
   // Fetch synthesis stats (can be called independently when synthesis job completes)
   const fetchSynthesisStats = useCallback(async () => {
@@ -225,8 +226,7 @@ export default function ProductDetailPage() {
         internalThemesRes,
         unifiedReportRes,
         alertCountRes,
-        functionalReportsRes,
-        analysisJobsRes
+        functionalReportsRes
       ] = await Promise.all([
         getProductPendingCounts(numProductId).catch(() => null),
         getAgentConfig(numProductId).catch(() => null),
@@ -239,8 +239,7 @@ export default function ProductDetailPage() {
         getInternalFeedbackThemes(numProductId).catch(() => ({ import_id: 0, winloss_themes: [], support_themes: [], analysis_summary: null })),
         getLatestUnifiedReport(numProductId).catch(() => null),
         getUnreadAlertCount(numProductId).catch(() => ({ unread_count: 0 })),
-        getFunctionalReports(numProductId).catch(() => []),
-        getProductJobs(numProductId, 5, [JobType.PRODUCT_ANALYSIS]).catch(() => [])
+        getFunctionalReports(numProductId).catch(() => [])
       ]);
 
       setPendingCounts(pendingCountsRes);
@@ -250,14 +249,6 @@ export default function ProductDetailPage() {
       setAnalysisHistory(historyRes);
       setUnreadAlertCount(alertCountRes?.unread_count ?? 0);
       setFunctionalReportCount(functionalReportsRes?.length || 0);
-
-      // Check for active analysis job
-      const activeAnalysis = analysisJobsRes.find((j: QueueJob) =>
-        j.status === JobStatus.PENDING ||
-        j.status === JobStatus.QUEUED ||
-        j.status === JobStatus.RUNNING
-      );
-      setActiveAnalysisJob(activeAnalysis || null);
 
       // Set internal feedback stats
       setInternalFeedbackStats({
@@ -296,45 +287,18 @@ export default function ProductDetailPage() {
     }
   }, [productId, fetchEvidenceStats]);
 
+  // Poll for an in-flight product analysis; refresh page data when it finishes.
+  const { activeJob: activeAnalysisJob, refresh: refreshAnalysisJob } = useProductJobPolling({
+    productId: productId ? parseInt(productId) : null,
+    jobTypes: [JobType.PRODUCT_ANALYSIS],
+    limit: 5,
+    onComplete: () => fetchAllData(),
+  });
+
   useEffect(() => {
     fetchAllData();
-  }, [fetchAllData, location.key]);
-
-  // Poll for active analysis job completion
-  useEffect(() => {
-    if (!activeAnalysisJob || !productId) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const jobs = await getProductJobs(parseInt(productId), 5, [JobType.PRODUCT_ANALYSIS]);
-        const active = jobs.find(j =>
-          j.status === JobStatus.PENDING ||
-          j.status === JobStatus.QUEUED ||
-          j.status === JobStatus.RUNNING
-        );
-
-        if (active) {
-          setActiveAnalysisJob(active);
-        } else {
-          // Job completed - refresh all data
-          setActiveAnalysisJob(null);
-          fetchAllData();
-        }
-      } catch (err) {
-        console.error('[ProductDetail] Failed to poll analysis job:', err);
-      }
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [activeAnalysisJob, productId, fetchAllData]);
-
-  // Clear action message after timeout
-  useEffect(() => {
-    if (actionMessage) {
-      const timer = setTimeout(() => setActionMessage(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [actionMessage]);
+    refreshAnalysisJob();
+  }, [fetchAllData, refreshAnalysisJob, location.key]);
 
   const parseProductSources = (productData: ProductDetail): ProductSource[] => {
     if (!productData || !productData.product_source_data) {
@@ -456,10 +420,7 @@ export default function ProductDetailPage() {
   };
 
   const handleCopyLink = (code: InviteCode) => {
-    const fullUrl = `${window.location.origin}${code.invite_url}`;
-    navigator.clipboard.writeText(fullUrl);
-    setCopiedCodeId(code.id);
-    setTimeout(() => setCopiedCodeId(null), 2000);
+    copyInviteLink(`${window.location.origin}${code.invite_url}`, code.id);
   };
 
   const isCurrentUserOwner = product?.created_by_user_id === user?.id
