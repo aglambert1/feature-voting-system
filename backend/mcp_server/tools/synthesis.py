@@ -19,13 +19,32 @@ VALID_SOURCE_TYPES = {"competitive", "customer", "internal", "evidence"}
 
 @mcp.tool()
 def synthesis_get_sources(product_id: int) -> dict:
-    """Check what data sources are available for synthesis and when they were last updated."""
+    """Check fact-base health and freshness — what data sources are available for synthesis, when each was last updated, and which are stale.
+
+    Per-source `is_stale` flags surface staleness for PM judgment (competitive
+    reports >30 days, internal imports >90 days). `synthesis_stale` is true
+    when the newest synthesis report predates newer evidence/ideas/reports —
+    i.e. the synthesis no longer reflects the current fact-base.
+    """
+    from datetime import datetime, timedelta, timezone
+
     from app.models.evidence import Evidence
     from app.models.idea import Idea
     from app.models.internal_feedback import InternalFeedbackImport
-    from app.models.competitor_intelligence import ProductCompetitor
+    from app.models.competitor_intelligence import CIProduct, ProductCompetitor
     from app.models.competitive_reports import CompetitorFunctionalReport
+    from app.models.synthesis import SynthesisReport
     from sqlalchemy import func
+
+    COMPETITIVE_STALE_DAYS = 30
+    INTERNAL_STALE_DAYS = 90
+
+    def _age_days(dt) -> float | None:
+        if not dt:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).total_seconds() / 86400
 
     with get_session() as db:
         denied = require_product_access(db, product_id)
@@ -73,6 +92,42 @@ def synthesis_get_sources(product_id: int) -> dict:
             .first()
         )
 
+        latest_idea = (
+            db.query(Idea)
+            .filter(Idea.product_id == product_id)
+            .order_by(Idea.created_at.desc())
+            .first()
+        )
+
+        latest_synthesis = (
+            db.query(SynthesisReport)
+            .filter(SynthesisReport.product_id == product_id)
+            .order_by(SynthesisReport.generated_at.desc())
+            .first()
+        )
+
+        product = db.query(CIProduct).get(product_id)
+
+        report_age = _age_days(latest_competitor_report.generated_at) if latest_competitor_report else None
+        import_age = _age_days(latest_import.processed_at) if latest_import and latest_import.processed_at else None
+        synthesis_age = _age_days(latest_synthesis.generated_at) if latest_synthesis else None
+
+        # Synthesis is stale when any signal source is newer than the report.
+        newest_signal = max(
+            (dt for dt in (
+                latest_competitor_report.generated_at if latest_competitor_report else None,
+                latest_evidence.created_at if latest_evidence else None,
+                latest_idea.created_at if latest_idea else None,
+                latest_import.processed_at if latest_import else None,
+            ) if dt is not None),
+            default=None,
+        )
+        synthesis_stale = bool(
+            latest_synthesis
+            and newest_signal is not None
+            and newest_signal > latest_synthesis.generated_at
+        )
+
         return {
             "product_id": product_id,
             "sources": {
@@ -80,22 +135,38 @@ def synthesis_get_sources(product_id: int) -> dict:
                     "available": competitor_report_count > 0,
                     "last_updated": latest_competitor_report.generated_at.isoformat() if latest_competitor_report else None,
                     "competitors_analyzed": competitor_report_count,
+                    "is_stale": bool(report_age is not None and report_age > COMPETITIVE_STALE_DAYS),
                 },
                 "customer_ideas": {
                     "available": idea_count > 0,
                     "total_ideas": idea_count,
+                    "last_added": latest_idea.created_at.isoformat() if latest_idea and latest_idea.created_at else None,
                 },
                 "internal_feedback": {
                     "available": latest_import is not None,
                     "last_imported": latest_import.processed_at.isoformat() if latest_import and latest_import.processed_at else None,
                     "deals_count": latest_import.deals_count if latest_import else 0,
                     "tickets_count": latest_import.tickets_count if latest_import else 0,
+                    "is_stale": bool(import_age is not None and import_age > INTERNAL_STALE_DAYS),
                 },
                 "factbase_evidence": {
                     "available": evidence_count > 0,
                     "total_evidence": evidence_count,
                     "last_added": latest_evidence.created_at.isoformat() if latest_evidence and latest_evidence.created_at else None,
                 },
+            },
+            "job_map": {
+                "version": product.job_map_version if product else None,
+                "last_updated": (
+                    product.job_map_last_updated.isoformat()
+                    if product and product.job_map_last_updated else None
+                ),
+            },
+            "synthesis": {
+                "has_report": latest_synthesis is not None,
+                "last_generated": latest_synthesis.generated_at.isoformat() if latest_synthesis else None,
+                "age_days": round(synthesis_age, 1) if synthesis_age is not None else None,
+                "synthesis_stale": synthesis_stale,
             },
         }
 
@@ -223,50 +294,6 @@ def synthesis_get_config(product_id: int) -> dict:
                 "message": "No config exists; defaults shown.",
             }
         return {"exists": True, "config": _config_to_dict(config)}
-
-
-@mcp.tool()
-def synthesis_get_competitors(product_id: int) -> dict:
-    """List all competitors with their audit/synthesis inclusion flags.
-
-    This is the PO-facing view used to review and edit which competitors
-    feed the unified synthesis run. `has_report` is the authoritative signal
-    that an audit has been performed — `audit_status` may be stale for
-    reports generated before the status field was populated.
-    """
-    from app.models.competitor_intelligence import ProductCompetitor
-    from app.models.competitive_reports import CompetitorFunctionalReport
-
-    with get_session() as db:
-        denied = require_product_access(db, product_id)
-        if denied:
-            return denied
-
-        competitors = db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.status == "active",
-        ).all()
-
-        result = []
-        for c in competitors:
-            report = db.query(CompetitorFunctionalReport).filter(
-                CompetitorFunctionalReport.product_competitor_id == c.id
-            ).order_by(CompetitorFunctionalReport.report_version.desc()).first()
-            result.append({
-                "competitor_id": c.id,
-                "competitor_name": c.competitor_name,
-                "competitor_url": c.competitor_url,
-                "tracked": bool(c.tracked),
-                "audit_status": c.audit_status,
-                "audit_last_run": (
-                    c.audit_last_run.isoformat() if c.audit_last_run else None
-                ),
-                "has_report": report is not None,
-                "report_version": report.report_version if report else None,
-                "report_generated_at": report.generated_at.isoformat() if report else None,
-            })
-
-        return {"product_id": product_id, "competitors": result}
 
 
 @mcp.tool()

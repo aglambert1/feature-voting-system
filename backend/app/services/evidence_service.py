@@ -220,13 +220,20 @@ def resolve_competitor_by_name(
     db: Session,
     product_id: int,
     competitor_name: str,
+    active_only: bool = True,
 ) -> Optional[ProductCompetitor]:
-    """Fuzzy-match a competitor name against existing competitors for a product."""
-    return db.query(ProductCompetitor).filter(
+    """Fuzzy-match a competitor name against existing competitors for a product.
+
+    active_only=False also matches deactivated competitors — use for read paths
+    that must keep working after deactivation (e.g. preserved reports).
+    """
+    query = db.query(ProductCompetitor).filter(
         ProductCompetitor.product_id == product_id,
         ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
-        ProductCompetitor.status == "active",
-    ).first()
+    )
+    if active_only:
+        query = query.filter(ProductCompetitor.status == "active")
+    return query.first()
 
 
 def suggest_competitor(

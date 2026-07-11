@@ -114,7 +114,7 @@ Admins manage users, see system-level data, and configure org-wide settings.
 
 ## For Claude Desktop / MCP users
 
-The MCP server (`backend/mcp_server/`) exposes 79 tools across 10 files. Most of the API surface is available to Claude Desktop, scoped per user via `APIKey`.
+The MCP server (`backend/mcp_server/`) exposes 75 tools across 10 files. Most of the API surface is available to Claude Desktop, scoped per user via `APIKey`.
 
 | Tool group | Examples | Use case |
 |---|---|---|

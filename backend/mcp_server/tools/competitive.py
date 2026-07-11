@@ -5,13 +5,20 @@ from mcp_server.db import get_session
 from mcp_server.permissions import require_product_access, require_product_analyzed, require_no_active_job, resolve_user_id_for_job
 
 from app.models.competitor_intelligence import ProductPermissionLevel
+from app.services.evidence_service import resolve_competitor_by_name
 
 
 @mcp.tool()
 def ci_get_competitor_list(product_id: int) -> dict:
-    """List all tracked competitors for a product with their analysis status."""
+    """List all competitors for a product with audit status and synthesis-inclusion flags.
+
+    `has_report` is the authoritative signal that an audit has been performed —
+    `audit_status` may be stale for reports generated before the status field
+    was populated. Use this to see all competitors at a glance; use
+    ci_get_competitor_report for a single competitor's full report.
+    """
     from app.models.competitor_intelligence import ProductCompetitor
-    from app.models.competitive_reports import CompetitorFunctionalReport
+    from mcp_server.serializers import competitor_summary, latest_functional_report
 
     with get_session() as db:
         denied = require_product_access(db, product_id)
@@ -23,52 +30,85 @@ def ci_get_competitor_list(product_id: int) -> dict:
             ProductCompetitor.status == "active",
         ).all()
 
-        result = []
-        for c in competitors:
-            report = db.query(CompetitorFunctionalReport).filter(
-                CompetitorFunctionalReport.product_competitor_id == c.id
-            ).first()
-            result.append({
-                "competitor_id": c.id,
-                "competitor_name": c.competitor_name,
-                "competitor_url": c.competitor_url,
-                "tracked": c.tracked,
-                "audit_status": c.audit_status,
-                "has_report": report is not None,
-                "report_version": report.report_version if report else None,
-                "last_analyzed": report.generated_at.isoformat() if report else None,
-            })
-        return {"product_id": product_id, "competitors": result}
+        return {
+            "product_id": product_id,
+            "competitors": [
+                competitor_summary(c, latest_functional_report(db, c.id))
+                for c in competitors
+            ],
+        }
 
 
 @mcp.tool()
-def ci_get_competitor_report(product_id: int, competitor_name: str) -> dict:
-    """Get the functional audit report for a specific competitor, showing feature-by-feature comparison."""
-    from app.models.competitor_intelligence import ProductCompetitor
-    from app.models.competitive_reports import CompetitorFunctionalReport
+def ci_get_competitor_report(product_id: int, competitor_name: str, section: str = "") -> dict:
+    """Get the functional audit report for a competitor — full report by default, or a single section to save context.
+
+    Args:
+        product_id: The product the competitor belongs to.
+        competitor_name: Name (or partial name) of the competitor.
+        section: Empty for the full report, or one of:
+            - features: functional_comparison + gaps_deep_dive
+            - positioning: competitor_context (positioning, differentiation, target customer)
+            - constraints: technical_constraints (integrations, API capabilities)
+            - changes: changes from the previous report version
+            - status: tracked/audit status and report versioning (works without a report)
+            Note: pricing signals live in positioning and evidence, not in a
+            dedicated section.
+    """
+    from mcp_server.serializers import competitor_summary, latest_functional_report
+
+    valid_sections = {"", "features", "positioning", "constraints", "changes", "status"}
+    if section not in valid_sections:
+        return {"error": f"Invalid section '{section}'. Must be one of: {', '.join(sorted(s for s in valid_sections if s))} (or empty for the full report)"}
 
     with get_session() as db:
         denied = require_product_access(db, product_id)
         if denied:
             return denied
 
-        # Fuzzy match on competitor name
-        competitor = db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
-        ).first()
+        # Fuzzy match on competitor name; include deactivated competitors —
+        # deactivation preserves reports, so reads must keep working.
+        competitor = resolve_competitor_by_name(
+            db, product_id, competitor_name, active_only=False
+        )
 
         if not competitor:
             return {"error": f"No competitor matching '{competitor_name}' found"}
 
-        report = db.query(CompetitorFunctionalReport).filter(
-            CompetitorFunctionalReport.product_competitor_id == competitor.id
-        ).first()
+        report = latest_functional_report(db, competitor.id)
+
+        base = {
+            "competitor_name": competitor.competitor_name,
+            "competitor_id": competitor.id,
+        }
+
+        if section == "status":
+            return {**base, "section": section, **competitor_summary(competitor, report)}
 
         if not report:
-            return {"error": f"No report available for {competitor.competitor_name}"}
+            return {**base, "error": f"No report available for {competitor.competitor_name}. Run ci_run_competitor_audit first."}
 
-        # Include any evidence linked to this competitor
+        if section == "features":
+            return {
+                **base,
+                "section": section,
+                "functional_comparison": report.functional_comparison,
+                "gaps_deep_dive": report.gaps_deep_dive,
+            }
+        if section == "positioning":
+            return {**base, "section": section, "competitor_context": report.competitor_context}
+        if section == "constraints":
+            return {**base, "section": section, "technical_constraints": report.technical_constraints}
+        if section == "changes":
+            return {
+                **base,
+                "section": section,
+                "report_version": report.report_version,
+                "generated_at": report.generated_at.isoformat(),
+                "changes_from_previous": report.changes_from_previous,
+            }
+
+        # Full report
         from app.models.evidence import Evidence
         linked_evidence = db.query(Evidence).filter(
             Evidence.product_id == product_id,
@@ -76,9 +116,11 @@ def ci_get_competitor_report(product_id: int, competitor_name: str) -> dict:
         ).order_by(Evidence.created_at.desc()).limit(20).all()
 
         return {
-            "competitor_name": competitor.competitor_name,
+            **base,
             "report_version": report.report_version,
             "generated_at": report.generated_at.isoformat(),
+            "audit_status": competitor.audit_status,
+            "audit_last_run": competitor.audit_last_run.isoformat() if competitor.audit_last_run else None,
             "competitor_context": report.competitor_context,
             "functional_comparison": report.functional_comparison,
             "gaps_deep_dive": report.gaps_deep_dive,
@@ -177,24 +219,32 @@ def ci_add_competitor(product_id: int, competitor_name: str, competitor_url: str
         if denied:
             return denied
 
-        # Check for duplicate by name
+        parsed = urlparse(competitor_url)
+        domain = parsed.netloc or parsed.path
+        domain = domain.replace("www.", "")
+
+        # Check for duplicate by name or domain. A deactivated match is
+        # reactivated instead of blocking the add forever.
         existing = db.query(ProductCompetitor).filter(
             ProductCompetitor.product_id == product_id,
             ProductCompetitor.competitor_name.ilike(competitor_name),
         ).first()
+        if not existing:
+            existing = db.query(ProductCompetitor).filter(
+                ProductCompetitor.product_id == product_id,
+                ProductCompetitor.competitor_url.ilike(f"%{domain}%"),
+            ).first()
         if existing:
+            if existing.status == "inactive":
+                existing.status = "active"
+                existing.tracked = True
+                db.flush()
+                return {
+                    "competitor_id": existing.id,
+                    "competitor_name": existing.competitor_name,
+                    "message": f"Competitor '{existing.competitor_name}' was deactivated and has been reactivated (tracked).",
+                }
             return {"error": f"Competitor '{existing.competitor_name}' already exists (id={existing.id})"}
-
-        # Check for duplicate by domain
-        parsed = urlparse(competitor_url)
-        domain = parsed.netloc or parsed.path
-        domain = domain.replace("www.", "")
-        existing_url = db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.competitor_url.ilike(f"%{domain}%"),
-        ).first()
-        if existing_url:
-            return {"error": f"A competitor with domain '{domain}' already exists: {existing_url.competitor_name}"}
 
         competitor = ProductCompetitor(
             product_id=product_id,
@@ -278,7 +328,7 @@ def ci_run_competitor_audit(
         product_id: The product the competitor belongs to.
         competitor_name: Name (or partial name) of the competitor.
         web_research: If true (default), the agent supplements its training knowledge with live Brave web search. Set false to skip Brave and rely on training knowledge + any Evidence records + provided source_urls. Major latency win when false.
-        source_urls: Optional list of specific pages to fetch and feed to the agent (max 5 URLs). Useful for grounding analysis in pricing pages, feature lists, or docs you want the agent to cite. For persistent text input, use evidence_create first — Evidence records are reusable across audits and tracked for citations.
+        source_urls: Optional list of specific pages to fetch and feed to the agent (max 5 URLs). Useful for grounding analysis in pricing pages, feature lists, or docs you want the agent to cite. For persistent text input, use evidence_add first — Evidence records are reusable across audits and tracked for citations.
     """
     from app.models.competitor_intelligence import ProductCompetitor
     from app.models.queue import JobType
@@ -296,13 +346,10 @@ def ci_run_competitor_audit(
         if denied:
             return denied
 
-        competitor = db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
-        ).first()
+        competitor = resolve_competitor_by_name(db, product_id, competitor_name)
 
         if not competitor:
-            return {"error": f"No competitor matching '{competitor_name}' found for product {product_id}"}
+            return {"error": f"No active competitor matching '{competitor_name}' found for product {product_id}"}
 
         # Check for active audit job
         conflict = require_no_active_job(db, product_id, JobType.FUNCTIONAL_AUDIT, "Functional audit")
@@ -361,13 +408,10 @@ def ci_refresh_research(product_id: int, competitor_name: str) -> dict:
         if denied:
             return denied
 
-        competitor = db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
-        ).first()
+        competitor = resolve_competitor_by_name(db, product_id, competitor_name)
 
         if not competitor:
-            return {"error": f"No competitor matching '{competitor_name}' found for product {product_id}"}
+            return {"error": f"No active competitor matching '{competitor_name}' found for product {product_id}"}
 
         # Build product_context for the "vs" query — matches the shape
         # functional_audit_task assembles, so the cache queries are stable
@@ -413,13 +457,10 @@ def ci_set_tracked(product_id: int, competitor_name: str, tracked: bool) -> dict
         if denied:
             return denied
 
-        competitor = db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
-        ).first()
+        competitor = resolve_competitor_by_name(db, product_id, competitor_name)
 
         if not competitor:
-            return {"error": f"No competitor matching '{competitor_name}' found for product {product_id}"}
+            return {"error": f"No active competitor matching '{competitor_name}' found for product {product_id}"}
 
         competitor.tracked = tracked
         db.flush()
@@ -502,93 +543,6 @@ def ci_get_job_comparison(product_id: int, job_id: str) -> dict:
 
 
 @mcp.tool()
-def ci_get_competitor_details(product_id: int, competitor_name: str, section: str) -> dict:
-    """Get detailed information about a specific competitor by section.
-
-    Args:
-        product_id: The product the competitor belongs to.
-        competitor_name: Name (or partial name) of the competitor.
-        section: One of "features", "pricing", "positioning", "changes", "momentum".
-            - features: functional comparison showing feature-by-feature mapping status
-            - pricing: technical constraints including integrations and API capabilities
-            - positioning: competitor context — positioning, differentiation, target customer
-            - changes: changes from previous report version
-            - momentum: deep analysis status and report versioning history
-    """
-    from app.models.competitor_intelligence import ProductCompetitor
-    from app.models.competitive_reports import CompetitorFunctionalReport
-
-    valid_sections = {"features", "pricing", "positioning", "changes", "momentum"}
-    if section not in valid_sections:
-        return {"error": f"Invalid section '{section}'. Must be one of: {', '.join(sorted(valid_sections))}"}
-
-    with get_session() as db:
-        denied = require_product_access(db, product_id)
-        if denied:
-            return denied
-
-        competitor = db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
-        ).first()
-
-        if not competitor:
-            return {"error": f"No competitor matching '{competitor_name}' found"}
-
-        report = db.query(CompetitorFunctionalReport).filter(
-            CompetitorFunctionalReport.product_competitor_id == competitor.id
-        ).first()
-
-        base = {
-            "competitor_name": competitor.competitor_name,
-            "competitor_id": competitor.id,
-            "section": section,
-        }
-
-        if section == "features":
-            if not report:
-                return {**base, "error": "No report available. Run ci_run_competitor_audit first."}
-            return {
-                **base,
-                "functional_comparison": report.functional_comparison,
-                "gaps_deep_dive": report.gaps_deep_dive,
-            }
-        elif section == "pricing":
-            if not report:
-                return {**base, "error": "No report available. Run ci_run_competitor_audit first."}
-            return {
-                **base,
-                "technical_constraints": report.technical_constraints,
-            }
-        elif section == "positioning":
-            if not report:
-                return {**base, "error": "No report available. Run ci_run_competitor_audit first."}
-            return {
-                **base,
-                "competitor_context": report.competitor_context,
-            }
-        elif section == "changes":
-            if not report:
-                return {**base, "error": "No report available. Run ci_run_competitor_audit first."}
-            return {
-                **base,
-                "report_version": report.report_version,
-                "generated_at": report.generated_at.isoformat(),
-                "changes_from_previous": report.changes_from_previous,
-            }
-        else:  # momentum
-            return {
-                **base,
-                "tracked": competitor.tracked,
-                "audit_status": competitor.audit_status,
-                "audit_last_run": competitor.audit_last_run.isoformat() if competitor.audit_last_run else None,
-                "has_report": report is not None,
-                "report_version": report.report_version if report else None,
-                "generated_at": report.generated_at.isoformat() if report else None,
-            }
-
-
-@mcp.tool()
 def ci_deactivate_competitor(product_id: int, competitor_name: str) -> dict:
     """Deactivate a competitor (soft-delete). Reports are preserved but the competitor is excluded from future analyses.
 
@@ -603,11 +557,7 @@ def ci_deactivate_competitor(product_id: int, competitor_name: str) -> dict:
         if denied:
             return denied
 
-        competitor = db.query(ProductCompetitor).filter(
-            ProductCompetitor.product_id == product_id,
-            ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
-            ProductCompetitor.status == "active",
-        ).first()
+        competitor = resolve_competitor_by_name(db, product_id, competitor_name)
 
         if not competitor:
             return {"error": f"No active competitor matching '{competitor_name}' found for product {product_id}"}

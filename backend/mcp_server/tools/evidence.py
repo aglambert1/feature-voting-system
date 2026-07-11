@@ -115,7 +115,7 @@ def evidence_list(
         limit: Maximum number of results (default 20).
     """
     from app.models.evidence import Evidence, EvidenceType
-    from app.models.competitor_intelligence import ProductCompetitor
+    from app.services.evidence_service import resolve_competitor_by_name
 
     with get_session() as db:
         denied = require_product_access(db, product_id)
@@ -134,12 +134,12 @@ def evidence_list(
                 pass
 
         if competitor_name:
-            competitor = db.query(ProductCompetitor).filter(
-                ProductCompetitor.product_id == product_id,
-                ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
-            ).first()
-            if competitor:
-                query = query.filter(Evidence.competitor_id == competitor.id)
+            competitor = resolve_competitor_by_name(
+                db, product_id, competitor_name, active_only=False
+            )
+            if not competitor:
+                return {"error": f"No competitor matching '{competitor_name}' found for product {product_id}"}
+            query = query.filter(Evidence.competitor_id == competitor.id)
 
         results = query.order_by(Evidence.created_at.desc()).limit(limit).all()
 

@@ -1,6 +1,6 @@
 # Connect Feature-IQ to Claude Desktop
 
-Feature-IQ exposes 79 MCP tools. Connect Claude Desktop to your Feature-IQ account and you can run competitor audits, query ideas, generate synthesis, and explore your job map — all in plain English, with Claude's reasoning on top of Feature-IQ's data.
+Feature-IQ exposes 75 MCP tools. Connect Claude Desktop to your Feature-IQ account and you can run competitor audits, query ideas, generate synthesis, and explore your job map — all in plain English, with Claude's reasoning on top of Feature-IQ's data.
 
 This is the most powerful way to use Feature-IQ. No coding required.
 
@@ -56,7 +56,7 @@ Once connected, try these — they each showcase a different part of the system.
 ### 1. Get the lay of the land
 > *"What products do I have in Feature-IQ? For my main one, give me a summary of the job map and the competitors I'm tracking."*
 
-This calls `product_list`, `jobs_list`, and `ci_get_competitor_list`. Claude assembles the picture in one go.
+This calls `product_list`, `product_get_jobs`, and `ci_get_competitor_list`. Claude assembles the picture in one go.
 
 ### 2. Find the strategic gaps
 > *"Look at my latest synthesis report for Concur Invoice. What are the top 3 opportunities I should invest in this quarter, and which jobs do they serve?"*
@@ -92,7 +92,7 @@ Pulls internal feedback themes (`internal_*` tools) and cross-references competi
 
 ## What's available
 
-The 79 tools are organized into ten domains. Claude knows them all — you don't need to memorize them — but here's the shape:
+The 75 tools are organized into ten domains. Claude knows them all — you don't need to memorize them — but here's the shape:
 
 | Domain | What it can do |
 |---|---|
