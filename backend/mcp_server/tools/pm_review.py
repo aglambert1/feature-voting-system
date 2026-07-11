@@ -9,76 +9,23 @@ from app.models.competitor_intelligence import ProductPermissionLevel
 
 
 @mcp.tool()
-def review_action(item_id: int, item_type: str, action: str, notes: str = "") -> dict:
-    """Take a review action on an idea or PM review queue item.
+def review_action(item_id: int, action: str, notes: str = "") -> dict:
+    """Approve, reject, or defer an item in the PM review queue (alerts, reports, idea-review tasks).
+
+    For responding directly to a customer idea (approve / duplicate /
+    feature-exists / not-appropriate / needs-review) use ideas_respond.
 
     Args:
-        item_id: The ID of the item to review (idea ID or queue item ID).
-        item_type: "idea" for direct idea review, or "queue_item" for PM review queue items.
+        item_id: The ID of the PM review queue item.
         action: "approve", "reject", or "defer".
         notes: Optional review notes explaining the decision.
     """
-    valid_types = {"idea", "queue_item"}
-    if item_type not in valid_types:
-        return {"error": f"Invalid item_type '{item_type}'. Must be one of: {sorted(valid_types)}"}
-
     valid_actions = {"approve", "reject", "defer"}
     if action not in valid_actions:
         return {"error": f"Invalid action '{action}'. Must be one of: {sorted(valid_actions)}"}
 
     with get_session() as db:
-        if item_type == "idea":
-            return _review_idea(db, item_id, action, notes)
-        else:
-            return _review_queue_item(db, item_id, action, notes)
-
-
-def _review_idea(db, idea_id: int, action: str, notes: str) -> dict:
-    """Review an idea directly (approve/reject/defer)."""
-    from app.models.idea import Idea, IdeaStatus
-    from app.models.idea_status_history import IdeaStatusHistory
-
-    idea = db.query(Idea).get(idea_id)
-    if not idea:
-        return {"error": f"Idea {idea_id} not found"}
-
-    denied = require_product_access(db, idea.product_id, ProductPermissionLevel.EDIT)
-    if denied:
-        return denied
-
-    old_status = idea.status
-
-    if action == "approve":
-        idea.status = IdeaStatus.ACCEPTED
-        idea.is_active = True
-    elif action == "reject":
-        idea.status = IdeaStatus.NOT_APPROPRIATE
-        idea.is_active = False
-    elif action == "defer":
-        idea.status = IdeaStatus.NEEDS_REVIEW
-        # Keep current is_active state for deferred items
-
-    # Record status change
-    history = IdeaStatusHistory(
-        idea_id=idea.id,
-        previous_status=old_status,
-        new_status=idea.status,
-        change_source="mcp_review",
-        comment=notes or None,
-    )
-    db.add(history)
-    db.flush()
-
-    return {
-        "item_type": "idea",
-        "idea_id": idea.id,
-        "title": idea.title,
-        "action": action,
-        "old_status": old_status.value if old_status else None,
-        "new_status": idea.status.value,
-        "is_active": idea.is_active,
-        "notes": notes or None,
-    }
+        return _review_queue_item(db, item_id, action, notes)
 
 
 def _review_queue_item(db, item_id: int, action: str, notes: str) -> dict:

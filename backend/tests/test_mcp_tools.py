@@ -578,20 +578,20 @@ class TestProductUpdateTriageSettings:
 
 class TestProductGetAgentConfig:
     def test_returns_not_configured(self, db_session, product_a, owner):
-        from mcp_server.tools.product import product_get_agent_config
+        from mcp_server.tools.product import product_get_agent_schedule
 
         with _mock_session(db_session), _patch_user(owner.id):
-            result = product_get_agent_config(product_a.id)
+            result = product_get_agent_schedule(product_a.id)
             assert "error" not in result
             assert result["configured"] is False
 
 
 class TestProductUpdateAgentConfig:
     def test_creates_and_updates(self, db_session, product_a, owner):
-        from mcp_server.tools.product import product_update_agent_config
+        from mcp_server.tools.product import product_update_agent_schedule
 
         with _mock_session(db_session), _patch_user(owner.id):
-            result = product_update_agent_config(
+            result = product_update_agent_schedule(
                 product_a.id,
                 enabled=True,
                 product_analysis_mode="scheduled",
@@ -603,18 +603,18 @@ class TestProductUpdateAgentConfig:
             assert result["product_analysis_schedule"] == "weekly"
 
     def test_rejects_invalid_mode(self, db_session, product_a, owner):
-        from mcp_server.tools.product import product_update_agent_config
+        from mcp_server.tools.product import product_update_agent_schedule
 
         with _mock_session(db_session), _patch_user(owner.id):
-            result = product_update_agent_config(product_a.id, product_analysis_mode="hourly")
+            result = product_update_agent_schedule(product_a.id, product_analysis_mode="hourly")
             assert "error" in result
             assert "Invalid mode" in result["error"]
 
     def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
-        from mcp_server.tools.product import product_update_agent_config
+        from mcp_server.tools.product import product_update_agent_schedule
 
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = product_update_agent_config(product_a.id, enabled=False)
+            result = product_update_agent_schedule(product_a.id, enabled=False)
             assert "error" in result
             assert "EDIT" in result["error"]
 
@@ -960,6 +960,20 @@ class TestIdeasRespond:
             assert result["votes_transferred"] == 1
             assert result["new_status"] == "duplicate"
 
+    def test_needs_review_defers_and_preserves_is_active(self, db_session, idea, owner):
+        from mcp_server.tools.ideas import ideas_respond
+
+        idea.status = IdeaStatus.PENDING
+        idea.is_active = True
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_respond(idea.id, status="needs_review", comment="Needs a closer look")
+            assert "error" not in result
+            assert result["new_status"] == "needs_review"
+            # Deferral must not deactivate the idea
+            assert result["is_active"] is True
+
     def test_requires_comment(self, db_session, idea, owner):
         from mcp_server.tools.ideas import ideas_respond
 
@@ -977,39 +991,7 @@ class TestIdeasRespond:
 
 
 class TestReviewAction:
-    def test_review_idea_approve(self, db_session, idea, owner):
-        from mcp_server.tools.pm_review import review_action
-
-        idea.status = IdeaStatus.NEEDS_REVIEW
-        idea.is_active = False
-        db_session.commit()
-
-        with _mock_session(db_session), _patch_user(owner.id):
-            result = review_action(idea.id, item_type="idea", action="approve", notes="LGTM")
-            assert "error" not in result
-            assert result["new_status"] == "accepted"
-            assert result["is_active"] is True
-
-    def test_review_idea_reject(self, db_session, idea, owner):
-        from mcp_server.tools.pm_review import review_action
-
-        with _mock_session(db_session), _patch_user(owner.id):
-            result = review_action(idea.id, item_type="idea", action="reject", notes="Not relevant")
-            assert "error" not in result
-            assert result["new_status"] == "not_appropriate"
-            assert result["is_active"] is False
-
-    def test_review_idea_defer(self, db_session, idea, owner):
-        from mcp_server.tools.pm_review import review_action
-
-        with _mock_session(db_session), _patch_user(owner.id):
-            result = review_action(idea.id, item_type="idea", action="defer")
-            assert "error" not in result
-            assert result["new_status"] == "needs_review"
-
-    def test_review_queue_item(self, db_session, product_a, idea, owner):
-        from mcp_server.tools.pm_review import review_action
-
+    def _queue_item(self, db_session, product_a, idea):
         queue_item = PMReviewQueue(
             queue_type=ReviewQueueType.IDEA,
             status=ReviewQueueStatus.PENDING,
@@ -1021,41 +1003,59 @@ class TestReviewAction:
         )
         db_session.add(queue_item)
         db_session.commit()
+        return queue_item
+
+    def test_review_queue_item_approve(self, db_session, product_a, idea, owner):
+        from mcp_server.tools.pm_review import review_action
+
+        queue_item = self._queue_item(db_session, product_a, idea)
 
         with _mock_session(db_session), _patch_user(owner.id):
-            result = review_action(queue_item.id, item_type="queue_item", action="approve", notes="OK")
+            result = review_action(queue_item.id, action="approve", notes="OK")
             assert "error" not in result
             assert result["status"] == "approved"
             assert result["queue_type"] == "idea"
 
-    def test_invalid_item_type(self, db_session, owner):
+    def test_review_queue_item_defer(self, db_session, product_a, idea, owner):
         from mcp_server.tools.pm_review import review_action
 
+        queue_item = self._queue_item(db_session, product_a, idea)
+
         with _mock_session(db_session), _patch_user(owner.id):
-            result = review_action(1, item_type="bogus", action="approve")
-            assert "error" in result
+            result = review_action(queue_item.id, action="defer")
+            assert "error" not in result
+            assert result["status"] == "deferred"
 
     def test_invalid_action(self, db_session, owner):
         from mcp_server.tools.pm_review import review_action
 
         with _mock_session(db_session), _patch_user(owner.id):
-            result = review_action(1, item_type="idea", action="bogus")
+            result = review_action(1, action="bogus")
             assert "error" in result
 
-    def test_viewer_denied_idea(self, db_session, idea, viewer, viewer_access):
+    def test_queue_item_not_found(self, db_session, owner):
         from mcp_server.tools.pm_review import review_action
 
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = review_action(999999, action="approve")
+            assert "error" in result
+
+    def test_viewer_denied(self, db_session, product_a, idea, viewer, viewer_access, owner):
+        from mcp_server.tools.pm_review import review_action
+
+        queue_item = self._queue_item(db_session, product_a, idea)
+
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = review_action(idea.id, item_type="idea", action="approve")
+            result = review_action(queue_item.id, action="approve")
             assert "error" in result
             assert "EDIT" in result["error"]
 
 
 # ---------------------------------------------------------------------------
-# ci_get_competitor_details — section-based competitor data
+# ci_get_competitor_report — full report + section projections
 # ---------------------------------------------------------------------------
 
-class TestCiGetCompetitorDetails:
+class TestCiGetCompetitorReportSections:
     def _make_report(self, db_session, competitor, product_a):
         from datetime import datetime, timezone
         report = CompetitorFunctionalReport(
@@ -1093,91 +1093,136 @@ class TestCiGetCompetitorDetails:
         return report
 
     def test_invalid_section(self, db_session, product_a, viewer, viewer_access, competitor):
-        from mcp_server.tools.competitive import ci_get_competitor_details
+        from mcp_server.tools.competitive import ci_get_competitor_report
 
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_competitor_details(product_a.id, "Rival", "bogus")
+            result = ci_get_competitor_report(product_a.id, "Rival", "bogus")
             assert "error" in result
             assert "Invalid section" in result["error"]
 
     def test_features_section(self, db_session, product_a, viewer, viewer_access, competitor):
-        from mcp_server.tools.competitive import ci_get_competitor_details
+        from mcp_server.tools.competitive import ci_get_competitor_report
         self._make_report(db_session, competitor, product_a)
 
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_competitor_details(product_a.id, "Rival", "features")
+            result = ci_get_competitor_report(product_a.id, "Rival", "features")
             assert "error" not in result
             assert len(result["functional_comparison"]) == 1
             assert result["functional_comparison"][0]["mapping_status"] == "Gap"
             assert len(result["gaps_deep_dive"]) == 1
 
     def test_positioning_section(self, db_session, product_a, viewer, viewer_access, competitor):
-        from mcp_server.tools.competitive import ci_get_competitor_details
+        from mcp_server.tools.competitive import ci_get_competitor_report
         self._make_report(db_session, competitor, product_a)
 
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_competitor_details(product_a.id, "Rival", "positioning")
+            result = ci_get_competitor_report(product_a.id, "Rival", "positioning")
             assert "error" not in result
             assert result["competitor_context"]["positioning"] == "Enterprise collaboration"
 
-    def test_pricing_section(self, db_session, product_a, viewer, viewer_access, competitor):
-        from mcp_server.tools.competitive import ci_get_competitor_details
+    def test_constraints_section(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_report
         self._make_report(db_session, competitor, product_a)
 
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_competitor_details(product_a.id, "Rival", "pricing")
+            result = ci_get_competitor_report(product_a.id, "Rival", "constraints")
             assert "error" not in result
             assert "REST + GraphQL" in result["technical_constraints"]["api_capabilities"]
 
     def test_changes_section(self, db_session, product_a, viewer, viewer_access, competitor):
-        from mcp_server.tools.competitive import ci_get_competitor_details
+        from mcp_server.tools.competitive import ci_get_competitor_report
         self._make_report(db_session, competitor, product_a)
 
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_competitor_details(product_a.id, "Rival", "changes")
+            result = ci_get_competitor_report(product_a.id, "Rival", "changes")
             assert "error" not in result
             assert result["report_version"] == 2
             assert result["changes_from_previous"]["added_features"] == ["Automations"]
 
-    def test_momentum_section(self, db_session, product_a, viewer, viewer_access, competitor):
-        from mcp_server.tools.competitive import ci_get_competitor_details
+    def test_status_section(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_report
         self._make_report(db_session, competitor, product_a)
 
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_competitor_details(product_a.id, "Rival", "momentum")
+            result = ci_get_competitor_report(product_a.id, "Rival", "status")
             assert "error" not in result
             assert result["has_report"] is True
             assert result["report_version"] == 2
 
-    def test_no_report_features(self, db_session, product_a, viewer, viewer_access, competitor):
-        from mcp_server.tools.competitive import ci_get_competitor_details
+    def test_full_report_default(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_report
+        self._make_report(db_session, competitor, product_a)
 
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_competitor_details(product_a.id, "Rival", "features")
+            result = ci_get_competitor_report(product_a.id, "Rival")
+            assert "error" not in result
+            # Full report includes all sections plus report-only fields
+            assert result["report_version"] == 2
+            assert result["competitor_context"]["positioning"] == "Enterprise collaboration"
+            assert len(result["functional_comparison"]) == 1
+            assert "job_assessments" in result
+            assert "evidence_citations" in result
+            assert result["additional_evidence"] == []
+            assert "audit_last_run" in result
+
+    def test_no_report_features(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_report
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_report(product_a.id, "Rival", "features")
             assert "error" in result
             assert "No report available" in result["error"]
 
-    def test_momentum_no_report(self, db_session, product_a, viewer, viewer_access, competitor):
-        from mcp_server.tools.competitive import ci_get_competitor_details
+    def test_status_no_report(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_report
 
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_competitor_details(product_a.id, "Rival", "momentum")
+            result = ci_get_competitor_report(product_a.id, "Rival", "status")
             assert "error" not in result
             assert result["has_report"] is False
 
-    def test_no_competitor_found(self, db_session, product_a, viewer, viewer_access):
-        from mcp_server.tools.competitive import ci_get_competitor_details
+    def test_report_survives_deactivation(self, db_session, product_a, viewer, viewer_access, competitor):
+        from mcp_server.tools.competitive import ci_get_competitor_report
+        self._make_report(db_session, competitor, product_a)
+        competitor.status = "inactive"
+        db_session.commit()
 
         with _mock_session(db_session), _patch_user(viewer.id):
-            result = ci_get_competitor_details(product_a.id, "NonExistent", "features")
+            result = ci_get_competitor_report(product_a.id, "Rival")
+            assert "error" not in result
+            assert result["report_version"] == 2
+
+    def test_latest_version_wins(self, db_session, product_a, viewer, viewer_access, competitor):
+        from datetime import datetime
+        from mcp_server.tools.competitive import ci_get_competitor_report
+        self._make_report(db_session, competitor, product_a)
+        older = CompetitorFunctionalReport(
+            product_competitor_id=competitor.id,
+            product_id=product_a.id,
+            report_version=1,
+            competitor_context={"positioning": "Old"},
+            generated_at=datetime(2026, 3, 1, 12, 0, 0),
+        )
+        db_session.add(older)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_report(product_a.id, "Rival")
+            assert result["report_version"] == 2
+
+    def test_no_competitor_found(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.competitive import ci_get_competitor_report
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ci_get_competitor_report(product_a.id, "NonExistent", "features")
             assert "error" in result
             assert "No competitor" in result["error"]
 
     def test_outsider_denied(self, db_session, product_a, outsider, competitor):
-        from mcp_server.tools.competitive import ci_get_competitor_details
+        from mcp_server.tools.competitive import ci_get_competitor_report
 
         with _mock_session(db_session), _patch_user(outsider.id):
-            result = ci_get_competitor_details(product_a.id, "Rival", "features")
+            result = ci_get_competitor_report(product_a.id, "Rival", "features")
             assert "error" in result
             assert "Permission denied" in result["error"]
 
@@ -1989,11 +2034,11 @@ class TestSynthesisGetConfig:
             assert result["config"]["idea_priority_threshold"] == 0.5
 
 
-class TestSynthesisGetCompetitors:
+class TestCiGetCompetitorListMergedFields:
     def test_shows_tracked_flag(
         self, db_session, product_a, owner, competitor
     ):
-        from mcp_server.tools.synthesis import synthesis_get_competitors
+        from mcp_server.tools.competitive import ci_get_competitor_list
 
         competitor.tracked = True
         competitor.audit_status = "completed"
@@ -2011,19 +2056,42 @@ class TestSynthesisGetCompetitors:
         db_session.commit()
 
         with _mock_session(db_session), _patch_user(owner.id):
-            result = synthesis_get_competitors(product_a.id)
+            result = ci_get_competitor_list(product_a.id)
             assert "error" not in result
             assert len(result["competitors"]) == 2
             by_name = {c["competitor_name"]: c for c in result["competitors"]}
             assert by_name["Rival Co"]["tracked"] is True
             assert by_name["Rival Co"]["audit_status"] == "completed"
             assert by_name["Other Co"]["tracked"] is False
+            # Serializer fields present even without a report
+            assert by_name["Rival Co"]["has_report"] is False
+            assert by_name["Rival Co"]["report_generated_at"] is None
+            assert "audit_last_run" in by_name["Rival Co"]
+
+    def test_latest_report_version_reported(self, db_session, product_a, owner, competitor):
+        from datetime import datetime
+        from mcp_server.tools.competitive import ci_get_competitor_list
+
+        for version, day in ((1, 1), (2, 10)):
+            db_session.add(CompetitorFunctionalReport(
+                product_competitor_id=competitor.id,
+                product_id=product_a.id,
+                report_version=version,
+                generated_at=datetime(2026, 4, day, 12, 0, 0),
+            ))
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_get_competitor_list(product_a.id)
+            (row,) = result["competitors"]
+            assert row["has_report"] is True
+            assert row["report_version"] == 2
 
     def test_outsider_denied(self, db_session, product_a, outsider, competitor):
-        from mcp_server.tools.synthesis import synthesis_get_competitors
+        from mcp_server.tools.competitive import ci_get_competitor_list
 
         with _mock_session(db_session), _patch_user(outsider.id):
-            result = synthesis_get_competitors(product_a.id)
+            result = ci_get_competitor_list(product_a.id)
             assert "error" in result
 
 
@@ -2192,7 +2260,7 @@ class TestCiRefreshResearch:
         with _mock_session(db_session), _patch_user(owner.id):
             result = ci_refresh_research(product_a.id, "Nonexistent Competitor")
             assert "error" in result
-            assert "No competitor matching" in result["error"]
+            assert "competitor matching" in result["error"]
 
     def test_refresh_denied_for_outsider(
         self, db_session, product_a, competitor, outsider
@@ -2202,3 +2270,193 @@ class TestCiRefreshResearch:
         with _mock_session(db_session), _patch_user(outsider.id):
             result = ci_refresh_research(product_a.id, "Rival")
             assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Inactive-competitor handling (resolver routing)
+# ---------------------------------------------------------------------------
+
+class TestInactiveCompetitorHandling:
+    def _deactivate(self, db_session, competitor):
+        competitor.status = "inactive"
+        db_session.commit()
+
+    def test_set_tracked_rejects_inactive(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_set_tracked
+
+        self._deactivate(db_session, competitor)
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_set_tracked(product_a.id, "Rival", True)
+            assert "error" in result
+            assert "active competitor" in result["error"]
+
+    def test_refresh_research_rejects_inactive(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_refresh_research
+
+        self._deactivate(db_session, competitor)
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_refresh_research(product_a.id, "Rival")
+            assert "error" in result
+            assert "active competitor" in result["error"]
+
+    def test_run_audit_rejects_inactive(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_run_competitor_audit
+
+        self._deactivate(db_session, competitor)
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_run_competitor_audit(product_a.id, "Rival")
+            assert "error" in result
+            assert "active competitor" in result["error"]
+
+    def test_add_competitor_reactivates_inactive(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_add_competitor
+
+        competitor.status = "inactive"
+        competitor.tracked = False
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_add_competitor(product_a.id, "Rival Co", "https://rival.co")
+            assert "error" not in result
+            assert "reactivated" in result["message"]
+
+        db_session.refresh(competitor)
+        assert competitor.status == "active"
+        assert competitor.tracked is True
+
+    def test_add_competitor_still_blocks_active_duplicate(self, db_session, product_a, owner, competitor):
+        from mcp_server.tools.competitive import ci_add_competitor
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ci_add_competitor(product_a.id, "Rival Co", "https://rival.co")
+            assert "error" in result
+            assert "already exists" in result["error"]
+
+    def test_evidence_list_unmatched_competitor_errors(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.evidence import evidence_list
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = evidence_list(product_a.id, competitor_name="NoSuchCo")
+            assert "error" in result
+            assert "No competitor matching" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# search_internal_themes helper + internal_get_signals
+# ---------------------------------------------------------------------------
+
+class TestSearchInternalThemes:
+    def _make_themes(self, db_session, product_a):
+        from app.models.internal_feedback import (
+            InternalFeedbackImport, WinLossTheme, SupportTheme,
+        )
+        imp = InternalFeedbackImport(product_id=product_a.id, status="completed", filename="test.json")
+        db_session.add(imp)
+        db_session.flush()
+        db_session.add(WinLossTheme(
+            product_id=product_a.id, import_id=imp.id,
+            theme_name="Reporting exports", outcome="lost",
+            deal_count=3, total_value=45000.0,
+            feature_keywords=["export", "csv"],
+            jtbd_statement="Export data for analysis",
+        ))
+        db_session.add(SupportTheme(
+            product_id=product_a.id, import_id=imp.id,
+            theme_name="Dashboard confusion", category="usability",
+            ticket_count=12, urgency_indicator="high",
+            feature_keywords=["dashboard"],
+            jtbd_statement="Understand account health at a glance",
+        ))
+        db_session.commit()
+
+    def test_matches_theme_name_and_keywords(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.internal import search_internal_themes
+
+        self._make_themes(db_session, product_a)
+
+        wl, st = search_internal_themes(db_session, product_a.id, "export")
+        assert len(wl) == 1
+        assert wl[0]["theme_name"] == "Reporting exports"
+        assert wl[0]["jtbd_statement"] == "Export data for analysis"
+        assert st == []
+
+        wl2, st2 = search_internal_themes(db_session, product_a.id, "dashboard")
+        assert wl2 == []
+        assert len(st2) == 1
+        assert st2[0]["category"] == "usability"
+
+    def test_internal_get_signals_uses_helper(self, db_session, product_a, viewer, viewer_access):
+        from mcp_server.tools.internal import internal_get_signals
+
+        self._make_themes(db_session, product_a)
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = internal_get_signals(product_a.id, "export")
+            assert "error" not in result
+            assert len(result["winloss_matches"]) == 1
+            assert result["winloss_matches"][0]["jtbd_statement"] == "Export data for analysis"
+
+
+# ---------------------------------------------------------------------------
+# synthesis_get_sources freshness flags
+# ---------------------------------------------------------------------------
+
+class TestSynthesisGetSourcesFreshness:
+    def test_stale_competitive_report_flagged(self, db_session, product_a, owner, competitor):
+        from datetime import datetime, timezone
+        from mcp_server.tools.synthesis import synthesis_get_sources
+
+        db_session.add(CompetitorFunctionalReport(
+            product_competitor_id=competitor.id,
+            product_id=product_a.id,
+            report_version=1,
+            generated_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ))
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_get_sources(product_a.id)
+            assert result["sources"]["competitive_landscape"]["is_stale"] is True
+            assert result["synthesis"]["has_report"] is False
+            assert result["synthesis"]["synthesis_stale"] is False
+            assert "job_map" in result
+
+    def test_fresh_report_not_flagged(self, db_session, product_a, owner, competitor):
+        from datetime import datetime, timezone
+        from mcp_server.tools.synthesis import synthesis_get_sources
+
+        db_session.add(CompetitorFunctionalReport(
+            product_competitor_id=competitor.id,
+            product_id=product_a.id,
+            report_version=1,
+            generated_at=datetime.now(timezone.utc),
+        ))
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_get_sources(product_a.id)
+            assert result["sources"]["competitive_landscape"]["is_stale"] is False
+
+    def test_synthesis_stale_when_newer_signals_exist(self, db_session, product_a, owner, competitor):
+        from datetime import datetime, timezone
+        from app.models.synthesis import SynthesisReport
+        from mcp_server.tools.synthesis import synthesis_get_sources
+
+        db_session.add(SynthesisReport(
+            product_id=product_a.id,
+            report_version=1,
+            included_source_types=["competitive"],
+            generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ))
+        db_session.add(CompetitorFunctionalReport(
+            product_competitor_id=competitor.id,
+            product_id=product_a.id,
+            report_version=1,
+            generated_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        ))
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = synthesis_get_sources(product_a.id)
+            assert result["synthesis"]["has_report"] is True
+            assert result["synthesis"]["synthesis_stale"] is True

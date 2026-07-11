@@ -7,10 +7,14 @@ from mcp_server.permissions import require_product_access
 
 @mcp.tool()
 def evaluate_feature_evidence(product_id: int, feature_description: str) -> dict:
-    """Gather all available evidence about a feature capability from competitive data, customer ideas, and internal feedback. Does NOT recommend build/don't-build — returns evidence for PM decision-making."""
+    """Gather all available evidence about a feature capability from competitive data, customer ideas, and internal feedback. Does NOT recommend build/don't-build — returns evidence for PM decision-making.
+
+    Competitive/customer/factbase sources use semantic (vector) search;
+    internal themes are keyword-matched. For internal feedback alone use
+    internal_get_signals.
+    """
     from app.services.embedding_service import generate_embedding
     from app.services.vector_service import VectorService
-    from app.models.internal_feedback import WinLossTheme, SupportTheme
 
     with get_session() as db:
         denied = require_product_access(db, product_id)
@@ -46,39 +50,13 @@ def evaluate_feature_evidence(product_id: int, feature_description: str) -> dict
             for m in idea_matches
         ]
 
-        # Search internal themes (text-based)
-        query_lower = feature_description.lower()
-        wl_themes = db.query(WinLossTheme).filter(
-            WinLossTheme.product_id == product_id
-        ).all()
-        st_themes = db.query(SupportTheme).filter(
-            SupportTheme.product_id == product_id
-        ).all()
-
-        internal_signals = []
-        for t in wl_themes:
-            keywords = t.feature_keywords or []
-            if query_lower in t.theme_name.lower() or any(
-                query_lower in kw.lower() for kw in keywords
-            ):
-                internal_signals.append({
-                    "type": "winloss",
-                    "theme_name": t.theme_name,
-                    "outcome": t.outcome,
-                    "deal_count": t.deal_count,
-                    "total_value": t.total_value,
-                })
-        for t in st_themes:
-            keywords = t.feature_keywords or []
-            if query_lower in t.theme_name.lower() or any(
-                query_lower in kw.lower() for kw in keywords
-            ):
-                internal_signals.append({
-                    "type": "support",
-                    "theme_name": t.theme_name,
-                    "ticket_count": t.ticket_count,
-                    "urgency_indicator": t.urgency_indicator,
-                })
+        # Search internal themes (keyword-based, shared with internal_get_signals)
+        from mcp_server.tools.internal import search_internal_themes
+        wl_matches, st_matches = search_internal_themes(db, product_id, feature_description)
+        internal_signals = (
+            [{"type": "winloss", **m} for m in wl_matches]
+            + [{"type": "support", **m} for m in st_matches]
+        )
 
         # Search factbase evidence
         evidence_signals = VectorService.find_similar_evidence(

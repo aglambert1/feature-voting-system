@@ -2,6 +2,7 @@
 
 from mcp_server import mcp
 from mcp_server.db import get_session
+from mcp_server.serializers import latest_functional_report
 
 
 @mcp.resource("featureiq://product/{product_id}/landscape")
@@ -26,7 +27,6 @@ def get_landscape_markdown(product_id: int) -> str:
 def get_competitors_summary(product_id: int) -> str:
     """Competitor list with audit status."""
     from app.models.competitor_intelligence import ProductCompetitor
-    from app.models.competitive_reports import CompetitorFunctionalReport
 
     with get_session() as db:
         competitors = db.query(ProductCompetitor).filter(
@@ -39,9 +39,7 @@ def get_competitors_summary(product_id: int) -> str:
 
         lines = [f"# Competitors for Product {product_id}\n"]
         for c in competitors:
-            report = db.query(CompetitorFunctionalReport).filter(
-                CompetitorFunctionalReport.product_competitor_id == c.id
-            ).first()
+            report = latest_functional_report(db, c.id)
             status = "analyzed" if report else "not analyzed"
             version = f" (v{report.report_version})" if report else ""
             lines.append(f"- **{c.competitor_name}** — {status}{version}")

@@ -5,6 +5,9 @@ import logging
 from mcp_server import mcp
 from mcp_server.db import get_session
 from mcp_server.permissions import require_product_access, resolve_user_id_for_job
+from mcp_server.serializers import idea_summary
+
+from app.services.evidence_service import resolve_competitor_by_name
 from mcp_server.user_context import get_mcp_user_id
 
 from app.models.competitor_intelligence import ProductPermissionLevel
@@ -117,19 +120,7 @@ def ideas_list(product_id: int, status_filter: str = "", limit: int = 20) -> dic
         return {
             "product_id": product_id,
             "count": len(results),
-            "ideas": [
-                {
-                    "idea_id": idea.id,
-                    "title": idea.title,
-                    "category": idea.category,
-                    "status": idea.status.value if idea.status else None,
-                    "source_type": idea.source_type.value if idea.source_type else None,
-                    "vote_count": vote_count,
-                    "is_active": idea.is_active,
-                    "created_at": idea.created_at.isoformat() if idea.created_at else None,
-                }
-                for idea, vote_count in results
-            ],
+            "ideas": [idea_summary(idea, vote_count) for idea, vote_count in results],
         }
 
 
@@ -160,18 +151,7 @@ def ideas_get_top_voted(product_id: int, limit: int = 10) -> dict:
 
         return {
             "product_id": product_id,
-            "ideas": [
-                {
-                    "idea_id": idea.id,
-                    "title": idea.title,
-                    "category": idea.category,
-                    "status": idea.status.value if idea.status else None,
-                    "vote_count": vote_count,
-                    "jtbd_statement": idea.jtbd_statement,
-                    "triage_recommendation": idea.triage_recommendation,
-                }
-                for idea, vote_count in results
-            ],
+            "ideas": [idea_summary(idea, vote_count) for idea, vote_count in results],
         }
 
 
@@ -358,12 +338,9 @@ def _create_from_gaps(db, product_id: int, competitor_name: str) -> dict:
     from app.queue.triage_tasks import triage_idea_task
     from mcp_server.db import dispatch_task
 
-    competitor = db.query(ProductCompetitor).filter(
-        ProductCompetitor.product_id == product_id,
-        ProductCompetitor.competitor_name.ilike(f"%{competitor_name}%"),
-    ).first()
+    competitor = resolve_competitor_by_name(db, product_id, competitor_name)
     if not competitor:
-        return {"error": f"No competitor matching '{competitor_name}' found for product {product_id}."}
+        return {"error": f"No active competitor matching '{competitor_name}' found for product {product_id}."}
 
     report = db.query(CompetitorFunctionalReport).filter(
         CompetitorFunctionalReport.product_competitor_id == competitor.id,
@@ -653,18 +630,7 @@ def ideas_get_by_job(product_id: int, job_id_key: str) -> dict:
             "job_id_key": job_id_key,
             "job_statement": pj.statement,
             "idea_count": len(ideas),
-            "ideas": [
-                {
-                    "idea_id": idea.id,
-                    "title": idea.title,
-                    "status": idea.status.value if idea.status else None,
-                    "vote_count": vote_count,
-                    "jtbd_statement": idea.jtbd_statement,
-                    "triage_confidence": idea.triage_confidence,
-                    "created_at": idea.created_at.isoformat() if idea.created_at else None,
-                }
-                for idea, vote_count in ideas
-            ],
+            "ideas": [idea_summary(idea, vote_count) for idea, vote_count in ideas],
         }
 
 
@@ -744,11 +710,14 @@ def ideas_add_comment(idea_id: int, content: str) -> dict:
 
 @mcp.tool()
 def ideas_respond(idea_id: int, status: str, comment: str, duplicate_of_idea_id: int = 0) -> dict:
-    """Submit a PM structured response to an idea — approve, reject, mark as duplicate, or note that the feature already exists.
+    """Submit a PM structured response to an idea — approve, reject, mark as duplicate, note that the feature already exists, or defer for later review.
+
+    This is the single tool for idea responses. For PM review QUEUE items
+    (alerts, reports) use review_action.
 
     Args:
         idea_id: The ID of the idea to respond to.
-        status: One of: "approved", "duplicate", "feature_exists", "not_appropriate".
+        status: One of: "approved", "duplicate", "feature_exists", "not_appropriate", "needs_review".
         comment: Required explanation of the response decision.
         duplicate_of_idea_id: Required when status is "duplicate" — the ID of the original idea.
     """
@@ -756,7 +725,7 @@ def ideas_respond(idea_id: int, status: str, comment: str, duplicate_of_idea_id:
     from app.models.idea_comment import IdeaComment
     from app.models.idea_status_history import IdeaStatusHistory
 
-    valid_statuses = {"approved", "duplicate", "feature_exists", "not_appropriate"}
+    valid_statuses = {"approved", "duplicate", "feature_exists", "not_appropriate", "needs_review"}
     if status not in valid_statuses:
         return {"error": f"Invalid status '{status}'. Must be one of: {sorted(valid_statuses)}"}
 
@@ -781,6 +750,7 @@ def ideas_respond(idea_id: int, status: str, comment: str, duplicate_of_idea_id:
             "duplicate": IdeaStatus.DUPLICATE,
             "feature_exists": IdeaStatus.FEATURE_EXISTS,
             "not_appropriate": IdeaStatus.NOT_APPROPRIATE,
+            "needs_review": IdeaStatus.NEEDS_REVIEW,
         }
         new_status = status_map[status]
 
@@ -814,7 +784,9 @@ def ideas_respond(idea_id: int, status: str, comment: str, duplicate_of_idea_id:
 
         # Update idea status
         idea.status = new_status
-        idea.is_active = (status == "approved")
+        if status != "needs_review":
+            # Deferral preserves the idea's current active state
+            idea.is_active = (status == "approved")
         idea.review_notes = comment
 
         # Record status history

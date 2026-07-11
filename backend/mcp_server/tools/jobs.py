@@ -3,6 +3,7 @@
 from mcp_server import mcp
 from mcp_server.db import get_session
 from mcp_server.permissions import require_product_access
+from mcp_server.serializers import job_summary
 
 
 @mcp.tool()
@@ -23,21 +24,4 @@ def job_get_status(job_uuid: str) -> dict:
             if denied:
                 return denied
 
-        result = {
-            "job_uuid": job.job_uuid,
-            "job_type": job.job_type.value if job.job_type else None,
-            "status": job.status.value if job.status else None,
-            "progress_percent": job.progress_percent,
-            "progress_message": job.progress_message,
-            "created_at": job.created_at.isoformat() if job.created_at else None,
-        }
-
-        if job.is_complete:
-            result["completed_at"] = job.completed_at.isoformat() if job.completed_at else None
-            result["output_data"] = job.output_data
-            result["duration_seconds"] = job.duration_seconds
-
-        if job.error_message:
-            result["error_message"] = job.error_message
-
-        return result
+        return job_summary(job, include_output=True)

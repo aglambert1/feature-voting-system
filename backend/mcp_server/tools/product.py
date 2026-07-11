@@ -11,6 +11,7 @@ from mcp_server.permissions import (
     require_no_active_job,
     resolve_user_id_for_job,
 )
+from mcp_server.serializers import job_summary
 from mcp_server.user_context import get_mcp_user_id
 
 from app.models.competitor_intelligence import ProductPermission, ProductPermissionLevel
@@ -377,6 +378,13 @@ def product_run_analysis(
 ) -> dict:
     """Queue an AI analysis of a product. By default, supplements provided data with web research (searches for features, pricing, integrations, reviews). Set web_research=false to skip Brave and rely on training knowledge + provided sources.
 
+    Full competitive-analysis workflow: this is step 1 of 4. After this job
+    completes: (2) ci_run_discovery to discover competitors (poll with
+    job_get_status; output_data includes competitor_names); (3)
+    ci_run_competitor_audit for EACH discovered competitor; (4)
+    synthesis_run_unified to synthesize opportunities across all sources.
+    Use ci_get_competitor_list at any point to see competitor status.
+
     Args:
         product_id: The product to analyze.
         source_url: Optional single URL to fetch as the primary product description (e.g. product homepage). Extracted text replaces the stored product_description for this run.
@@ -457,7 +465,8 @@ def product_run_analysis(
             "source_type": source_type,
             "source_url": source_url or None,
             "status": "queued",
-            "message": "Product analysis queued. Use job_get_status to check progress.",
+            "message": "Product analysis queued (step 1 of the full workflow). Poll with job_get_status; "
+                       "then ci_run_discovery -> ci_run_competitor_audit per competitor -> synthesis_run_unified.",
         }
 
 
@@ -507,85 +516,7 @@ def product_get_jobs(product_id: int, limit: int = 10) -> dict:
         return {
             "product_id": product_id,
             "count": len(jobs),
-            "jobs": [
-                {
-                    "job_id": j.id,
-                    "job_uuid": j.job_uuid,
-                    "job_type": j.job_type.value if j.job_type else None,
-                    "status": j.status.value if j.status else None,
-                    "progress_percent": j.progress_percent,
-                    "progress_message": j.progress_message,
-                    "created_at": j.created_at.isoformat() if j.created_at else None,
-                    "completed_at": j.completed_at.isoformat() if j.completed_at else None,
-                    "duration_seconds": j.duration_seconds,
-                    "error_message": j.error_message,
-                }
-                for j in jobs
-            ],
-        }
-
-
-@mcp.tool()
-def product_full_analysis(product_id: int) -> dict:
-    """Start a full analysis workflow by queuing a product analysis (step 1 of 4).
-
-    After this job completes, follow these steps in order:
-    1. Run ci_run_discovery to discover competitors (poll with job_get_status until complete — output_data includes competitor_names).
-    2. Run ci_run_competitor_audit for EACH competitor name returned by discovery.
-    3. After all audits complete, run ci_run_analysis for landscape synthesis.
-
-    You can also call ci_get_competitor_list at any point to see all competitors and their analysis status.
-
-    Args:
-        product_id: The product to analyze. Must have a detailed description (50+ characters).
-    """
-    from app.models.competitor_intelligence import CIProduct
-    from app.models.queue import JobType
-    from app.services.queue_service import QueueService
-
-    with get_session() as db:
-        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
-        if denied:
-            return denied
-
-        product = db.query(CIProduct).get(product_id)
-        if not product:
-            return {"error": f"Product {product_id} not found"}
-        if len(product.product_description or "") < 50:
-            return {
-                "error": "Product description is too short for analysis. "
-                         "Update the product with a detailed description or use product_run_analysis with a source_url first.",
-            }
-
-        conflict = require_no_active_job(db, product_id, JobType.PRODUCT_ANALYSIS, "Product analysis")
-        if conflict:
-            return conflict
-
-        queue_service = QueueService(db)
-        job = queue_service.create_job(
-            job_type=JobType.PRODUCT_ANALYSIS,
-            input_data={
-                "product_id": product_id,
-                "product_description": product.product_description,
-                "source_type": product.product_source_type or "text",
-            },
-            product_id=product_id,
-            user_id=resolve_user_id_for_job(db, product_id),
-        )
-
-        from app.queue.product_tasks import analyze_product_task
-        from mcp_server.db import dispatch_task
-        result = dispatch_task(analyze_product_task, job.id)
-        queue_service.mark_queued(job.id, result.id)
-
-        return {
-            "job_id": job.id,
-            "job_uuid": job.job_uuid,
-            "status": "queued",
-            "message": "Product analysis queued (step 1 of 4). Poll with job_get_status until complete, then: "
-                       "(2) ci_run_discovery → poll until complete → output_data.competitor_names lists discovered names → "
-                       "(3) ci_run_competitor_audit for EACH competitor name → "
-                       "(4) ci_run_analysis for landscape synthesis.",
+            "jobs": [job_summary(j) for j in jobs],
         }
 
 
@@ -654,11 +585,14 @@ def product_update_triage_settings(
 
 
 @mcp.tool()
-def product_get_agent_config(product_id: int) -> dict:
-    """Get competitive agent scheduling configuration — controls when analysis, discovery, and audits run automatically.
+def product_get_agent_schedule(product_id: int) -> dict:
+    """Get the automation SCHEDULE for background agent runs — when product analysis, competitor discovery, and deep analysis run automatically.
+
+    NOT the competitor-change monitoring/alerting settings; for those (and
+    "is monitoring enabled?") use monitoring_get_config.
 
     Args:
-        product_id: The product to get agent config for.
+        product_id: The product to get the agent schedule for.
     """
     from app.models.competitive_agent import CompetitiveAgentConfig
 
@@ -675,7 +609,7 @@ def product_get_agent_config(product_id: int) -> dict:
             return {
                 "product_id": product_id,
                 "configured": False,
-                "message": "No agent config exists. Use product_update_agent_config to create one.",
+                "message": "No agent schedule exists. Use product_update_agent_schedule to create one.",
             }
 
         return {
@@ -697,7 +631,7 @@ def product_get_agent_config(product_id: int) -> dict:
 
 
 @mcp.tool()
-def product_update_agent_config(
+def product_update_agent_schedule(
     product_id: int,
     enabled: bool = None,
     product_analysis_mode: str = "",
@@ -709,7 +643,10 @@ def product_update_agent_config(
     deep_analysis_mode: str = "",
     deep_analysis_schedule: str = "",
 ) -> dict:
-    """Update competitive agent scheduling configuration. Only provided fields are changed.
+    """Update the automation SCHEDULE for background agent runs. Only provided fields are changed.
+
+    NOT the competitor-change monitoring/alerting settings; for those use
+    monitoring_update_config.
 
     Args:
         product_id: The product to configure.
@@ -718,7 +655,7 @@ def product_update_agent_config(
         product_analysis_schedule: "daily", "weekly", or "monthly" (when mode is scheduled).
         competitor_discovery_mode: "manual" or "scheduled".
         competitor_discovery_schedule: "daily", "weekly", or "monthly".
-        alert_on_new_competitors: Alert when new competitors are discovered.
+        alert_on_new_competitors: Alert when new competitors are discovered. This flag (not the monitoring-config one) governs discovery-run alerts.
         alert_on_disappeared_competitors: Alert when competitors disappear.
         deep_analysis_mode: "manual" or "scheduled".
         deep_analysis_schedule: "daily", "weekly", or "monthly".

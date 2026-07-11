@@ -9,7 +9,10 @@ from app.models.competitor_intelligence import ProductPermissionLevel
 
 @mcp.tool()
 def monitoring_get_config(product_id: int) -> dict:
-    """Get the competitive monitoring configuration for a product — frequency, alert settings, auto-idea generation.
+    """Get competitor-change MONITORING and alerting configuration — monitoring frequency, feature-change alerts, auto-idea generation. When asked "is monitoring enabled?", this is the right tool.
+
+    NOT the agent run schedules; for scheduled analysis/discovery/audit runs
+    use product_get_agent_schedule.
 
     Args:
         product_id: The product to get monitoring config for.
@@ -62,7 +65,9 @@ def monitoring_update_config(
     auto_idea_confidence_threshold: float = None,
     notify_product_owners: bool = None,
 ) -> dict:
-    """Update competitive monitoring configuration. Only provided fields are changed.
+    """Update competitor-change MONITORING and alerting configuration. Only provided fields are changed.
+
+    NOT the agent run schedules; for those use product_update_agent_schedule.
 
     Args:
         product_id: The product to configure monitoring for.
@@ -70,7 +75,7 @@ def monitoring_update_config(
         monitoring_frequency: How often to monitor: "daily", "weekly", "biweekly", "monthly".
         alert_on_new_features: Alert when competitors add features.
         alert_on_removed_features: Alert when competitors remove features.
-        alert_on_new_competitors: Alert on new competitors discovered.
+        alert_on_new_competitors: Alert on new competitors (monitoring pipeline record; discovery-run alerts are governed by product_update_agent_schedule).
         min_feature_change_threshold: Minimum features changed to trigger an alert (1+).
         auto_generate_ideas: Automatically create ideas from detected competitor features.
         auto_idea_confidence_threshold: Confidence threshold for auto-generated ideas (0.0-1.0).
