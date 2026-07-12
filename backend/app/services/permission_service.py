@@ -104,8 +104,11 @@ class PermissionService:
         Get all products accessible to a user at the specified permission level.
 
         Role-based filtering:
-        - ADMIN / PRODUCT_OWNER: Products they created + explicitly granted
-        - VOTER: Only products with explicit permission grants
+        - ADMIN / PRODUCT_OWNER: Products they created (implicit OWNER, satisfies
+          any requested level) + products explicitly granted at or above the
+          requested level
+        - VOTER: Only products with explicit permission grants at or above the
+          requested level
 
         Args:
             user_id: User ID
@@ -122,14 +125,24 @@ class PermissionService:
         if not user or not user.is_active:
             return []
 
+        # Grant levels that satisfy the requested minimum (mirrors the
+        # hierarchy in _permission_level_meets: OWNER > EDIT > VIEW).
+        qualifying_levels = [
+            level for level in ProductPermissionLevel
+            if self._permission_level_meets(granted=level, required=permission_level)
+        ]
+
         # Build base query
         query = self.db.query(CIProduct).filter(CIProduct.status == "active")
 
         # Role-based filtering
         if user.role in (UserRole.ADMIN, UserRole.PRODUCT_OWNER):
-            # ADMINs and POs see products they created + products explicitly granted
+            # ADMINs and POs see products they created (implicit OWNER, so it
+            # always satisfies the requested level) + products explicitly
+            # granted at or above the requested level
             granted_ids = select(ProductPermission.product_id).where(
-                ProductPermission.user_id == user_id
+                ProductPermission.user_id == user_id,
+                ProductPermission.permission_level.in_(qualifying_levels)
             )
             return query.filter(
                 or_(
@@ -139,9 +152,11 @@ class PermissionService:
             ).all()
 
         elif user.role == UserRole.VOTER:
-            # VOTERs only see products they have explicit permission for
+            # VOTERs only see products they have explicit permission for,
+            # at or above the requested level
             permitted_ids = select(ProductPermission.product_id).where(
-                ProductPermission.user_id == user_id
+                ProductPermission.user_id == user_id,
+                ProductPermission.permission_level.in_(qualifying_levels)
             )
             return query.filter(CIProduct.id.in_(permitted_ids)).all()
 
