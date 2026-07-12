@@ -5,6 +5,7 @@ Covers upvoting, unvoting, and vote validation.
 """
 
 import pytest
+from app.models.idea import Idea, IdeaStatus, SourceType
 from app.models.vote import Vote
 from conftest import auth_headers
 
@@ -75,3 +76,26 @@ class TestVoting:
         }, headers=auth_headers(admin_user))
         assert resp.status_code == 200
         assert resp.json()["vote_counts"]["upvotes"] == 2
+
+    def test_vote_rejected_on_imported_idea(self, client, voter_user, test_product, voter_product_access, db_session):
+        imported_idea = Idea(
+            title="Imported Idea",
+            what_description="Synced from an external idea board",
+            why_description="Because it was requested there",
+            use_case_description="Used via the external system",
+            product_id=test_product.id,
+            source_type=SourceType.EXTERNAL_SUBMISSION,
+            external_source="canny",
+            external_id="CANNY-101",
+            status=IdeaStatus.ACCEPTED,
+            is_active=True,
+        )
+        db_session.add(imported_idea)
+        db_session.commit()
+        db_session.refresh(imported_idea)
+
+        resp = client.post(f"/ideas/{imported_idea.id}/vote", json={
+            "vote_value": 1
+        }, headers=auth_headers(voter_user))
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Imported ideas are voted on in their source system."

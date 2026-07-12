@@ -315,12 +315,22 @@ export default function IdeaResponseModal({
                           </div>
                           <div className="mt-1">
                             <span className="text-2xl font-bold text-gray-900">
-                              {recommendation.source_summary.vote_count}
+                              {recommendation.source_summary.board_votes}
                             </span>
                             <span className="text-sm text-gray-500 ml-1">
-                              upvotes
+                              votes on Feature-IQ board
                             </span>
                           </div>
+                          {recommendation.source_summary.external_source && (
+                            <div className="mt-1">
+                              <span className="text-lg font-bold text-gray-900">
+                                {recommendation.source_summary.external_vote_count ?? 0}
+                              </span>
+                              <span className="text-sm text-gray-500 ml-1">
+                                votes on {recommendation.source_summary.external_source}
+                              </span>
+                            </div>
+                          )}
                         </button>
 
                         {/* Voter drill-down */}

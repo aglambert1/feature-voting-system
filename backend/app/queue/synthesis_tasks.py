@@ -331,10 +331,12 @@ def resume_unified_synthesis_task(self, audit_results, synthesis_job_id: int):
 def _gather_customer_ideas(db, product_id: int) -> List[Dict[str, Any]]:
     """Top 50 ACCEPTED ideas ranked by demand.
 
-    Demand = internal Vote sum + external_vote_count carried in
-    source_metadata by imported ideas (external voters have no user rows
-    here, so their votes live in metadata). Combined in Python so ranking
-    stays portable across SQLite/PG JSON handling.
+    board_votes (internal Vote sum) and external_votes (from source_metadata,
+    carried by imported ideas) are kept separate and never summed — they're
+    different populations with unknown, non-comparable denominators (e.g. 55
+    Canny votes isn't the same signal as 3 Feature-IQ votes). The internal
+    _rank_key below combines them only to pick the top 50 by rough demand;
+    it is not exposed to callers or the synthesis prompt.
     """
     from sqlalchemy import func as sql_func
 
@@ -354,13 +356,15 @@ def _gather_customer_ideas(db, product_id: int) -> List[Dict[str, Any]]:
         Idea.status == IdeaStatus.ACCEPTED,
     ).all()
 
-    def _combined_votes(idea, internal_votes) -> int:
-        external = (idea.source_metadata or {}).get("external_vote_count") or 0
-        return int(internal_votes or 0) + int(external)
+    def _external_votes(idea) -> int:
+        return int((idea.source_metadata or {}).get("external_vote_count") or 0)
+
+    def _rank_key(idea, internal_votes) -> int:
+        return int(internal_votes or 0) + _external_votes(idea)
 
     ranked = sorted(
         ideas_with_votes,
-        key=lambda pair: _combined_votes(pair[0], pair[1]),
+        key=lambda pair: _rank_key(pair[0], pair[1]),
         reverse=True,
     )[:50]
 
@@ -369,7 +373,9 @@ def _gather_customer_ideas(db, product_id: int) -> List[Dict[str, Any]]:
             "id": idea.id,
             "title": idea.title,
             "description": idea.what_description or "",
-            "vote_count": _combined_votes(idea, votes),
+            "board_votes": int(votes or 0),
+            "external_votes": _external_votes(idea),
+            "external_source": idea.external_source,
             "status": idea.status.value if idea.status else "unknown",
             "jtbd_statement": getattr(idea, "jtbd_statement", None),
             "job_id_key": getattr(idea, "job_id_key", None),

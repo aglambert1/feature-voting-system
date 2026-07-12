@@ -53,6 +53,10 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
   // Determine if voting should be disabled (only accepted ideas can be voted on)
   const isVotingDisabled = showPOControls && idea.status && idea.status !== 'accepted';
 
+  // Imported ideas are voted on in their source system, not here — never
+  // summed with board votes since they're different, non-comparable populations.
+  const isImported = !!idea.external_source;
+
   // Get status badge config
   const getStatusBadge = () => {
     if (!idea.status) return null;
@@ -131,29 +135,56 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
         <div className="flex">
           {/* Vote Section */}
           <div className="vote-section flex-shrink-0">
-            {isVotingDisabled ? (
-              <div className="text-center text-gray-400">
-                <svg className="w-6 h-6 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                </svg>
-                <span className="text-xs">Voting disabled</span>
+            {isImported ? (
+              <div className="text-center w-28">
+                <div className="text-lg font-semibold text-gray-700">
+                  {idea.external_vote_count ?? 0}
+                </div>
+                <div className="text-xs text-gray-500 mb-1">
+                  votes on {idea.external_source}
+                </div>
+                {idea.external_url ? (
+                  <a
+                    href={idea.external_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Vote on {idea.external_source}
+                  </a>
+                ) : (
+                  <span className="text-xs text-gray-400">
+                    Imported — vote on {idea.external_source}
+                  </span>
+                )}
               </div>
             ) : (
-              <VoteButtons
-                ideaId={idea.id}
-                currentVote={userVote}
-                onVoteChange={handleVoteChange}
-              />
+              <>
+                {isVotingDisabled ? (
+                  <div className="text-center text-gray-400">
+                    <svg className="w-6 h-6 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    <span className="text-xs">Voting disabled</span>
+                  </div>
+                ) : (
+                  <VoteButtons
+                    ideaId={idea.id}
+                    currentVote={userVote}
+                    onVoteChange={handleVoteChange}
+                  />
+                )}
+                {/* Total Votes Display */}
+                <div className="text-center mt-2">
+                  <span className="text-sm font-semibold text-gray-700">
+                    {idea.vote_counts.total_votes}
+                  </span>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {idea.vote_counts.total_votes === 1 ? 'vote' : 'votes'}
+                  </div>
+                </div>
+              </>
             )}
-            {/* Total Votes Display */}
-            <div className="text-center mt-2">
-              <span className="text-sm font-semibold text-gray-700">
-                {idea.vote_counts.total_votes}
-              </span>
-              <div className="text-xs text-gray-500 mt-0.5">
-                {idea.vote_counts.total_votes === 1 ? 'vote' : 'votes'}
-              </div>
-            </div>
           </div>
 
           {/* Content Section */}
@@ -178,6 +209,13 @@ const IdeaCard = ({ idea, onVoteUpdate, showPOControls, onRespond }: IdeaCardPro
 
             {/* Badges Row */}
             <div className="flex flex-wrap gap-2 mb-3">
+              {/* Imported Provenance Badge */}
+              {isImported && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                  Imported from {idea.external_source}
+                </span>
+              )}
+
               {/* Status Badge - shown for all users */}
               {statusBadge && (
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusBadge.className}`}>
