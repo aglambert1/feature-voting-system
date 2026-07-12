@@ -92,6 +92,59 @@ class TestListProducts:
         resp = client.get("/product-intelligence/products")
         assert resp.status_code == 401
 
+    def test_list_products_filters_by_permission_level(self, client, admin_user, po_user, db_session, test_product):
+        """Regression: permission_level query param was previously accepted but
+        never applied — ?permission_level=owner returned VIEW-level products too."""
+        from app.models.competitor_intelligence import CIProduct, ProductPermission, ProductPermissionLevel
+
+        view_only_product = CIProduct(
+            product_name="View Only Product", product_description="Granted at VIEW only",
+            created_by_user_id=po_user.id,  # created by someone else; admin_user only has a VIEW grant
+            status="active",
+        )
+        db_session.add(view_only_product)
+        db_session.commit()
+        db_session.refresh(view_only_product)
+
+        db_session.add(ProductPermission(
+            product_id=view_only_product.id, user_id=admin_user.id,
+            permission_level=ProductPermissionLevel.VIEW, granted_by_user_id=admin_user.id,
+        ))
+        db_session.add(ProductPermission(
+            product_id=test_product.id, user_id=admin_user.id,
+            permission_level=ProductPermissionLevel.OWNER, granted_by_user_id=admin_user.id,
+        ))
+        db_session.commit()
+
+        resp = client.get(
+            "/product-intelligence/products?permission_level=owner",
+            headers=auth_headers(admin_user)
+        )
+        assert resp.status_code == 200
+        names = [p["product_name"] for p in resp.json()]
+        assert "Test Product" in names
+        assert "View Only Product" not in names
+
+        resp_view = client.get(
+            "/product-intelligence/products?permission_level=view",
+            headers=auth_headers(admin_user)
+        )
+        assert resp_view.status_code == 200
+        names_view = [p["product_name"] for p in resp_view.json()]
+        assert "Test Product" in names_view
+        assert "View Only Product" in names_view
+
+    def test_list_products_created_product_satisfies_owner_filter(self, client, po_user, test_product):
+        """A product's creator has implicit OWNER access even without an explicit
+        ProductPermission row, so it must still appear under ?permission_level=owner."""
+        resp = client.get(
+            "/product-intelligence/products?permission_level=owner",
+            headers=auth_headers(po_user)
+        )
+        assert resp.status_code == 200
+        names = [p["product_name"] for p in resp.json()]
+        assert "Test Product" in names
+
 
 class TestGetProduct:
 
