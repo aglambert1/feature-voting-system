@@ -79,7 +79,7 @@ This is the load-bearing concept. Everything else is plumbing.
    └────────────────┘
 
            ┌────────────────────────────────────────────────────────────┐
-           │  MCP SERVER (mcp_server/) — 75 tools across 10 files        │
+           │  MCP SERVER (mcp_server/) — 78 tools across 10 files        │
            │  Stdio + HTTP/OAuth · exposes most of the API to Claude    │
            └────────────────────────────────────────────────────────────┘
 ```
@@ -119,7 +119,7 @@ Embeddings are how everything stays connected. When any text-bearing record (Ide
 | **Services** | Cross-cutting — embeddings, LLM, vector search, queue, search | `backend/app/services/` |
 | **Agents** | LLM-driven analysts — each is a class subclassing `BaseAgent` | `backend/app/agents/` |
 | **Celery tasks** | Background jobs — 8 domain files plus shared utilities in `helpers.py` (job-failure handling, job linkage, vector math via `app/utils/vectors.py`) | `backend/app/queue/` |
-| **MCP server** | 75 tools exposing the API to Claude Desktop | `backend/mcp_server/` |
+| **MCP server** | 78 tools exposing the API to Claude Desktop | `backend/mcp_server/` |
 | **Migrations** | Alembic — must support SQLite (dev) and PostgreSQL (prod) | `backend/alembic/versions/` |
 
 ## Tech stack

@@ -859,11 +859,22 @@ class TestIdeasCreate:
         db_session.add(opp)
         db_session.commit()
 
-        with _mock_session(db_session), _patch_user(owner.id):
+        with _mock_session(db_session), _patch_user(owner.id), \
+                patch("mcp_server.db.dispatch_task") as dispatch:
+            dispatch.side_effect = lambda *a, **k: MagicMock(id="celery-syn")
             result = ideas_create(product_a.id, source="synthesis", opportunity_id=opp.id)
             assert "error" not in result
             assert result["title"] == "Better Dashboards"
             assert result["idea_id"] is not None
+            # Bug fix: synthesis-created ideas now carry authoritative
+            # metadata and get triaged
+            assert result["triage_job_uuid"]
+            dispatch.assert_called_once()
+
+        created = db_session.query(Idea).get(result["idea_id"])
+        assert created.source_metadata["synthesis_report_id"] == opp.synthesis_report_id
+        assert created.source_metadata["opportunity_id"] == opp.id
+        assert "competitor_names" in created.source_metadata
 
     def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
         from mcp_server.tools.ideas import ideas_create
@@ -2460,3 +2471,287 @@ class TestSynthesisGetSourcesFreshness:
             result = synthesis_get_sources(product_a.id)
             assert result["synthesis"]["has_report"] is True
             assert result["synthesis"]["synthesis_stale"] is True
+
+
+# ---------------------------------------------------------------------------
+# ideas_import / ideas_get_triage / ideas_mark_exported — external boundary
+# ---------------------------------------------------------------------------
+
+def _import_record(external_id="EXT-1", **overrides):
+    record = {
+        "external_id": external_id,
+        "title": f"External idea {external_id}",
+        "description": "Imported from an external board",
+    }
+    record.update(overrides)
+    return record
+
+
+class TestIdeasImport:
+    def _run(self, db_session, user_id, product_id, records, **kwargs):
+        from mcp_server.tools.ideas import ideas_import
+
+        with _mock_session(db_session), _patch_user(user_id), \
+                patch("mcp_server.db.dispatch_task") as dispatch:
+            counter = iter(range(10_000))
+            dispatch.side_effect = lambda *a, **k: MagicMock(id=f"celery-{next(counter)}")
+            result = ideas_import(product_id, "aha", records, **kwargs)
+        return result, dispatch
+
+    def test_creates_ideas_with_provenance_and_dispatch(self, db_session, product_a, owner):
+        result, dispatch = self._run(
+            db_session, owner.id, product_a.id,
+            [_import_record("EXT-1", vote_count=12), _import_record("EXT-2")],
+        )
+        assert "error" not in result
+        assert result["created"] == 2
+        assert result["skipped"] == 0
+        assert dispatch.call_count == 2
+        assert all(i["job_uuid"] for i in result["ideas"])
+
+        idea = db_session.query(Idea).filter(
+            Idea.external_id == "EXT-1", Idea.external_source == "aha"
+        ).one()
+        assert idea.product_id == product_a.id
+        assert idea.source_type == SourceType.EXTERNAL_SUBMISSION
+        assert idea.status == IdeaStatus.PENDING
+        assert idea.source_metadata["external_vote_count"] == 12
+        assert "job_id_key" not in idea.source_metadata
+
+    def test_conflict_skip_update_error(self, db_session, product_a, owner):
+        self._run(db_session, owner.id, product_a.id, [_import_record("EXT-1", vote_count=5)])
+
+        # skip (default)
+        result, dispatch = self._run(
+            db_session, owner.id, product_a.id, [_import_record("EXT-1")])
+        assert result["skipped"] == 1 and result["created"] == 0
+        assert dispatch.call_count == 0
+
+        # update: refreshes content + external metadata, never re-triages
+        result, dispatch = self._run(
+            db_session, owner.id, product_a.id,
+            [_import_record("EXT-1", title="Updated title", vote_count=40,
+                            external_status="Shipped")],
+            on_conflict="update",
+        )
+        assert result["updated"] == 1
+        assert dispatch.call_count == 0
+        idea = db_session.query(Idea).filter(Idea.external_id == "EXT-1").one()
+        assert idea.title == "Updated title"
+        assert idea.source_metadata["external_vote_count"] == 40
+        assert idea.source_metadata["external_status"] == "Shipped"
+        assert idea.status == IdeaStatus.PENDING  # untouched triage state
+
+        # error mode: record-level error, batch continues
+        result, _ = self._run(
+            db_session, owner.id, product_a.id,
+            [_import_record("EXT-1"), _import_record("EXT-3")],
+            on_conflict="error",
+        )
+        assert result["created"] == 1
+        assert len(result["errors"]) == 1
+        assert "already imported" in result["errors"][0]["error"]
+
+    def test_same_external_id_different_product_ok(self, db_session, product_a, product_b, owner):
+        result, _ = self._run(db_session, owner.id, product_a.id, [_import_record("EXT-9")])
+        assert result["created"] == 1
+        result, _ = self._run(db_session, owner.id, product_b.id, [_import_record("EXT-9")])
+        assert result["created"] == 1
+
+    def test_auto_triage_false_creates_no_jobs(self, db_session, product_a, owner):
+        from app.models.queue import QueueJob
+
+        before = db_session.query(QueueJob).count()
+        result, dispatch = self._run(
+            db_session, owner.id, product_a.id, [_import_record("EXT-NT")],
+            auto_triage=False,
+        )
+        assert result["created"] == 1
+        assert dispatch.call_count == 0
+        assert db_session.query(QueueJob).count() == before
+
+    def test_invalid_records_do_not_abort_batch(self, db_session, product_a, owner):
+        result, _ = self._run(
+            db_session, owner.id, product_a.id,
+            [
+                {"external_id": "", "title": "x", "description": "y"},
+                _import_record("EXT-OK"),
+                {"external_id": "EXT-BAD", "title": "", "description": "y"},
+            ],
+        )
+        assert result["created"] == 1
+        assert len(result["errors"]) == 2
+
+    def test_batch_cap(self, db_session, product_a, owner):
+        records = [_import_record(f"EXT-{i}") for i in range(51)]
+        result, _ = self._run(db_session, owner.id, product_a.id, records)
+        assert "error" in result
+        assert "Batch too large" in result["error"]
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access):
+        result, _ = self._run(db_session, viewer.id, product_a.id, [_import_record()])
+        assert "error" in result
+        assert "EDIT" in result["error"]
+
+    def test_structure_with_llm_fills_missing_fields(self, db_session, product_a, owner):
+        from mcp_server.tools.ideas import ideas_import
+
+        with _mock_session(db_session), _patch_user(owner.id), \
+                patch("mcp_server.db.dispatch_task") as dispatch, \
+                patch("app.services.llm_service.LLMService") as llm_cls:
+            dispatch.side_effect = lambda *a, **k: MagicMock(id="celery-s1")
+            llm_cls.return_value.structure_idea.return_value = {
+                "title": "ignored", "what": "ignored",
+                "why": "Structured why", "use_case": "Structured use case",
+                "category": "Reporting",
+            }
+            result = ideas_import(
+                product_a.id, "canny", [_import_record("EXT-S")],
+                structure_with_llm=True,
+            )
+
+        assert result["created"] == 1
+        llm_cls.return_value.structure_idea.assert_called_once()
+        idea = db_session.query(Idea).filter(Idea.external_id == "EXT-S").one()
+        assert idea.why_description == "Structured why"
+        assert idea.use_case_description == "Structured use case"
+        assert idea.category == "Reporting"
+
+
+class TestIdeasGetTriage:
+    def test_pending_idea(self, db_session, product_a, viewer, viewer_access, idea):
+        from mcp_server.tools.ideas import ideas_get_triage
+
+        idea.status = IdeaStatus.PENDING
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ideas_get_triage(idea.id)
+            assert result["triaged"] is False
+            assert result["status"] == "pending"
+            assert "job_get_status" in result["message"]
+
+    def test_full_verdict(self, db_session, product_a, viewer, viewer_access, idea, owner):
+        from app.models.competitor_intelligence import ProductJob
+        from app.models.competitor_intelligence import JobType as PJJobType
+        from mcp_server.tools.ideas import ideas_get_triage
+
+        duplicate_target = Idea(
+            title="Original idea", what_description="d", why_description="w",
+            use_case_description="u", product_id=product_a.id, submitter_id=owner.id,
+            source_type=SourceType.CUSTOMER_SUBMISSION, status=IdeaStatus.ACCEPTED,
+            is_active=True,
+        )
+        db_session.add(duplicate_target)
+        db_session.flush()
+
+        pj = ProductJob(
+            product_id=product_a.id, job_id_key="j1",
+            statement="Understand account health", job_type=PJJobType.FUNCTIONAL,
+            status="active",
+        )
+        db_session.add(pj)
+
+        idea.status = IdeaStatus.FEATURE_EXISTS
+        idea.is_active = False
+        idea.triage_recommendation = "reject"
+        idea.triage_confidence = 0.93
+        idea.triage_reasoning = "Feature already exists"
+        idea.category = "Reporting"
+        idea.auto_categorized = True
+        idea.jtbd_statement = "When reporting, I want exports"
+        idea.duplicate_of_idea_id = duplicate_target.id
+        idea.similarity_score = 0.97
+        idea.job_id_key = "j1"
+        idea.auto_response_text = "This capability already exists."
+        idea.external_id = "EXT-42"
+        idea.external_source = "aha"
+        idea.competitive_context = {
+            "competitors_with_feature": ["Comp A"],
+            "competitive_urgency": "high",
+            "existing_feature": {
+                "feature_name": "CSV Export",
+                "feature_description": "Existing export",
+                "similarity_score": 0.91,
+                "source_url": "https://docs.example.com/export",
+            },
+        }
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            verdict = ideas_get_triage(idea.id)
+
+        assert verdict["triaged"] is True
+        assert verdict["status"] == "feature_exists"
+        assert verdict["recommendation"] == "reject"
+        assert verdict["confidence"] == 0.93
+        assert verdict["duplicate"]["duplicate_of_idea_id"] == duplicate_target.id
+        assert verdict["duplicate"]["duplicate_of_title"] == "Original idea"
+        assert verdict["feature_exists"]["feature_name"] == "CSV Export"
+        assert verdict["competitive"]["competitors_with_feature"] == ["Comp A"]
+        assert verdict["competitive"]["competitive_urgency"] == "high"
+        assert verdict["job_link"]["job_id_key"] == "j1"
+        assert verdict["job_link"]["job_statement"] == "Understand account health"
+        assert verdict["external"] == {"external_id": "EXT-42", "external_source": "aha"}
+
+    def test_outsider_denied(self, db_session, product_a, outsider, idea):
+        from mcp_server.tools.ideas import ideas_get_triage
+
+        with _mock_session(db_session), _patch_user(outsider.id):
+            result = ideas_get_triage(idea.id)
+            assert "error" in result
+
+
+class TestIdeasMarkExported:
+    def test_stamps_provenance_and_dedupes_future_imports(self, db_session, product_a, owner, idea):
+        from mcp_server.tools.ideas import ideas_import, ideas_mark_exported
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_mark_exported(idea.id, "AHA-77", "aha")
+            assert "error" not in result
+
+        db_session.refresh(idea)
+        assert idea.external_id == "AHA-77"
+        assert idea.external_source == "aha"
+
+        # A subsequent import of the same external record dedupes against it
+        with _mock_session(db_session), _patch_user(owner.id), \
+                patch("mcp_server.db.dispatch_task"):
+            result = ideas_import(product_a.id, "aha", [_import_record("AHA-77")])
+        assert result["skipped"] == 1
+        assert result["created"] == 0
+
+    def test_restamp_different_provenance_errors(self, db_session, product_a, owner, idea):
+        from mcp_server.tools.ideas import ideas_mark_exported
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            assert "error" not in ideas_mark_exported(idea.id, "AHA-77", "aha")
+            result = ideas_mark_exported(idea.id, "CANNY-1", "canny")
+            assert "error" in result
+            assert "refusing to overwrite" in result["error"]
+            # Same provenance re-stamp is idempotent
+            assert "error" not in ideas_mark_exported(idea.id, "AHA-77", "aha")
+
+    def test_collision_with_other_idea_errors(self, db_session, product_a, owner, idea):
+        from mcp_server.tools.ideas import ideas_mark_exported
+
+        other = Idea(
+            title="Other", what_description="d", why_description="w",
+            use_case_description="u", product_id=product_a.id, submitter_id=owner.id,
+            source_type=SourceType.CUSTOMER_SUBMISSION, status=IdeaStatus.ACCEPTED,
+            external_id="AHA-77", external_source="aha",
+        )
+        db_session.add(other)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_mark_exported(idea.id, "AHA-77", "aha")
+            assert "error" in result
+            assert "already linked" in result["error"]
+
+    def test_viewer_denied(self, db_session, product_a, viewer, viewer_access, idea):
+        from mcp_server.tools.ideas import ideas_mark_exported
+
+        with _mock_session(db_session), _patch_user(viewer.id):
+            result = ideas_mark_exported(idea.id, "AHA-1", "aha")
+            assert "error" in result

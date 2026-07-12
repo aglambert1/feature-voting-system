@@ -216,7 +216,11 @@ def ideas_create(
     feature_id: int = 0,
     opportunity_id: int = 0,
 ) -> dict:
-    """Create ideas from various sources. The source param determines which fields are required.
+    """Create ideas that ORIGINATE here from various sources. The source param determines which fields are required.
+
+    For ideas that already exist in an external idea system (Aha!, Canny,
+    Jira Product Discovery), use ideas_import instead — it preserves external
+    provenance for dedup and verdict write-back.
 
     Args:
         product_id: The product to create the idea for.
@@ -471,6 +475,12 @@ def _create_from_synthesis(db, product_id: int, opportunity_id: int) -> dict:
             sup = ie['support']
             parts.append(f"\n- **Support**: {sup.get('ticket_count', 0)} tickets")
 
+    from app.services.idea_source_metadata import build_opportunity_source_metadata
+    from app.models.queue import JobType
+    from app.services.queue_service import QueueService
+    from app.queue.triage_tasks import triage_idea_task
+    from mcp_server.db import dispatch_task
+
     user_id = resolve_user_id_for_job(db, product_id)
     idea = Idea(
         product_id=product_id,
@@ -481,18 +491,47 @@ def _create_from_synthesis(db, product_id: int, opportunity_id: int) -> dict:
         source_type=SourceType.COMPETITOR_AUTOMATED,
         submitter_id=user_id,
         status=IdeaStatus.PENDING,
+        # Carries the authoritative job_id_key + competitor list so triage
+        # preserves the opportunity's linkage instead of re-deriving it.
+        source_metadata=build_opportunity_source_metadata(
+            synthesis_report_id=opportunity.synthesis_report_id,
+            opportunity_id=opportunity.id,
+            feature_name=opportunity.opportunity_name,
+            priority_score=opportunity.priority_score,
+            sources=opportunity.sources,
+            job_id_key=opportunity.job_id_key,
+            investment_tier=opportunity.investment_tier,
+            competitive_evidence=opportunity.competitive_evidence,
+        ),
     )
     db.add(idea)
     db.flush()
 
     opportunity.linked_idea_id = idea.id
 
+    queue_service = QueueService(db)
+    triage_job = queue_service.create_job(
+        job_type=JobType.IDEA_TRIAGE,
+        input_data={"idea_id": idea.id},
+        product_id=product_id,
+        user_id=user_id,
+    )
+    db.commit()
+
+    try:
+        result = dispatch_task(triage_idea_task, triage_job.id)
+        queue_service.mark_queued(triage_job.id, result.id)
+    except Exception as dispatch_err:
+        print(f"[ideas_create] Warning: triage dispatch failed for idea {idea.id}: {dispatch_err}")
+
     return {
         "idea_id": idea.id,
         "title": idea.title,
         "status": idea.status.value,
         "opportunity_id": opportunity_id,
-        "message": f"Idea '{idea.title}' created from synthesis opportunity.",
+        "triage_job_id": triage_job.id,
+        "triage_job_uuid": triage_job.job_uuid,
+        "message": f"Idea '{idea.title}' created from synthesis opportunity. Triage queued — poll job_get_status.",
     }
 
 
@@ -822,3 +861,317 @@ def ideas_respond(idea_id: int, status: str, comment: str, duplicate_of_idea_id:
             result["duplicate_of_idea_id"] = duplicate_of_idea_id
 
         return result
+
+
+# ---------------------------------------------------------------------------
+# External idea-board boundary: import, verdict export, provenance stamping
+# ---------------------------------------------------------------------------
+
+IMPORT_BATCH_LIMIT = 50
+
+
+@mcp.tool()
+def ideas_import(
+    product_id: int,
+    external_source: str,
+    records: list[dict],
+    auto_triage: bool = True,
+    on_conflict: str = "skip",
+    structure_with_llm: bool = False,
+) -> dict:
+    """Import ideas from an EXTERNAL idea system (Aha!, Canny, Jira Product Discovery, spreadsheets/CSV).
+
+    The evidence-sweep workflow: (1) one-time priming — page the full external
+    board through this tool so duplicate detection sees history; (2) before
+    each sweep, refresh changed ideas (use the source's updated-since filter)
+    with on_conflict="update"; (3) triage runs per idea — poll
+    job_get_status(job_uuid), then ideas_get_triage(idea_id) for the
+    write-back verdict.
+
+    Use ideas_create for ideas that originate HERE (manual text, competitor
+    gaps, synthesis opportunities). Records keep external provenance
+    (external_id + external_source) so re-imports dedupe and verdicts map
+    back to the external record. vote_count is stored as provenance metadata
+    and counts toward synthesis demand ranking; it does not create internal
+    votes.
+
+    Args:
+        product_id: The product to import ideas into.
+        external_source: Source system label, e.g. "aha", "canny", "jira_product_discovery", "csv".
+        records: Up to 50 records. Each: external_id* (str), title* (str),
+            description* (str), why?, use_case?, category?, submitter? (label),
+            vote_count? (int), external_status?, url?.
+        auto_triage: Queue AI triage for each created idea (default true).
+        on_conflict: For records whose (external_id, external_source) already
+            exist in this product: "skip" (default), "update" (refresh content
+            + external_status/vote_count metadata; never touches triage state,
+            no re-triage), or "error" (record-level error, batch continues).
+        structure_with_llm: When true, records missing why/use_case are split
+            from their description blob via AI structuring (costs tokens;
+            default false keeps import deterministic).
+    """
+    from app.models.idea import Idea, IdeaStatus, SourceType
+    from app.models.queue import JobType
+    from app.services.idea_normalizer_service import IdeaNormalizerService
+    from app.services.queue_service import QueueService
+    from app.services.llm_service import LLMService
+    from app.queue.triage_tasks import triage_idea_task
+    from mcp_server.db import dispatch_task
+
+    valid_conflict = {"skip", "update", "error"}
+    if on_conflict not in valid_conflict:
+        return {"error": f"Invalid on_conflict '{on_conflict}'. Must be one of: {sorted(valid_conflict)}"}
+    if not external_source or not str(external_source).strip():
+        return {"error": "external_source is required (e.g. 'aha', 'canny')."}
+    if not records:
+        return {"error": "records is empty — nothing to import."}
+    if len(records) > IMPORT_BATCH_LIMIT:
+        return {"error": f"Batch too large ({len(records)} records). Import at most {IMPORT_BATCH_LIMIT} per call and page through the rest."}
+
+    external_source = str(external_source).strip()
+
+    with get_session() as db:
+        denied = require_product_access(db, product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        llm_service = LLMService()
+        normalizer = IdeaNormalizerService(db, llm_service)
+        adapter = normalizer.get_adapter(SourceType.EXTERNAL_SUBMISSION)
+        user_id = resolve_user_id_for_job(db, product_id)
+
+        results = []
+        errors = []
+        created = skipped = updated = 0
+        pending_dispatch = []
+
+        for index, record in enumerate(records):
+            external_id = str(record.get("external_id") or "").strip()
+            if not external_id:
+                errors.append({"index": index, "error": "external_id is required"})
+                continue
+
+            existing = db.query(Idea).filter(
+                Idea.product_id == product_id,
+                Idea.external_id == external_id,
+                Idea.external_source == external_source,
+            ).first()
+
+            if existing:
+                if on_conflict == "skip":
+                    skipped += 1
+                    results.append({"external_id": external_id, "idea_id": existing.id, "action": "skipped"})
+                    continue
+                if on_conflict == "error":
+                    errors.append({
+                        "index": index,
+                        "external_id": external_id,
+                        "error": f"Idea already imported (idea_id={existing.id})",
+                    })
+                    continue
+                # update: refresh content + external metadata; never triage state
+                existing.title = str(record.get("title") or existing.title).strip()[:255]
+                if record.get("description"):
+                    existing.what_description = str(record["description"]).strip()
+                if record.get("why"):
+                    existing.why_description = str(record["why"]).strip()
+                if record.get("use_case"):
+                    existing.use_case_description = str(record["use_case"]).strip()
+                if record.get("category"):
+                    existing.category = record["category"]
+                metadata = dict(existing.source_metadata or {})
+                if record.get("vote_count") is not None:
+                    metadata["external_vote_count"] = int(record["vote_count"])
+                if record.get("external_status"):
+                    metadata["external_status"] = record["external_status"]
+                if record.get("url"):
+                    metadata["external_url"] = record["url"]
+                existing.source_metadata = metadata
+                updated += 1
+                results.append({"external_id": external_id, "idea_id": existing.id, "action": "updated"})
+                continue
+
+            raw_input = {**record, "product_id": product_id, "external_id": external_id, "external_source": external_source}
+            if structure_with_llm and record.get("description") and not (
+                record.get("why") and record.get("use_case")
+            ):
+                try:
+                    structured = llm_service.structure_idea(
+                        freeform_text=f"{record.get('title', '')}\n\n{record['description']}",
+                        product_context=None,
+                    )
+                    raw_input.setdefault("why", structured.get("why"))
+                    raw_input.setdefault("use_case", structured.get("use_case"))
+                    if structured.get("category"):
+                        raw_input.setdefault("category", structured["category"])
+                except Exception as structure_err:
+                    # Structuring is best-effort; fall back to the raw blob.
+                    print(f"[ideas_import] Warning: structuring failed for {external_id}: {structure_err}")
+
+            if not adapter.validate_input(raw_input):
+                errors.append({
+                    "index": index,
+                    "external_id": external_id,
+                    "error": "Invalid record: title and description are required",
+                })
+                continue
+
+            normalized = adapter.normalize(raw_input)
+            idea = normalizer.create_idea_from_normalized(normalized, IdeaStatus.PENDING)
+            idea.submitter_id = idea.submitter_id or user_id
+            db.add(idea)
+            db.flush()
+            created += 1
+
+            entry = {"external_id": external_id, "idea_id": idea.id, "action": "created"}
+            if auto_triage:
+                queue_service = QueueService(db)
+                triage_job = queue_service.create_job(
+                    job_type=JobType.IDEA_TRIAGE,
+                    input_data={"idea_id": idea.id},
+                    product_id=product_id,
+                    user_id=user_id,
+                    auto_commit=False,
+                )
+                db.flush()
+                entry["job_id"] = triage_job.id
+                pending_dispatch.append(triage_job.id)
+            results.append(entry)
+
+        db.commit()
+
+        # Dispatch after commit so workers never race an uncommitted row.
+        job_uuids = {}
+        for job_db_id in pending_dispatch:
+            try:
+                result = dispatch_task(triage_idea_task, job_db_id)
+                QueueService(db).mark_queued(job_db_id, result.id)
+            except Exception as dispatch_err:
+                db.rollback()
+                print(f"[ideas_import] Warning: triage dispatch failed for job {job_db_id}: {dispatch_err}")
+        if pending_dispatch:
+            from app.models.queue import QueueJob
+            for row in db.query(QueueJob).filter(QueueJob.id.in_(pending_dispatch)).all():
+                job_uuids[row.id] = row.job_uuid
+            for entry in results:
+                if entry.get("job_id") in job_uuids:
+                    entry["job_uuid"] = job_uuids[entry["job_id"]]
+
+        return {
+            "product_id": product_id,
+            "external_source": external_source,
+            "created": created,
+            "skipped": skipped,
+            "updated": updated,
+            "errors": errors,
+            "ideas": results,
+            "message": (
+                f"Imported {created} idea(s) ({skipped} skipped, {updated} updated, {len(errors)} error(s)). "
+                + ("Triage queued per idea — poll job_get_status(job_uuid), then ideas_get_triage(idea_id) for verdicts."
+                   if auto_triage and created else "")
+            ).strip(),
+        }
+
+
+@mcp.tool()
+def ideas_get_triage(idea_id: int) -> dict:
+    """Get the structured triage verdict for an idea — the stable shape for syncing to external idea systems.
+
+    Write-back mapping guidance: map `status` to the external system's
+    workflow status, `reasoning`/`auto_response_text` to a comment,
+    `category` and `competitive.competitors_with_feature` to tags or custom
+    fields, and `duplicate.duplicate_of_idea_id` to a merge/link. Statuses:
+    pending, accepted, needs_review, duplicate, merged, feature_exists,
+    not_appropriate. Recommendations: approve, merge, review, reject.
+    Urgency: low, medium, high, critical.
+
+    For full idea detail (votes, comments) use ideas_get_status; this tool is
+    the fixed-vocabulary triage contract.
+
+    Args:
+        idea_id: The idea to get the verdict for.
+    """
+    from app.models.idea import Idea, IdeaStatus
+
+    with get_session() as db:
+        idea = db.query(Idea).get(idea_id)
+        if not idea:
+            return {"error": f"Idea {idea_id} not found"}
+
+        denied = require_product_access(db, idea.product_id)
+        if denied:
+            return denied
+
+        if idea.status == IdeaStatus.PENDING:
+            triage_job = idea.triage_job
+            return {
+                "idea_id": idea.id,
+                "triaged": False,
+                "status": "pending",
+                "triage_job_uuid": triage_job.job_uuid if triage_job else None,
+                "message": "Triage has not completed. Poll job_get_status(triage_job_uuid) and retry.",
+            }
+
+        from app.schemas.triage import build_triage_verdict
+        return build_triage_verdict(db, idea).model_dump()
+
+
+@mcp.tool()
+def ideas_mark_exported(idea_id: int, external_id: str, external_source: str) -> dict:
+    """Stamp external provenance on an internally-created idea after pushing it to an external board.
+
+    Call this after you (the agent) have created the corresponding record in
+    the external system — it closes the outbound round trip so future
+    ideas_import calls dedupe against this idea instead of re-importing it,
+    and ideas_get_triage echoes the external linkage.
+
+    Args:
+        idea_id: The internally-created idea that was pushed out.
+        external_id: The record's ID in the external system.
+        external_source: Source system label matching ideas_import usage (e.g. "aha").
+    """
+    from app.models.idea import Idea
+
+    external_id = str(external_id or "").strip()
+    external_source = str(external_source or "").strip()
+    if not external_id or not external_source:
+        return {"error": "external_id and external_source are required."}
+
+    with get_session() as db:
+        idea = db.query(Idea).get(idea_id)
+        if not idea:
+            return {"error": f"Idea {idea_id} not found"}
+
+        denied = require_product_access(db, idea.product_id, ProductPermissionLevel.EDIT)
+        if denied:
+            return denied
+
+        if idea.external_id and (
+            idea.external_id != external_id or idea.external_source != external_source
+        ):
+            return {"error": (
+                f"Idea {idea_id} already has external provenance "
+                f"({idea.external_source}:{idea.external_id}); refusing to overwrite."
+            )}
+
+        collision = db.query(Idea).filter(
+            Idea.product_id == idea.product_id,
+            Idea.external_id == external_id,
+            Idea.external_source == external_source,
+            Idea.id != idea.id,
+        ).first()
+        if collision:
+            return {"error": (
+                f"({external_source}:{external_id}) is already linked to idea {collision.id}."
+            )}
+
+        idea.external_id = external_id
+        idea.external_source = external_source
+        db.flush()
+
+        return {
+            "idea_id": idea.id,
+            "external_id": external_id,
+            "external_source": external_source,
+            "message": f"Idea {idea.id} linked to {external_source}:{external_id}. Future imports will dedupe against it.",
+        }
