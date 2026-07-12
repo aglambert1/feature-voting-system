@@ -328,6 +328,56 @@ def resume_unified_synthesis_task(self, audit_results, synthesis_job_id: int):
             db.close()
 
 
+def _gather_customer_ideas(db, product_id: int) -> List[Dict[str, Any]]:
+    """Top 50 ACCEPTED ideas ranked by demand.
+
+    Demand = internal Vote sum + external_vote_count carried in
+    source_metadata by imported ideas (external voters have no user rows
+    here, so their votes live in metadata). Combined in Python so ranking
+    stays portable across SQLite/PG JSON handling.
+    """
+    from sqlalchemy import func as sql_func
+
+    from app.models.idea import Idea, IdeaStatus
+    from app.models.vote import Vote
+
+    vote_counts = db.query(
+        Vote.idea_id,
+        sql_func.sum(Vote.vote_value).label("vote_count"),
+    ).group_by(Vote.idea_id).subquery()
+
+    ideas_with_votes = db.query(
+        Idea,
+        sql_func.coalesce(vote_counts.c.vote_count, 0).label("vote_count"),
+    ).outerjoin(vote_counts, Idea.id == vote_counts.c.idea_id).filter(
+        Idea.product_id == product_id,
+        Idea.status == IdeaStatus.ACCEPTED,
+    ).all()
+
+    def _combined_votes(idea, internal_votes) -> int:
+        external = (idea.source_metadata or {}).get("external_vote_count") or 0
+        return int(internal_votes or 0) + int(external)
+
+    ranked = sorted(
+        ideas_with_votes,
+        key=lambda pair: _combined_votes(pair[0], pair[1]),
+        reverse=True,
+    )[:50]
+
+    return [
+        {
+            "id": idea.id,
+            "title": idea.title,
+            "description": idea.what_description or "",
+            "vote_count": _combined_votes(idea, votes),
+            "status": idea.status.value if idea.status else "unknown",
+            "jtbd_statement": getattr(idea, "jtbd_statement", None),
+            "job_id_key": getattr(idea, "job_id_key", None),
+        }
+        for idea, votes in ranked
+    ]
+
+
 def _run_unified_synthesis_post_audits(db, queue_service, job_id: int) -> Dict[str, Any]:
     """Steps 4-10 of unified synthesis. Re-loads state from DB so this is safe
     to call from a fresh worker context (e.g., the chord callback in
@@ -473,32 +523,10 @@ def _run_unified_synthesis_post_audits(db, queue_service, job_id: int) -> Dict[s
 
     queue_service.update_progress(job_id, 40.0, "Gathering customer ideas...")
 
-    # Step 5b: CUSTOMER — top 50 ACCEPTED ideas by vote count
+    # Step 5b: CUSTOMER — top 50 ACCEPTED ideas by demand
     customer_ideas: List[Dict[str, Any]] = []
     if "customer" in included_set:
-        vote_counts = db.query(
-            Vote.idea_id,
-            sql_func.sum(Vote.vote_value).label("vote_count"),
-        ).group_by(Vote.idea_id).subquery()
-
-        ideas_with_votes = db.query(
-            Idea,
-            sql_func.coalesce(vote_counts.c.vote_count, 0).label("vote_count"),
-        ).outerjoin(vote_counts, Idea.id == vote_counts.c.idea_id).filter(
-            Idea.product_id == product_id,
-            Idea.status == IdeaStatus.ACCEPTED,
-        ).order_by(desc("vote_count")).limit(50).all()
-
-        for idea, votes in ideas_with_votes:
-            customer_ideas.append({
-                "id": idea.id,
-                "title": idea.title,
-                "description": idea.what_description or "",
-                "vote_count": int(votes) if votes else 0,
-                "status": idea.status.value if idea.status else "unknown",
-                "jtbd_statement": getattr(idea, "jtbd_statement", None),
-                "job_id_key": getattr(idea, "job_id_key", None),
-            })
+        customer_ideas = _gather_customer_ideas(db, product_id)
 
     queue_service.update_progress(job_id, 55.0, "Gathering internal feedback...")
 

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.base import BaseSourceAdapter, NormalizedIdea
 from app.adapters.customer_submission import CustomerSubmissionAdapter
+from app.adapters.external_submission import ExternalSubmissionAdapter
 from app.adapters.competitor_feature import CompetitorFeatureAdapter
 from app.models.idea import Idea, SourceType, IdeaStatus
 from app.services.llm_service import LLMService
@@ -31,6 +32,7 @@ class IdeaNormalizerService:
     ADAPTER_REGISTRY: Dict[SourceType, Type[BaseSourceAdapter]] = {
         SourceType.CUSTOMER_SUBMISSION: CustomerSubmissionAdapter,
         SourceType.COMPETITOR_AUTOMATED: CompetitorFeatureAdapter,
+        SourceType.EXTERNAL_SUBMISSION: ExternalSubmissionAdapter,
     }
 
     def __init__(self, db: Session, llm_service: Optional[LLMService] = None):
