@@ -546,20 +546,18 @@ async def create_idea_from_opportunity(
             detail=f"Opportunity already has linked idea {opportunity.linked_idea_id}",
         )
 
-    from app.queue.helpers import _extract_competitor_names
-    competitors_with = _extract_competitor_names(opportunity.competitive_evidence)
-    source_metadata = {
-        "synthesis_report_id": opportunity.synthesis_report_id,
-        "opportunity_id": opportunity.id,
-        "feature_name": opportunity.opportunity_name,
-        "priority_score": opportunity.priority_score,
-        "sources": opportunity.sources or [],
-        "job_id_key": opportunity.job_id_key,
-        "investment_tier": opportunity.investment_tier,
-        "manual_creation": True,
-        "competitors_with_feature": competitors_with,
-        "competitor_names": competitors_with,
-    }
+    from app.services.idea_source_metadata import build_opportunity_source_metadata
+    source_metadata = build_opportunity_source_metadata(
+        synthesis_report_id=opportunity.synthesis_report_id,
+        opportunity_id=opportunity.id,
+        feature_name=opportunity.opportunity_name,
+        priority_score=opportunity.priority_score,
+        sources=opportunity.sources,
+        job_id_key=opportunity.job_id_key,
+        investment_tier=opportunity.investment_tier,
+        competitive_evidence=opportunity.competitive_evidence,
+        manual_creation=True,
+    )
 
     idea = Idea(
         title=payload.title[:255],

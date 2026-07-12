@@ -471,6 +471,12 @@ def _create_from_synthesis(db, product_id: int, opportunity_id: int) -> dict:
             sup = ie['support']
             parts.append(f"\n- **Support**: {sup.get('ticket_count', 0)} tickets")
 
+    from app.services.idea_source_metadata import build_opportunity_source_metadata
+    from app.models.queue import JobType
+    from app.services.queue_service import QueueService
+    from app.queue.triage_tasks import triage_idea_task
+    from mcp_server.db import dispatch_task
+
     user_id = resolve_user_id_for_job(db, product_id)
     idea = Idea(
         product_id=product_id,
@@ -481,18 +487,47 @@ def _create_from_synthesis(db, product_id: int, opportunity_id: int) -> dict:
         source_type=SourceType.COMPETITOR_AUTOMATED,
         submitter_id=user_id,
         status=IdeaStatus.PENDING,
+        # Carries the authoritative job_id_key + competitor list so triage
+        # preserves the opportunity's linkage instead of re-deriving it.
+        source_metadata=build_opportunity_source_metadata(
+            synthesis_report_id=opportunity.synthesis_report_id,
+            opportunity_id=opportunity.id,
+            feature_name=opportunity.opportunity_name,
+            priority_score=opportunity.priority_score,
+            sources=opportunity.sources,
+            job_id_key=opportunity.job_id_key,
+            investment_tier=opportunity.investment_tier,
+            competitive_evidence=opportunity.competitive_evidence,
+        ),
     )
     db.add(idea)
     db.flush()
 
     opportunity.linked_idea_id = idea.id
 
+    queue_service = QueueService(db)
+    triage_job = queue_service.create_job(
+        job_type=JobType.IDEA_TRIAGE,
+        input_data={"idea_id": idea.id},
+        product_id=product_id,
+        user_id=user_id,
+    )
+    db.commit()
+
+    try:
+        result = dispatch_task(triage_idea_task, triage_job.id)
+        queue_service.mark_queued(triage_job.id, result.id)
+    except Exception as dispatch_err:
+        print(f"[ideas_create] Warning: triage dispatch failed for idea {idea.id}: {dispatch_err}")
+
     return {
         "idea_id": idea.id,
         "title": idea.title,
         "status": idea.status.value,
         "opportunity_id": opportunity_id,
-        "message": f"Idea '{idea.title}' created from synthesis opportunity.",
+        "triage_job_id": triage_job.id,
+        "triage_job_uuid": triage_job.job_uuid,
+        "message": f"Idea '{idea.title}' created from synthesis opportunity. Triage queued — poll job_get_status.",
     }
 
 

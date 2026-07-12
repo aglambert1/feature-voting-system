@@ -542,6 +542,11 @@ def triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             'auto_response_generated': bool(idea.auto_response_text),
         }
 
+        # Structured verdict — the stable shape agents use for external
+        # write-back (same data ideas_get_triage returns later).
+        from app.schemas.triage import build_triage_verdict
+        output_data['verdict'] = build_triage_verdict(db, idea).model_dump()
+
         # Mark success
         queue_service.mark_success(job_id, output_data)
 
@@ -652,6 +657,9 @@ def submit_and_triage_idea_task(self, job_id: int) -> Dict[str, Any]:
             'existing_feature_match': product_feature_result.has_match if product_feature_result else False,
             'auto_response_text': idea.auto_response_text,
         }
+
+        from app.schemas.triage import build_triage_verdict
+        output_data['verdict'] = build_triage_verdict(db, idea).model_dump()
 
         queue_service.mark_success(job_id, output_data)
         return output_data

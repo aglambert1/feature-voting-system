@@ -196,13 +196,14 @@ TRIAGE_ENVELOPE_KEYS = {
     "triage_recommendation", "category", "has_duplicates", "has_similar",
     "similar_count", "duplicate_of_idea_id", "competitors_with_feature",
     "existing_feature_match", "existing_feature_info", "auto_response_generated",
+    "verdict",
 }
 
 SUBMIT_ENVELOPE_KEYS = {
     "idea_id", "title", "source_type", "category", "status", "is_active",
     "triage_confidence", "triage_recommendation", "has_duplicates",
     "has_similar", "duplicate_of_idea_id", "competitors_with_feature",
-    "existing_feature_match", "auto_response_text",
+    "existing_feature_match", "auto_response_text", "verdict",
 }
 
 

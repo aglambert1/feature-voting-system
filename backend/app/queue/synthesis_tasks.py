@@ -26,7 +26,8 @@ from app.models.competitor_intelligence import (
 )
 from app.services.queue_service import QueueService
 
-from app.queue.helpers import _extract_competitor_names, fail_job
+from app.queue.helpers import fail_job
+from app.services.idea_source_metadata import build_opportunity_source_metadata
 from app.queue.competitor_tasks import functional_audit_task
 from app.queue.triage_tasks import triage_idea_task
 
@@ -761,18 +762,16 @@ def _run_unified_synthesis_post_audits(db, queue_service, job_id: int) -> Dict[s
             if existing_idea:
                 continue
 
-            competitors_with = _extract_competitor_names(opp.get("competitive_evidence"))
-            source_metadata = {
-                "synthesis_report_id": synthesis_report.id,
-                "synthesis_report_version": synthesis_report.report_version,
-                "feature_name": feature_name,
-                "priority_score": opp.get("priority_score"),
-                "sources": opp.get("sources") or [],
-                "job_id_key": opp.get("job_id_key"),
-                "investment_tier": opp.get("investment_tier"),
-                "competitors_with_feature": competitors_with,
-                "competitor_names": competitors_with,
-            }
+            source_metadata = build_opportunity_source_metadata(
+                synthesis_report_id=synthesis_report.id,
+                report_version=synthesis_report.report_version,
+                feature_name=feature_name,
+                priority_score=opp.get("priority_score"),
+                sources=opp.get("sources"),
+                job_id_key=opp.get("job_id_key"),
+                investment_tier=opp.get("investment_tier"),
+                competitive_evidence=opp.get("competitive_evidence"),
+            )
 
             use_case_lines = ["Synthesized from multiple sources:"]
             for src in (opp.get("sources") or []):
