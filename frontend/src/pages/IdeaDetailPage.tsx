@@ -145,7 +145,9 @@ export default function IdeaDetailPage() {
   }
 
   const canComment = idea.is_active;
-  const canVote = idea.status === 'accepted';
+  // Imported ideas are voted on in their source system, not here.
+  const isImported = !!idea.external_source;
+  const canVote = idea.status === 'accepted' && !isImported;
   const needsReview = idea.status === 'needs_review' || idea.status === 'pending';
 
   // Handle vote change
@@ -182,7 +184,7 @@ export default function IdeaDetailPage() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
           {/* Header with voting */}
           <div className="flex items-start gap-4 mb-4">
-            {/* Vote section (for approved ideas) */}
+            {/* Vote section (for approved, non-imported ideas) */}
             {canVote && (
               <div className="flex flex-col items-center">
                 <div className="text-2xl font-bold text-gray-900">{idea.vote_counts?.total_votes ?? 0}</div>
@@ -192,6 +194,28 @@ export default function IdeaDetailPage() {
                   currentVote={userVote}
                   onVoteChange={handleVoteChange}
                 />
+              </div>
+            )}
+
+            {/* Imported provenance (not votable here) */}
+            {isImported && (
+              <div className="flex flex-col items-center w-32 text-center">
+                <div className="text-2xl font-bold text-gray-900">{idea.external_vote_count ?? 0}</div>
+                <div className="text-xs text-gray-500 mb-2">votes on {idea.external_source}</div>
+                {idea.external_url ? (
+                  <a
+                    href={idea.external_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Vote on {idea.external_source}
+                  </a>
+                ) : (
+                  <span className="text-xs text-gray-400">
+                    Imported — vote on {idea.external_source}
+                  </span>
+                )}
               </div>
             )}
 

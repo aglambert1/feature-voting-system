@@ -60,6 +60,13 @@ class IdeaResponse(BaseModel):
     # User's vote on this idea (if authenticated)
     user_vote: Optional[int] = Field(None, description="Current user's vote: 1 or null")
 
+    # Provenance for ideas imported from an external system (Aha!, Canny, Jira, etc.)
+    # Non-null external_source signals this idea is not votable on the Feature-IQ board.
+    external_source: Optional[str] = Field(None, description="External system name, e.g. 'aha', 'canny'")
+    external_vote_count: Optional[int] = Field(None, description="Vote count on the external system")
+    external_status: Optional[str] = Field(None, description="Workflow status on the external system")
+    external_url: Optional[str] = Field(None, description="Link to the idea on the external system")
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -78,6 +85,9 @@ class IdeaListItem(BaseModel):
     created_at: datetime
     product_id: int
     product_name: Optional[str] = None
+
+    # Origin — created here vs. imported from an external system
+    source_type: Optional[SourceType] = None
 
     # Status for display
     status: Optional[IdeaStatus] = None
@@ -99,6 +109,13 @@ class IdeaListItem(BaseModel):
     # User's vote
     user_vote: Optional[int] = None
     user_vote_timestamp: Optional[datetime] = None  # When user voted (if they did)
+
+    # Provenance for ideas imported from an external system (Aha!, Canny, Jira, etc.)
+    # Non-null external_source signals this idea is not votable on the Feature-IQ board.
+    external_source: Optional[str] = None
+    external_vote_count: Optional[int] = None
+    external_status: Optional[str] = None
+    external_url: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

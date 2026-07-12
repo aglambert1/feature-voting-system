@@ -655,6 +655,32 @@ class TestIdeasList:
             result = ideas_list(product_a.id)
             assert "error" in result
 
+    def test_imported_idea_exposes_external_provenance_not_summed(self, db_session, product_a, viewer, owner):
+        """idea_summary must surface external_source/external_vote_count for
+        imported ideas without folding them into the board vote_count — the
+        two are different, non-comparable populations."""
+        from mcp_server.tools.ideas import ideas_list
+
+        imported = Idea(
+            title="Imported Idea", what_description="desc",
+            why_description="testing", use_case_description="tests",
+            product_id=product_a.id, submitter_id=viewer.id,
+            source_type=SourceType.EXTERNAL_SUBMISSION,
+            external_source="canny", external_id="CANNY-101",
+            source_metadata={"external_vote_count": 55, "external_status": "open"},
+            status=IdeaStatus.ACCEPTED, is_active=True,
+        )
+        db_session.add(imported)
+        db_session.commit()
+
+        with _mock_session(db_session), _patch_user(owner.id):
+            result = ideas_list(product_a.id)
+            item = next(i for i in result["ideas"] if i["title"] == "Imported Idea")
+            assert item["source_type"] == "external_submission"
+            assert item["vote_count"] == 0  # no internal Vote rows
+            assert item["external_source"] == "canny"
+            assert item["external_vote_count"] == 55
+
 
 class TestIdeasCreate:
     def test_manual_source_validation(self, db_session, product_a, owner):

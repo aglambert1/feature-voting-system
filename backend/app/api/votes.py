@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 
 from app.database import get_db
-from app.models.idea import Idea
+from app.models.idea import Idea, SourceType
 from app.models.vote import Vote
 from app.models.user import User, UserRole
 from app.models.competitor_intelligence import ProductPermissionLevel
@@ -64,6 +64,15 @@ def vote_on_idea(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Idea with id {idea_id} not found"
+        )
+
+    # Imported ideas are voted on in their source system, not here — summing
+    # board votes with external votes would mix populations with unknown,
+    # non-comparable denominators.
+    if idea.source_type == SourceType.EXTERNAL_SUBMISSION:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Imported ideas are voted on in their source system."
         )
 
     # Verify user has VIEW access to the idea's product

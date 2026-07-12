@@ -246,7 +246,9 @@ You MUST respond with ONLY a valid JSON object matching this exact structure:
       "customer_evidence": {
         "idea_id": 42,
         "idea_title": "CSV import for suppliers",
-        "vote_count": 85,
+        "board_votes": 12,
+        "external_votes": 73,
+        "external_source": "canny",
         "status": "under_review"
       },
       "internal_evidence": {
@@ -629,18 +631,26 @@ Respond with ONLY a valid JSON object matching the schema in the system prompt."
 
         lines = []
         sorted_ideas = sorted(
-            ideas, key=lambda x: x.get("vote_count", 0), reverse=True
+            ideas,
+            key=lambda x: x.get("board_votes", 0) + x.get("external_votes", 0),
+            reverse=True,
         )
         for idea in sorted_ideas:
             idea_id = idea.get("id", 0)
             title = idea.get("title", "Unknown")
-            votes = idea.get("vote_count", 0)
+            board_votes = idea.get("board_votes", 0)
+            external_votes = idea.get("external_votes", 0)
+            external_source = idea.get("external_source")
             status = idea.get("status", "unknown")
             description = idea.get("description", "")
             jtbd = idea.get("jtbd_statement", "")
             job_id_key = idea.get("job_id_key", "")
 
-            lines.append(f"**[ID:{idea_id}] {title}** ({votes} votes)")
+            vote_label = f"{board_votes} votes on Feature-IQ board"
+            if external_source and external_votes:
+                vote_label += f", {external_votes} votes on {external_source}"
+
+            lines.append(f"**[ID:{idea_id}] {title}** ({vote_label})")
             lines.append(f"  Status: {status}")
             if job_id_key:
                 lines.append(f"  Job: {job_id_key}")
@@ -651,9 +661,12 @@ Respond with ONLY a valid JSON object matching the schema in the system prompt."
             lines.append("")
 
         lines.append(
-            f"(Vote buckets: {VOTE_THRESHOLDS['high']}+ high, "
+            f"(Vote buckets apply to Feature-IQ board votes only: "
+            f"{VOTE_THRESHOLDS['high']}+ high, "
             f"{VOTE_THRESHOLDS['medium']}-{VOTE_THRESHOLDS['high'] - 1} medium, "
-            f"{VOTE_THRESHOLDS['low']}-{VOTE_THRESHOLDS['medium'] - 1} low)"
+            f"{VOTE_THRESHOLDS['low']}-{VOTE_THRESHOLDS['medium'] - 1} low. "
+            f"External votes use a different, unknown-size population and are not "
+            f"on the same scale — treat them as directional signal, not comparable counts.)"
         )
         return "\n".join(lines)
 

@@ -145,6 +145,8 @@ export interface IdeaListItem {
   created_at: string;
   product_id: number;
   product_name: string | null;
+  // Origin — created here vs. imported from an external system
+  source_type: SourceType | null;
   // Status fields
   status: IdeaStatus | null;
   is_active: boolean | null;
@@ -160,6 +162,12 @@ export interface IdeaListItem {
   vote_counts: VoteCount;
   user_vote: number | null;
   user_vote_timestamp: string | null;  // Timestamp when user voted
+  // Provenance for ideas imported from an external system (Aha!, Canny, Jira, etc.)
+  // Non-null external_source signals this idea is not votable on the Feature-IQ board.
+  external_source: string | null;
+  external_vote_count: number | null;
+  external_status: string | null;
+  external_url: string | null;
 }
 
 export interface IdeaResponse {
@@ -177,6 +185,10 @@ export interface IdeaResponse {
   product_name: string | null;
   vote_counts: VoteCount;
   user_vote: number | null;
+  external_source: string | null;
+  external_vote_count: number | null;
+  external_status: string | null;
+  external_url: string | null;
 }
 
 export interface IdeaListResponse {
@@ -635,6 +647,12 @@ export interface IdeaDetail {
   user_vote: number | null;
   // Competitive context - only populated for PO/Admin users
   competitive_context: CompetitiveContext | null;
+  // Provenance for ideas imported from an external system (Aha!, Canny, Jira, etc.)
+  // Non-null external_source signals this idea is not votable on the Feature-IQ board.
+  external_source: string | null;
+  external_vote_count: number | null;
+  external_status: string | null;
+  external_url: string | null;
 }
 
 // ============================================================================
@@ -680,11 +698,16 @@ export interface ExistingFeatureMatch {
 }
 
 export interface SourceSummary {
-  vote_count: number;
+  board_votes: number;
   voters: IdeaVoter[];
   competitors_with_feature: string[];
   competitive_urgency: string | null;
   existing_feature: ExistingFeatureMatch | null;
+  // Provenance for ideas imported from an external system — never summed with board_votes.
+  external_source: string | null;
+  external_vote_count: number | null;
+  external_status: string | null;
+  external_url: string | null;
 }
 
 export interface CurrentResponse {

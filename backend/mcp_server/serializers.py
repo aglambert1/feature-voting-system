@@ -69,7 +69,16 @@ def competitor_summary(competitor, report) -> dict:
 
 
 def idea_summary(idea, vote_count: Optional[int] = None) -> dict:
-    """Serialize an Idea for list output (superset shape used by all list tools)."""
+    """Serialize an Idea for list output (superset shape used by all list tools).
+
+    vote_count is board votes only (a Vote-row count passed in by the caller).
+    external_vote_count is a separate, non-comparable population imported from
+    the idea's source system — never summed with vote_count.
+    """
+    from app.models.idea import SourceType
+
+    is_imported = idea.source_type == SourceType.EXTERNAL_SUBMISSION
+    metadata = idea.source_metadata or {}
     return {
         "idea_id": idea.id,
         "title": idea.title,
@@ -77,6 +86,8 @@ def idea_summary(idea, vote_count: Optional[int] = None) -> dict:
         "status": idea.status.value if idea.status else None,
         "source_type": idea.source_type.value if idea.source_type else None,
         "vote_count": vote_count,
+        "external_source": idea.external_source if is_imported else None,
+        "external_vote_count": metadata.get("external_vote_count") if is_imported else None,
         "is_active": idea.is_active,
         "jtbd_statement": idea.jtbd_statement,
         "triage_recommendation": idea.triage_recommendation,

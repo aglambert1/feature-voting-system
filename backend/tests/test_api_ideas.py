@@ -26,6 +26,32 @@ def _grant_admin_access(db_session, test_product, admin_user, level=ProductPermi
     db_session.commit()
 
 
+def _imported_idea(db_session, test_product, submitter_id, title="Imported Idea"):
+    """Create an EXTERNAL_SUBMISSION idea with external provenance metadata."""
+    idea = Idea(
+        title=title,
+        what_description="Synced from an external idea board",
+        why_description="Because it was requested there",
+        use_case_description="Used via the external system",
+        product_id=test_product.id,
+        submitter_id=submitter_id,
+        source_type=SourceType.EXTERNAL_SUBMISSION,
+        external_source="canny",
+        external_id="CANNY-101",
+        source_metadata={
+            "external_vote_count": 55,
+            "external_status": "open",
+            "external_url": "https://example.canny.io/p/canny-101",
+        },
+        status=IdeaStatus.ACCEPTED,
+        is_active=True,
+    )
+    db_session.add(idea)
+    db_session.commit()
+    db_session.refresh(idea)
+    return idea
+
+
 class TestCreateIdea:
 
     def test_create_idea_success(self, client, voter_user, test_product):
@@ -88,6 +114,25 @@ class TestGetIdea:
     def test_get_idea_requires_auth(self, client, test_idea):
         resp = client.get(f"/ideas/{test_idea.id}")
         assert resp.status_code == 401
+
+    def test_get_idea_created_here_has_no_external_provenance(self, client, voter_user, test_idea):
+        resp = client.get(f"/ideas/{test_idea.id}", headers=auth_headers(voter_user))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["source_type"] == "customer_submission"
+        assert data["external_source"] is None
+        assert data["external_vote_count"] is None
+
+    def test_get_idea_imported_exposes_external_provenance(self, client, voter_user, test_product, voter_product_access, db_session):
+        imported = _imported_idea(db_session, test_product, voter_user.id)
+        resp = client.get(f"/ideas/{imported.id}", headers=auth_headers(voter_user))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["source_type"] == "external_submission"
+        assert data["external_source"] == "canny"
+        assert data["external_vote_count"] == 55
+        assert data["external_status"] == "open"
+        assert data["external_url"] == "https://example.canny.io/p/canny-101"
 
 
 class TestListIdeas:
@@ -154,6 +199,20 @@ class TestListIdeas:
         resp = client.get("/ideas/", headers=auth_headers(voter_user))
         titles = [i["title"] for i in resp.json()["ideas"]]
         assert "My Pending Idea" in titles
+
+    def test_list_ideas_includes_external_provenance(self, client, voter_user, test_product, voter_product_access, test_idea, db_session):
+        _imported_idea(db_session, test_product, voter_user.id, title="List Imported Idea")
+
+        resp = client.get("/ideas/", headers=auth_headers(voter_user))
+        assert resp.status_code == 200
+        imported = next(i for i in resp.json()["ideas"] if i["title"] == "List Imported Idea")
+        assert imported["source_type"] == "external_submission"
+        assert imported["external_source"] == "canny"
+        assert imported["external_vote_count"] == 55
+
+        created_here = next(i for i in resp.json()["ideas"] if i["title"] == "Test Idea")
+        assert created_here["source_type"] == "customer_submission"
+        assert created_here["external_source"] is None
 
 
 class TestIdeaReview:
@@ -330,3 +389,51 @@ class TestIdeaDetail:
             headers=auth_headers(voter_user)
         )
         assert resp.status_code == 404
+
+    def test_get_idea_detail_includes_external_provenance(self, client, voter_user, test_product, voter_product_access, db_session):
+        imported = _imported_idea(db_session, test_product, voter_user.id)
+        resp = client.get(
+            f"/ideas/{imported.id}/detail",
+            headers=auth_headers(voter_user)
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["source_type"] == "external_submission"
+        assert data["external_source"] == "canny"
+        assert data["external_vote_count"] == 55
+        assert data["external_status"] == "open"
+
+
+class TestTriageRecommendationSourceSummary:
+    """Regression: source_summary previously only counted internal Vote rows
+    (via len(votes)), so a PO opening the response modal for an imported idea
+    with e.g. 55 votes on Canny saw "0 votes" — the same provenance-blindness
+    bug as the board view, in the screen where a PM actually acts on the idea."""
+
+    def test_source_summary_separates_board_and_external_votes(self, client, admin_user, db_session, test_product):
+        _grant_admin_access(db_session, test_product, admin_user)
+        imported = _imported_idea(db_session, test_product, admin_user.id)
+
+        resp = client.get(
+            f"/ideas/{imported.id}/triage-recommendation",
+            headers=auth_headers(admin_user)
+        )
+        assert resp.status_code == 200
+        source_summary = resp.json()["source_summary"]
+        assert source_summary["board_votes"] == 0
+        assert source_summary["external_source"] == "canny"
+        assert source_summary["external_vote_count"] == 55
+        assert "vote_count" not in source_summary
+
+    def test_source_summary_created_here_idea_has_no_external_fields(self, client, admin_user, db_session, test_product, test_idea):
+        _grant_admin_access(db_session, test_product, admin_user)
+
+        resp = client.get(
+            f"/ideas/{test_idea.id}/triage-recommendation",
+            headers=auth_headers(admin_user)
+        )
+        assert resp.status_code == 200
+        source_summary = resp.json()["source_summary"]
+        assert source_summary["board_votes"] == 0
+        assert source_summary["external_source"] is None
+        assert source_summary["external_vote_count"] is None

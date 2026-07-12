@@ -96,6 +96,33 @@ def get_user_vote(db: Session, idea_id: int, user_id: Optional[int]) -> tuple[Op
     return (None, None)
 
 
+def get_external_provenance(idea: Idea) -> dict:
+    """
+    Extract external-system provenance fields for an idea's API response.
+
+    external_source/external_id are real columns; vote_count/status/url live in
+    source_metadata (set by ideas_import) since they're sync-refreshed data, not
+    identity. Non-imported ideas (source_type != EXTERNAL_SUBMISSION) get all-None
+    here even if source_metadata has stray values, since the origin rule keys on
+    source_type, not presence of external data.
+    """
+    if idea.source_type != SourceType.EXTERNAL_SUBMISSION:
+        return {
+            "external_source": None,
+            "external_vote_count": None,
+            "external_status": None,
+            "external_url": None,
+        }
+
+    metadata = idea.source_metadata or {}
+    return {
+        "external_source": idea.external_source,
+        "external_vote_count": metadata.get("external_vote_count"),
+        "external_status": metadata.get("external_status"),
+        "external_url": metadata.get("external_url"),
+    }
+
+
 @router.post("", response_model=IdeaResponse, status_code=status.HTTP_201_CREATED)
 def create_idea(
     idea_data: IdeaCreate,
@@ -151,7 +178,8 @@ def create_idea(
         updated_at=new_idea.updated_at,
         product_id=new_idea.product_id,
         vote_counts=vote_counts,
-        user_vote=None  # New idea, user hasn't voted yet
+        user_vote=None,  # New idea, user hasn't voted yet
+        **get_external_provenance(new_idea),
     )
 
     return response
@@ -293,6 +321,7 @@ def list_ideas(
             created_at=idea.created_at,
             product_id=idea.product_id,
             product_name=product_name,
+            source_type=idea.source_type,
             status=idea.status,
             is_active=idea.is_active,
             duplicate_of_idea_id=idea.duplicate_of_idea_id,
@@ -303,7 +332,8 @@ def list_ideas(
             vote_counts=vote_counts,
             user_vote=user_vote,
             user_vote_timestamp=user_vote_timestamp,
-            submitter_id=idea.submitter_id
+            submitter_id=idea.submitter_id,
+            **get_external_provenance(idea),
         ))
 
     # Determine effective sort order
@@ -647,7 +677,8 @@ def get_idea(
         updated_at=idea.updated_at,
         product_id=idea.product_id,
         vote_counts=vote_counts,
-        user_vote=user_vote
+        user_vote=user_vote,
+        **get_external_provenance(idea),
     )
 
     return response
@@ -767,6 +798,11 @@ class IdeaDetailResponse(BaseModel):
     user_vote: Optional[int] = None
     # Competitive context - only populated for PO/Admin users
     competitive_context: Optional[dict] = None
+    # Provenance for ideas imported from an external system (Aha!, Canny, Jira, etc.)
+    external_source: Optional[str] = None
+    external_vote_count: Optional[int] = None
+    external_status: Optional[str] = None
+    external_url: Optional[str] = None
 
 
 @router.post("/submit", response_model=JobQueueResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -1319,6 +1355,7 @@ def get_idea_detail(
         vote_counts=vote_counts,
         user_vote=user_vote_value,
         competitive_context=competitive_context,
+        **get_external_provenance(idea),
     )
 
 
@@ -1744,7 +1781,8 @@ def get_triage_recommendation(
         } if idea.job_id_key else None,
         # Source summary for PO context
         'source_summary': {
-            'vote_count': len(votes),
+            'board_votes': len(votes),
+            **get_external_provenance(idea),
             'voters': voters,
             'competitors_with_feature': competitors_with_feature,
             'competitive_urgency': competitive_urgency,

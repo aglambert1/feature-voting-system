@@ -1,5 +1,8 @@
-"""Tests for _gather_customer_ideas — synthesis demand ranking that combines
-internal Vote rows with external_vote_count metadata from imported ideas."""
+"""Tests for _gather_customer_ideas — synthesis demand ranking over board votes
+(internal Vote rows) and external_vote_count metadata from imported ideas.
+The two are kept separate in the returned shape (board_votes/external_votes/
+external_source) and never summed — they're different, non-comparable
+populations. A combined value is used only internally to rank/cut the top 50."""
 
 import pytest
 
@@ -33,11 +36,12 @@ def product(db_session, po):
 
 
 def _accepted_idea(db_session, product, po, title, source_metadata=None,
-                   source_type=SourceType.CUSTOMER_SUBMISSION):
+                   source_type=SourceType.CUSTOMER_SUBMISSION, external_source=None):
     idea = Idea(
         title=title, what_description="d", why_description="w",
         use_case_description="u", product_id=product.id, submitter_id=po.id,
         source_type=source_type, source_metadata=source_metadata,
+        external_source=external_source,
         status=IdeaStatus.ACCEPTED, is_active=True,
     )
     db_session.add(idea)
@@ -46,7 +50,7 @@ def _accepted_idea(db_session, product, po, title, source_metadata=None,
 
 
 class TestGatherCustomerIdeas:
-    def test_external_votes_outrank_internal(self, db_session, product, po):
+    def test_external_votes_outrank_internal_in_ranking(self, db_session, product, po):
         internal = _accepted_idea(db_session, product, po, "Internal favorite")
         for i in range(3):
             voter = User(
@@ -60,24 +64,38 @@ class TestGatherCustomerIdeas:
             db_session, product, po, "Imported heavyweight",
             source_metadata={"external_vote_count": 40, "external_status": "open"},
             source_type=SourceType.EXTERNAL_SUBMISSION,
+            external_source="canny",
         )
         db_session.commit()
 
         ideas = _gather_customer_ideas(db_session, product.id)
+        # Ranking (top-50 cut) still uses a combined key internally, so the
+        # heavier imported idea sorts first — but the returned shape never
+        # exposes a summed count.
         assert [i["title"] for i in ideas] == ["Imported heavyweight", "Internal favorite"]
-        assert ideas[0]["vote_count"] == 40
-        assert ideas[1]["vote_count"] == 3
+
+        imported_result = ideas[0]
+        assert imported_result["board_votes"] == 0
+        assert imported_result["external_votes"] == 40
+        assert imported_result["external_source"] == "canny"
+
+        internal_result = ideas[1]
+        assert internal_result["board_votes"] == 3
+        assert internal_result["external_votes"] == 0
+        assert internal_result["external_source"] is None
 
     def test_no_votes_anywhere_ranks_zero(self, db_session, product, po):
         _accepted_idea(db_session, product, po, "Quiet idea")
         ideas = _gather_customer_ideas(db_session, product.id)
-        assert ideas[0]["vote_count"] == 0
+        assert ideas[0]["board_votes"] == 0
+        assert ideas[0]["external_votes"] == 0
 
-    def test_combined_internal_plus_external(self, db_session, product, po):
+    def test_board_and_external_votes_kept_separate_not_summed(self, db_session, product, po):
         idea = _accepted_idea(
             db_session, product, po, "Both worlds",
             source_metadata={"external_vote_count": 5},
             source_type=SourceType.EXTERNAL_SUBMISSION,
+            external_source="canny",
         )
         voter = User(
             email="both@example.com", username="both",
@@ -89,4 +107,8 @@ class TestGatherCustomerIdeas:
         db_session.commit()
 
         ideas = _gather_customer_ideas(db_session, product.id)
-        assert ideas[0]["vote_count"] == 6
+        assert ideas[0]["board_votes"] == 1
+        assert ideas[0]["external_votes"] == 5
+        assert ideas[0]["external_source"] == "canny"
+        # No summed field should be exposed in the returned dict.
+        assert "vote_count" not in ideas[0]

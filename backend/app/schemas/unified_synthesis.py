@@ -185,7 +185,7 @@ class UnifiedOpportunity(BaseModel):
     )
     customer_evidence: Optional[dict] = Field(
         default=None,
-        description="Customer evidence blob (idea_id, idea_title, vote_count, ...)"
+        description="Customer evidence blob (idea_id, idea_title, board_votes, external_votes, external_source, ...)"
     )
     internal_evidence: Optional[dict] = Field(
         default=None,

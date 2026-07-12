@@ -892,8 +892,16 @@ def ideas_import(
     gaps, synthesis opportunities). Records keep external provenance
     (external_id + external_source) so re-imports dedupe and verdicts map
     back to the external record. vote_count is stored as provenance metadata
-    and counts toward synthesis demand ranking; it does not create internal
-    votes.
+    (source_metadata.external_vote_count) and is surfaced alongside — never
+    summed with — Feature-IQ board votes, since the two are different,
+    non-comparable populations. Imported ideas are not votable on the
+    Feature-IQ board (voting happens in the source system); internal PM
+    engagement routes through comments instead.
+
+    Two sweep cadences are expected on top of this tool: a review-SLA sweep
+    (triage new external ideas before the PM's regular pass over the source
+    board, typically weekly) and a planning-time full sweep feeding
+    synthesis. This tool only performs the import itself.
 
     Args:
         product_id: The product to import ideas into.
