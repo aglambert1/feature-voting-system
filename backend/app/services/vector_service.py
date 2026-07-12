@@ -25,7 +25,10 @@ class VectorService:
         Returns:
             True if PostgreSQL, False if SQLite
         """
-        return 'postgresql' in str(db.bind.url)
+        # dialect.name works whether the session is bound to an Engine
+        # (production) or a Connection (the PG test harness) — Connection
+        # has no .url attribute.
+        return db.get_bind().dialect.name == 'postgresql'
 
     @staticmethod
     def store_embedding(db: Session, idea_id: int, embedding: List[float]) -> None:
