@@ -1,7 +1,7 @@
 """
 API key management endpoints for MCP HTTP server authentication.
 
-Allows Product Owners to generate, list, and revoke API keys
+Allows Product Owners and Admins to generate, list, and revoke API keys
 for connecting external MCP clients (Claude Desktop, Cursor, etc.).
 """
 
@@ -14,28 +14,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.models.api_key import UserAPIKey
-from app.utils.security import get_current_active_user, hash_password
+from app.utils.security import get_product_owner_or_admin, hash_password
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
 API_KEY_EXPIRY_DAYS = 90
 API_KEY_PREFIX = "fiq_"
-
-
-# --- Auth dependency ---
-
-async def get_current_product_owner(
-    current_user: User = Depends(get_current_active_user),
-) -> User:
-    """Require Product Owner role for API key operations."""
-    if current_user.role != UserRole.PRODUCT_OWNER:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only Product Owners can manage API keys",
-        )
-    return current_user
 
 
 # --- Schemas ---
@@ -74,7 +60,7 @@ def _generate_api_key() -> Tuple[str, str]:
 async def create_api_key(
     data: APIKeyCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_product_owner),
+    current_user: User = Depends(get_product_owner_or_admin),
 ) -> APIKeyCreateResponse:
     """Generate a new API key. The full key is returned only once."""
     full_key, prefix = _generate_api_key()
@@ -106,7 +92,7 @@ async def create_api_key(
 @router.get("")
 async def list_api_keys(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_product_owner),
+    current_user: User = Depends(get_product_owner_or_admin),
 ) -> List[APIKeyResponse]:
     """List all API keys for the current user (prefix only, never the full key)."""
     keys = (
@@ -133,7 +119,7 @@ async def list_api_keys(
 async def revoke_api_key(
     key_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_product_owner),
+    current_user: User = Depends(get_product_owner_or_admin),
 ):
     """Revoke an API key (soft delete)."""
     api_key = (
