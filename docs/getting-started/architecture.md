@@ -174,6 +174,11 @@ Each product has an access list. Permissions are hierarchical: **OWNER > EDIT > 
 - Account lockout after 5 failed logins within 15 minutes; admin unlock via `/users/{id}/unlock`
 - Self-service password reset via email OTP (SendGrid)
 
+### Notifications
+
+- Email is sent via the `email_tasks` Celery queue → `EmailService` (SendGrid in prod, console fallback in dev). Each email type is a branch keyed on `email_type`.
+- **Competitor alerts** — when a scheduled discovery run finds new competitors, `AlertNotificationService` emails a digest to all EDIT+ members of the product (one email per recipient), gated by the product's `alert_on_new_competitors` flag. Built to extend to other alert types.
+
 ## Where to go next
 
 - **Want to use the system?** → [Quickstart](quickstart.md)

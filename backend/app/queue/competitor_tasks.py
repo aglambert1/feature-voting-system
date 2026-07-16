@@ -33,6 +33,10 @@ from app.queue.helpers import (
     fail_job,
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 @shared_task(bind=True, name='app.queue.competitor_tasks.discover_competitors_task', soft_time_limit=600)
 def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
@@ -181,6 +185,7 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
                     domain_index[new_domain] = new_competitor
 
         # Create alerts for newly discovered competitors
+        created_alerts = []
         if alert_on_new and new_competitor_names:
             for comp in new_competitor_names:
                 alert = CompetitorAlert(
@@ -192,8 +197,24 @@ def discover_competitors_task(self, job_id: int) -> Dict[str, Any]:
                     is_read=False
                 )
                 db.add(alert)
+                created_alerts.append(alert)
 
         db.commit()
+
+        # Email a digest to product members (EDIT+). Never let a notification
+        # failure fail the discovery job — alerts are already persisted above.
+        if created_alerts:
+            try:
+                from app.services.alert_notification_service import AlertNotificationService
+                AlertNotificationService(db).notify_new_competitors(
+                    product_id=product_id,
+                    alerts=[a.to_dict() for a in created_alerts],
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send competitor alert emails for product %s",
+                    product_id,
+                )
 
         # Update progress
         queue_service.update_progress(job_id, 90.0, "Finalizing...")

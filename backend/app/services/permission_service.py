@@ -103,6 +103,65 @@ class PermissionService:
         }
         return levels.get(granted, 0) >= levels.get(required, 0)
 
+    def get_product_members(
+        self,
+        product_id: int,
+        min_level: ProductPermissionLevel = ProductPermissionLevel.VIEW,
+    ) -> List[User]:
+        """
+        Get all active users who can access a product at or above min_level.
+
+        Reverse of can_access_product: given a product, return the users.
+        Includes the product creator (implicit OWNER, satisfies any level) and
+        every user with an explicit ProductPermission grant at or above
+        min_level. VOTER-role users are excluded when min_level is above VIEW,
+        mirroring the role cap in can_access_product. Inactive users are
+        excluded. Results are de-duplicated.
+
+        Note: does not expand TEAM_WIDE default access — that only grants VIEW,
+        and this method is used for actionable (EDIT+) alert recipients.
+        """
+        qualifying_levels = [
+            level for level in ProductPermissionLevel
+            if self._permission_level_meets(granted=level, required=min_level)
+        ]
+
+        product = self.db.query(CIProduct).filter(
+            CIProduct.id == product_id
+        ).first()
+        if not product:
+            return []
+
+        members: dict[int, User] = {}
+
+        # Explicit grants at or above min_level
+        granted = (
+            self.db.query(User)
+            .join(ProductPermission, ProductPermission.user_id == User.id)
+            .filter(
+                ProductPermission.product_id == product_id,
+                ProductPermission.permission_level.in_(qualifying_levels),
+                User.is_active.is_(True),
+            )
+            .all()
+        )
+        for user in granted:
+            # A VOTER cannot hold EDIT/OWNER (see can_access_product); guard in
+            # case a stale inert grant predates that cap.
+            if min_level != ProductPermissionLevel.VIEW and user.role == UserRole.VOTER:
+                continue
+            members[user.id] = user
+
+        # Product creator has implicit OWNER, which satisfies any min_level
+        creator = self.db.query(User).filter(
+            User.id == product.created_by_user_id,
+            User.is_active.is_(True),
+        ).first()
+        if creator:
+            members[creator.id] = creator
+
+        return list(members.values())
+
     def get_accessible_products(
         self,
         user_id: int,

@@ -104,5 +104,43 @@ class EmailService:
 
         return self.send_email(to_email, subject, html, plain)
 
+    def send_competitor_alert_digest(
+        self,
+        to_email: str,
+        username: str,
+        product_name: str,
+        alerts: list[dict],
+    ) -> bool:
+        count = len(alerts)
+        noun = "competitor" if count == 1 else "competitors"
+        subject = f"{count} new {noun} for {product_name} - Feature-IQ"
+        html = _render_template(
+            "competitor_alert_digest.html",
+            username=username,
+            product_name=product_name,
+            alerts=alerts,
+            count=count,
+        )
+        lines = "\n".join(f"  - {a['competitor_name']}" for a in alerts)
+        plain = (
+            f"Hello {username},\n\n"
+            f"Feature-IQ discovered {count} new {noun} for {product_name}:\n\n"
+            f"{lines}\n\n"
+            f"Sign in to review them in the Competitive Intelligence hub."
+        )
+
+        if not self.is_live:
+            print(f"\n{'=' * 60}")
+            print(f"COMPETITOR ALERT DIGEST")
+            print(f"{'=' * 60}")
+            print(f"To: {to_email}")
+            print(f"Product: {product_name}")
+            print(f"New {noun} ({count}):")
+            for a in alerts:
+                print(f"  - {a['competitor_name']}")
+            print(f"{'=' * 60}\n")
+
+        return self.send_email(to_email, subject, html, plain)
+
 
 email_service = EmailService()

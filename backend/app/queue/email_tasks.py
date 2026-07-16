@@ -27,6 +27,13 @@ def send_email_task(self, email_type: str, to_email: str, context: dict):
                 to_email=to_email,
                 username=context["username"],
             )
+        elif email_type == "competitor_alert_digest":
+            success = email_service.send_competitor_alert_digest(
+                to_email=to_email,
+                username=context["username"],
+                product_name=context["product_name"],
+                alerts=context["alerts"],
+            )
         else:
             logger.error(f"Unknown email type: {email_type}")
             return {"status": "error", "reason": f"Unknown email type: {email_type}"}
