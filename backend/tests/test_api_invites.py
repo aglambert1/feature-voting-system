@@ -11,9 +11,34 @@ Covers:
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.models.product_invite import ProductInviteCode
 from app.models.competitor_intelligence import ProductPermission, ProductPermissionLevel
-from conftest import auth_headers
+from app.models.user import UserRole
+from conftest import _create_user_with_password, auth_headers
+
+
+@pytest.fixture
+def po_member(db_session, test_product):
+    """A second PRODUCT_OWNER with an existing VIEW grant on test_product.
+
+    Voters can't hold EDIT/OWNER (capped at VIEW by PermissionService), so
+    grant-upgrade tests need a PO-role target.
+    """
+    user = _create_user_with_password(
+        db_session, "pomember@example.com", "pomember", "Member@pass1",
+        UserRole.PRODUCT_OWNER,
+    )
+    perm = ProductPermission(
+        product_id=test_product.id,
+        user_id=user.id,
+        permission_level=ProductPermissionLevel.VIEW,
+        granted_by_user_id=test_product.created_by_user_id,
+    )
+    db_session.add(perm)
+    db_session.commit()
+    return user
 
 
 # ============================================================================
@@ -425,10 +450,10 @@ class TestGrantPermission:
         assert resp.status_code == 201
         assert resp.json()["permission_level"] == "owner"
 
-    def test_grant_updates_existing(self, client, po_user, test_product, voter_user, voter_product_access):
+    def test_grant_updates_existing(self, client, po_user, test_product, po_member):
         resp = client.post(
             f"/products/{test_product.id}/members",
-            json={"email": voter_user.email, "permission_level": "edit"},
+            json={"email": po_member.email, "permission_level": "edit"},
             headers=auth_headers(po_user),
         )
         assert resp.status_code == 201
@@ -462,9 +487,9 @@ class TestGrantPermission:
 
 class TestUpdatePermission:
 
-    def test_owner_updates_member(self, client, po_user, test_product, voter_user, voter_product_access):
+    def test_owner_updates_member(self, client, po_user, test_product, po_member):
         resp = client.patch(
-            f"/products/{test_product.id}/members/{voter_user.id}",
+            f"/products/{test_product.id}/members/{po_member.id}",
             json={"permission_level": "edit"},
             headers=auth_headers(po_user),
         )

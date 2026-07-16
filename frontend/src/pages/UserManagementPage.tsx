@@ -177,9 +177,10 @@ export default function UserManagementPage() {
     if (!targetUser) return;
 
     try {
+      // Voters are capped at view access server-side; never send edit/owner
       const assignments = editingProductIds.map(pid => ({
         product_id: pid,
-        permission_level: editingPermissionLevels[pid] || 'view',
+        permission_level: targetUser.role === 'voter' ? 'view' : (editingPermissionLevels[pid] || 'view'),
       }));
       await setUserProducts(editingProductsUserId, assignments);
       setSuccessMessage(`Product assignments updated for ${targetUser.username}`);
@@ -595,6 +596,7 @@ export default function UserManagementPage() {
             <div className="px-6 py-4">
               {(() => {
                 const ownedProducts = allProducts.filter(p => adminOwnedProductIds.has(p.id));
+                const targetIsVoter = users.find(u => u.id === editingProductsUserId)?.role === 'voter';
                 return ownedProducts.length === 0 ? (
                   <p className="text-sm text-gray-500">You don't have owner access to any products.</p>
                 ) : (
@@ -620,21 +622,26 @@ export default function UserManagementPage() {
                             <span className="ml-2 text-sm text-gray-700">{product.product_name}</span>
                           </label>
                           {editingProductIds.includes(product.id) && (
-                            <select
-                              value={editingPermissionLevels[product.id] || 'view'}
-                              onChange={e => setEditingPermissionLevels(prev => ({ ...prev, [product.id]: e.target.value }))}
-                              className="ml-2 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            >
-                              <option value="view">View</option>
-                              <option value="edit">Edit</option>
-                              <option value="owner">Owner</option>
-                            </select>
+                            targetIsVoter ? (
+                              <span className="ml-2 px-2 py-1 text-xs text-gray-500 bg-gray-100 rounded">View</span>
+                            ) : (
+                              <select
+                                value={editingPermissionLevels[product.id] || 'view'}
+                                onChange={e => setEditingPermissionLevels(prev => ({ ...prev, [product.id]: e.target.value }))}
+                                className="ml-2 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              >
+                                <option value="view">View</option>
+                                <option value="edit">Edit</option>
+                                <option value="owner">Owner</option>
+                              </select>
+                            )
                           )}
                         </div>
                       ))}
                     </div>
                     <p className="mt-2 text-xs text-gray-500">
                       Only products where you have owner access are shown.
+                      {targetIsVoter && ' Voters always get view access — change their role to grant more.'}
                     </p>
                   </>
                 );

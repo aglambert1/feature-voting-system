@@ -336,6 +336,11 @@ def grant_product_permission(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e),
         )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
     return ProductMemberResponse(
         user_id=target_user.id,
@@ -406,12 +411,18 @@ def update_product_permission(
         )
 
     permission_service = PermissionService(db)
-    perm = permission_service.grant_permission(
-        product_id=product_id,
-        user_id=user_id,
-        permission_level=new_level,
-        granted_by_user_id=current_user.id,
-    )
+    try:
+        perm = permission_service.grant_permission(
+            product_id=product_id,
+            user_id=user_id,
+            permission_level=new_level,
+            granted_by_user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
     return ProductMemberResponse(
         user_id=target_user.id,

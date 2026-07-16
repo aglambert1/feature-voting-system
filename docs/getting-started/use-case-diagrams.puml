@@ -77,15 +77,8 @@ rectangle "Feature-IQ (FastAPI backend + React frontend)" {
   }
 
   package "MCP access  (/api-keys)" {
-    usecase "Create / revoke MCP API keys\n(PRODUCT_OWNER role)" as UC_apikeys
+    usecase "Create / revoke MCP API keys\n(PRODUCT_OWNER or ADMIN role)" as UC_apikeys
   }
-
-  note bottom of UC_apikeys
-    **Known defect**: requires role
-    == PRODUCT_OWNER exactly, so
-    ADMIN is excluded — inverts the
-    documented role hierarchy.
-  end note
 }
 
 Voter --> UC_auth
@@ -109,11 +102,13 @@ PO --> UC_invite
 PO --> UC_apikeys
 
 note bottom of UC_pmreview
-  Currently gated only by per-product
-  EDIT — a VOTER granted EDIT can
-  triage. **Known defect**: intended
-  behavior is PO role required
-  (role gate + EDIT).
+  VOTER role is capped at VIEW by a
+  central gate in PermissionService,
+  so every EDIT-tagged use case
+  effectively requires PO/ADMIN role
+  + the product permission. Grants of
+  edit/owner to voters are rejected
+  at grant time.
 end note
 @enduml
 
@@ -141,7 +136,7 @@ rectangle "Feature-IQ backend" {
     usecase "Manage idea lifecycle\nstatuses" as UC_lifecycle
   }
 
-  package "MCP server  (backend/mcp_server, 75 tools)" {
+  package "MCP server  (backend/mcp_server, 78 tools)" {
     usecase "Authenticate:\nOAuth 2.0 (HTTP, RFC 9728)\nor API-key bearer (stdio/HTTP)" as UC_mcpauth
     usecase "Product / ideas / CI /\nsynthesis / evidence tools\n(same per-product permission\nchecks as the REST API)" as UC_mcptools
     usecase "Dispatch async jobs +\npoll job_get_status\n(same Celery machinery)" as UC_mcpjobs
