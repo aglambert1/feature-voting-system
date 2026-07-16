@@ -1,13 +1,15 @@
 ' Feature-IQ core flow sequence diagrams.
-' Companion to architecture.md "Key data flows" — flows A, B, and C.
+' Companion to architecture.md "Key data flows" — flows A-C — plus the
+' non-browser entry points (D: MCP, E: scheduled agents).
+' Actor roles and permissions: see use-case-diagrams.puml for the full
+' roles x entry-points map (global UserRole + per-product permission level).
 '
-' Render with: plantuml sequence-diagrams.puml   (or any PlantUML viewer)
-' Each @startuml block is a separate diagram.
+' Render with: plantuml sequence-diagrams.puml   (emits one image per @startuml block)
 
 @startuml idea-submission-and-triage
 title Flow A — Idea submission + AI triage
 
-actor User
+actor "Voter\n(any authenticated user,\nVIEW on product)" as User
 participant "Frontend\n(React)" as FE
 participant "FastAPI\nsubmissions/ideas router" as API
 participant "QueueService" as QS
@@ -52,7 +54,7 @@ FE --> User : triage result (or PM review queue)
 @startuml competitor-audit
 title Flow B — Competitor functional audit
 
-actor "Product Owner" as PO
+actor "Product Owner\n(EDIT on product)" as PO
 participant "Frontend\n(React)" as FE
 participant "FastAPI\ncompetitive_agents router" as API
 participant "QueueService" as QS
@@ -109,7 +111,7 @@ FE --> PO : report ready (gaps, advantages per job)
 @startuml unified-synthesis
 title Flow C — Unified synthesis (cross-pillar)
 
-actor "Product Owner" as PO
+actor "Product Owner\n(EDIT on product)" as PO
 participant "Frontend / MCP" as FE
 participant "FastAPI\nunified_synthesis router" as API
 participant "QueueService" as QS
@@ -168,4 +170,84 @@ loop every 2s until job finishes
   QS --> FE : status, progress
 end
 FE --> PO : synthesis report (opportunities per job)
+@enduml
+
+
+@startuml mcp-tool-call
+title Flow D — MCP tool call (Claude / agent entry point)
+
+actor "MCP client\n(Claude / agent)" as Client
+participant "MCP server\n(FastMCP, stdio or HTTP)" as MCP
+participant "Auth\n(APIKeyAuthProvider /\nOAuth 2.0 JWT)" as Auth
+participant "Tool function\n(e.g. product_run_analysis)" as Tool
+participant "permissions.py\nrequire_product_access" as Perm
+participant "QueueService" as QS
+database "PostgreSQL\n(+pgvector)" as DB
+queue "Redis\n(Celery broker)" as Redis
+participant "Celery worker\n(same tasks as Flows A-C)" as Task
+
+Client -> MCP : call tool (Bearer token)
+MCP -> Auth : verify_token
+Auth -> DB : match user_api_keys\n(or validate OAuth JWT)
+Auth --> MCP : user identity
+MCP -> Tool : invoke with args
+
+Tool -> Perm : require_product_access(product_id, EDIT)
+note right of Perm
+  Same per-product permission
+  model as the REST API —
+  the tool acts as the key's owner.
+end note
+Perm -> DB : PermissionService.can_access_product
+alt denied
+  Perm --> Client : permission-denied payload
+else allowed
+  Tool -> QS : require_no_active_job,\ncreate_job(PRODUCT_ANALYSIS)
+  QS -> Redis : dispatch_task, mark_queued
+  Tool --> Client : { job_uuid, status: queued }
+
+  Redis -> Task : deliver job
+  Task -> Task : run analysis (as in Flows A-C)
+  Task -> QS : mark_success
+
+  loop client-paced polling
+    Client -> MCP : job_get_status(job_uuid)
+    MCP -> QS : get_job
+    QS --> Client : status, progress, output_data
+  end
+end
+@enduml
+
+
+@startuml scheduled-agents
+title Flow E — Scheduled agent runs (no human actor)
+
+control "Celery Beat\n(daily tick, 24h)" as Beat
+participant "check_scheduled_tasks\n(scheduled_tasks.py)" as Check
+database "PostgreSQL" as DB
+participant "QueueService" as QS
+queue "Redis\n(Celery broker)" as Redis
+collections "Celery workers\n(analysis / discovery / audit tasks)" as Workers
+
+Beat -> Check : fire (every 86400s)
+Check -> DB : load CompetitiveAgentConfig\nfor all products
+
+loop each product with scheduled mode
+  alt next_run <= now
+    Check -> QS : create_job\n(PRODUCT_ANALYSIS /\nCOMPETITOR_DISCOVERY /\naudits)
+    QS -> Redis : dispatch, mark_queued
+    Check -> DB : advance next_run\n(daily / weekly / biweekly / monthly)
+  else not due
+    Check -> Check : skip
+  end
+end
+
+Redis -> Workers : deliver jobs\n(same task code as user-triggered runs,\nFlows A-C)
+Workers -> DB : write reports / ideas
+note right of Workers
+  Results surface passively: users see
+  fresh reports and alerts on next visit
+  or via MCP (ci_get_alerts). No push
+  notification exists today.
+end note
 @enduml

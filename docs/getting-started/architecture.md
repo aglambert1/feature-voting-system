@@ -178,7 +178,8 @@ Each product has an access list. Permissions are hierarchical: **OWNER > EDIT > 
 
 - **Want to use the system?** → [Quickstart](quickstart.md)
 - **Want to know what features exist?** → [Tour](tour.md)
-- **Want to trace flows A–C step by step?** → [Sequence diagrams](sequence-diagrams.puml) (PlantUML)
+- **Want to trace flows A–E step by step?** → [Sequence diagrams](sequence-diagrams.puml) (PlantUML; A–C browser flows, D MCP, E scheduled agents)
+- **Want the full roles × entry-points map?** → [Use-case diagrams](use-case-diagrams.puml) (PlantUML; end-user and admin/system surfaces)
 - **Want to deploy?** → [DEPLOYMENT_GUIDE.md](../../DEPLOYMENT_GUIDE.md)
 - **Want to set up vector search?** → [backend/VECTOR_SEARCH_SETUP.md](../../backend/VECTOR_SEARCH_SETUP.md)
 - **Want to use the MCP server?** → [backend/scripts/README.md](../../backend/scripts/README.md)
