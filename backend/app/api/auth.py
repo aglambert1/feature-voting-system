@@ -132,13 +132,21 @@ def register(
             detail="Username already taken"
         )
 
+    # Determine role. Only an authenticated admin may set a role; self-service
+    # registrants are always VOTER regardless of any role in the request body
+    # (otherwise anyone with an invite code could self-register as ADMIN).
+    if is_admin_creating:
+        assigned_role = user_data.role if user_data.role else UserRole.VOTER
+    else:
+        assigned_role = UserRole.VOTER
+
     # Create new user with hashed password
     new_user = User(
         email=user_data.email,
         username=user_data.username,
         hashed_password=hash_password(user_data.password),
         full_name=user_data.full_name,
-        role=user_data.role if user_data.role else None  # Defaults to VOTER
+        role=assigned_role,
     )
 
     db.add(new_user)
@@ -161,7 +169,7 @@ def register(
         # Admin-created: grant access to specified products
         perm_level = (
             ProductPermissionLevel.EDIT
-            if user_data.role == UserRole.PRODUCT_OWNER
+            if assigned_role == UserRole.PRODUCT_OWNER
             else ProductPermissionLevel.VIEW
         )
         for product_id in user_data.product_ids:
