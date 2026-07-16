@@ -1214,6 +1214,15 @@ async def set_user_products(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid permission level '{a.permission_level}' for product {a.product_id}"
             )
+        # VOTER role is capped at VIEW (see PermissionService.can_access_product)
+        # — reject grants that would be silently inert
+        if user.role == UserRole.VOTER and perm_level != ProductPermissionLevel.VIEW:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot grant {perm_level.value} access to a voter. "
+                       "Voters are limited to view access — change their role to "
+                       "Product Owner first, or grant view."
+            )
         assignments[a.product_id] = perm_level
 
     # Remove existing permissions for these specific products only

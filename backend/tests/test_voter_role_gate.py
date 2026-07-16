@@ -231,3 +231,101 @@ class TestAdminAPIKeys:
             f"/api-keys/{created['id']}", headers=auth_headers(admin_user)
         )
         assert resp.status_code == 200
+
+
+class TestVoterGrantGuard:
+    """Grants of EDIT/OWNER to VOTER-role users are rejected, not stored inert."""
+
+    def test_grant_permission_service_rejects_voter_edit(
+        self, db_session, test_product, voter_user, po_user
+    ):
+        svc = PermissionService(db_session)
+        with pytest.raises(ValueError, match="limited to view"):
+            svc.grant_permission(
+                product_id=test_product.id,
+                user_id=voter_user.id,
+                permission_level=ProductPermissionLevel.EDIT,
+                granted_by_user_id=po_user.id,
+            )
+
+    def test_grant_permission_service_allows_voter_view(
+        self, db_session, test_product, voter_user, po_user
+    ):
+        svc = PermissionService(db_session)
+        perm = svc.grant_permission(
+            product_id=test_product.id,
+            user_id=voter_user.id,
+            permission_level=ProductPermissionLevel.VIEW,
+            granted_by_user_id=po_user.id,
+        )
+        assert perm.permission_level == ProductPermissionLevel.VIEW
+
+    def test_member_add_endpoint_rejects_voter_edit(
+        self, client, test_product, voter_user, po_user
+    ):
+        resp = client.post(
+            f"/products/{test_product.id}/members",
+            json={"email": voter_user.email, "permission_level": "edit"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 400
+        assert "view access" in resp.json()["detail"]
+
+    def test_member_update_endpoint_rejects_voter_edit(
+        self, client, db_session, test_product, voter_user, po_user, voter_product_access
+    ):
+        resp = client.patch(
+            f"/products/{test_product.id}/members/{voter_user.id}",
+            json={"permission_level": "edit"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 400
+        assert "view access" in resp.json()["detail"]
+
+    def test_admin_assignment_endpoint_rejects_voter_edit(
+        self, client, db_session, test_product, voter_user, admin_user
+    ):
+        # Admin needs OWNER on the product to assign it
+        _grant(db_session, test_product, admin_user, ProductPermissionLevel.OWNER)
+        resp = client.put(
+            f"/auth/users/{voter_user.id}/products",
+            json={"product_assignments": [
+                {"product_id": test_product.id, "permission_level": "edit"}
+            ]},
+            headers=auth_headers(admin_user),
+        )
+        assert resp.status_code == 400
+        assert "view access" in resp.json()["detail"]
+
+    def test_admin_assignment_endpoint_allows_voter_view(
+        self, client, db_session, test_product, voter_user, admin_user
+    ):
+        _grant(db_session, test_product, admin_user, ProductPermissionLevel.OWNER)
+        resp = client.put(
+            f"/auth/users/{voter_user.id}/products",
+            json={"product_assignments": [
+                {"product_id": test_product.id, "permission_level": "view"}
+            ]},
+            headers=auth_headers(admin_user),
+        )
+        assert resp.status_code == 200
+
+
+class TestPMReviewStatsGate:
+    """PM review stats require EDIT, consistent with the rest of the router."""
+
+    def test_voter_with_view_cannot_read_stats(
+        self, client, test_product, voter_user, voter_product_access
+    ):
+        resp = client.get(
+            f"/pm-review/stats/{test_product.id}",
+            headers=auth_headers(voter_user),
+        )
+        assert resp.status_code == 403
+
+    def test_po_creator_can_read_stats(self, client, test_product, po_user):
+        resp = client.get(
+            f"/pm-review/stats/{test_product.id}",
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 200

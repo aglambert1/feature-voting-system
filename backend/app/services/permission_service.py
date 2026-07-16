@@ -216,6 +216,18 @@ class PermissionService:
         if not target_user:
             raise ValueError(f"User {user_id} not found")
 
+        # VOTER role is capped at VIEW (see can_access_product) — reject
+        # grants that would be silently inert rather than storing them
+        if (
+            target_user.role == UserRole.VOTER
+            and permission_level != ProductPermissionLevel.VIEW
+        ):
+            raise ValueError(
+                f"Cannot grant {permission_level.value} access to a voter. "
+                "Voters are limited to view access — change their role to "
+                "Product Owner first, or grant view."
+            )
+
         # Check if permission already exists
         existing = self.db.query(ProductPermission).filter(
             ProductPermission.product_id == product_id,

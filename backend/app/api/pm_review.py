@@ -252,10 +252,11 @@ def get_queue_stats(
     Get queue statistics for a product.
 
     Returns counts by type, status, and priority.
-    Requires VIEW permission on the product.
+    Requires EDIT permission on the product (PM review is a PO tool;
+    every other endpoint in this router is EDIT-gated).
     """
     # Check permission
-    verify_product_access(db, product_id, current_user, ProductPermissionLevel.VIEW)
+    verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
 
     service = PMReviewService(db)
     stats = service.get_queue_stats(product_id)
