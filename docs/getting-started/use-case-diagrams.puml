@@ -1,0 +1,181 @@
+' Feature-IQ use-case diagrams: full entry-point surface by actor.
+' Companion to architecture.md and sequence-diagrams.puml.
+'
+' Render with: plantuml use-case-diagrams.puml   (emits one image per @startuml block)
+'
+' Permission model has TWO orthogonal axes (see backend/app/models/user.py and
+' backend/app/models/competitor_intelligence.py):
+'   1. Global UserRole: VOTER < PRODUCT_OWNER < ADMIN (role inheritance)
+'   2. Per-product ProductPermissionLevel: VIEW < EDIT < OWNER
+' Most product-scoped endpoints gate on axis 2 (verify_product_access in
+' app/api/deps.py), regardless of global role. Axis 1 gates admin surfaces,
+' MCP API-key creation, and a few PO-or-admin endpoints.
+
+@startuml end-user-surface
+title End-user surface — roles x entry points
+left to right direction
+skinparam packageStyle rectangle
+skinparam usecaseFontSize 12
+
+actor Voter
+actor "Product Owner" as PO
+actor Admin
+Voter <|-- PO
+PO <|-- Admin
+
+note bottom of Admin
+  Global **UserRole** (axis 1).
+  Arrows = role inheritance:
+  PO can do everything Voter can;
+  Admin everything PO can.
+  Bracketed tags on use cases =
+  per-product **ProductPermissionLevel**
+  required (axis 2).
+end note
+
+rectangle "Feature-IQ (FastAPI backend + React frontend)" {
+
+  package "Auth & profile  (/auth)" {
+    usecase "Register / Login\n(+ optional TOTP MFA)" as UC_auth
+    usecase "Manage profile,\npassword, MFA" as UC_profile
+  }
+
+  package "Ideas & voting  (/submissions /ideas /votes)" {
+    usecase "Submit idea\n(triggers AI triage)" as UC_submit
+    usecase "Vote on ideas\n(board ideas only,\nnot imported)" as UC_vote
+    usecase "Comment & respond" as UC_comment
+    usecase "Browse / search ideas\n[VIEW]" as UC_browse
+  }
+
+  package "PM review  (/pm-review)" {
+    usecase "Triage review queue:\napprove / reject / defer / batch\n[EDIT]" as UC_pmreview
+  }
+
+  package "Product & job map  (/product-intelligence/products)" {
+    usecase "Create / update product,\ntarget customer, scoring,\ntriage settings\n[EDIT]" as UC_product
+    usecase "Job map: extract, edit,\nreview suggestions\n[EDIT]" as UC_jobmap
+  }
+
+  package "Competitive intelligence  (/product-intelligence/agents /monitoring)" {
+    usecase "Manage competitor roster\n(add, track, deactivate)\n[EDIT]" as UC_roster
+    usecase "Run audits, discovery,\nresearch refresh\n[EDIT]" as UC_audit
+    usecase "View reports, alerts,\njob comparisons\n[VIEW]" as UC_reports
+  }
+
+  package "Synthesis  (/products .../synthesis)" {
+    usecase "Configure + run\nunified synthesis\n[EDIT]" as UC_synth
+    usecase "View scorecards,\nopportunities, recommendations\n[VIEW]" as UC_synthview
+  }
+
+  package "Evidence & internal feedback  (/product-intelligence /internal-feedback)" {
+    usecase "Add / manage evidence,\nsubmit internal feedback\n[EDIT]" as UC_evidence
+    usecase "View signals, themes,\nactivity insights\n[VIEW]" as UC_signals
+  }
+
+  package "Membership & invites  (/invites)" {
+    usecase "Invite members,\nchange permission levels\n[OWNER]" as UC_invite
+  }
+
+  package "MCP access  (/api-keys)" {
+    usecase "Create / revoke MCP API keys\n(PRODUCT_OWNER role)" as UC_apikeys
+  }
+
+  note bottom of UC_apikeys
+    **Known defect**: requires role
+    == PRODUCT_OWNER exactly, so
+    ADMIN is excluded — inverts the
+    documented role hierarchy.
+  end note
+}
+
+Voter --> UC_auth
+Voter --> UC_profile
+Voter --> UC_submit
+Voter --> UC_vote
+Voter --> UC_comment
+Voter --> UC_browse
+
+PO --> UC_pmreview
+PO --> UC_product
+PO --> UC_jobmap
+PO --> UC_roster
+PO --> UC_audit
+PO --> UC_reports
+PO --> UC_synth
+PO --> UC_synthview
+PO --> UC_evidence
+PO --> UC_signals
+PO --> UC_invite
+PO --> UC_apikeys
+
+note bottom of UC_pmreview
+  Currently gated only by per-product
+  EDIT — a VOTER granted EDIT can
+  triage. **Known defect**: intended
+  behavior is PO role required
+  (role gate + EDIT).
+end note
+@enduml
+
+
+@startuml admin-system-surface
+title Admin & system surface — non-end-user entry points
+left to right direction
+skinparam packageStyle rectangle
+skinparam usecaseFontSize 12
+
+actor Admin
+actor "MCP client\n(Claude / agents)" as MCP
+control "Celery Beat\n(daily tick)" as Beat
+
+rectangle "Feature-IQ backend" {
+
+  package "User administration  (/auth admin endpoints)" {
+    usecase "Create / deactivate users,\nchange roles, assign products" as UC_users
+    usecase "Reset passwords +\ninvalidate sessions\n(tokens_valid_after)" as UC_reset
+    usecase "Unlock accounts,\nview login history\n(lockout: 5 fails / 15 min)" as UC_unlock
+  }
+
+  package "Operations  (/admin)" {
+    usecase "Cost reporting: daily trends,\nper-user / product / model\nbreakdowns" as UC_costs
+    usecase "Manage idea lifecycle\nstatuses" as UC_lifecycle
+  }
+
+  package "MCP server  (backend/mcp_server, 75 tools)" {
+    usecase "Authenticate:\nOAuth 2.0 (HTTP, RFC 9728)\nor API-key bearer (stdio/HTTP)" as UC_mcpauth
+    usecase "Product / ideas / CI /\nsynthesis / evidence tools\n(same per-product permission\nchecks as the REST API)" as UC_mcptools
+    usecase "Dispatch async jobs +\npoll job_get_status\n(same Celery machinery)" as UC_mcpjobs
+  }
+
+  package "Scheduled agents  (app/queue/scheduled_tasks.py)" {
+    usecase "check_scheduled_tasks (daily):\nqueue product analysis,\ncompetitor discovery, audits\nper CompetitiveAgentConfig" as UC_sched
+  }
+}
+
+Admin --> UC_users
+Admin --> UC_reset
+Admin --> UC_unlock
+Admin --> UC_costs
+Admin --> UC_lifecycle
+
+MCP --> UC_mcpauth
+MCP --> UC_mcptools
+MCP --> UC_mcpjobs
+
+Beat --> UC_sched
+
+note bottom of UC_mcptools
+  MCP tools act as the user who owns
+  the API key / OAuth grant — axis-2
+  product permissions apply unchanged
+  (mcp_server/permissions.py).
+end note
+
+note bottom of UC_sched
+  No human actor: Beat fires daily;
+  per-product schedule config decides
+  what is due (daily/weekly/biweekly/
+  monthly). Jobs enter the same
+  Celery queues as user-triggered runs.
+end note
+@enduml
