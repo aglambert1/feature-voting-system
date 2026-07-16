@@ -48,6 +48,14 @@ class PermissionService:
         if not user or not user.is_active:
             return False
 
+        # VOTER role is capped at VIEW regardless of granted permission level
+        # or product ownership — only PRODUCT_OWNER/ADMIN may edit anything.
+        if (
+            user.role == UserRole.VOTER
+            and required_level != ProductPermissionLevel.VIEW
+        ):
+            return False
+
         # Get product
         product = self.db.query(CIProduct).filter(CIProduct.id == product_id).first()
         if not product:
@@ -152,6 +160,11 @@ class PermissionService:
             ).all()
 
         elif user.role == UserRole.VOTER:
+            # VOTER role is capped at VIEW (mirrors can_access_product):
+            # no product qualifies at EDIT/OWNER level regardless of grants
+            if permission_level != ProductPermissionLevel.VIEW:
+                return []
+
             # VOTERs only see products they have explicit permission for,
             # at or above the requested level
             permitted_ids = select(ProductPermission.product_id).where(
