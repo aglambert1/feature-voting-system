@@ -171,6 +171,45 @@ class TestRegistration:
         assert resp.status_code == 201
         assert resp.json()["role"] == "voter"
 
+    def test_self_registration_ignores_requested_admin_role(
+        self, client, db_session, test_invite_code
+    ):
+        """Self-registrants cannot escalate to ADMIN via the role field."""
+        resp = client.post("/auth/register", json={
+            "email": "escalate@example.com",
+            "username": "escalate",
+            "password": "Secure@pass1",
+            "invite_code": test_invite_code.code,
+            "role": "admin",
+        })
+        assert resp.status_code == 201
+        assert resp.json()["role"] == "voter"
+
+    def test_self_registration_ignores_requested_po_role(
+        self, client, db_session, test_invite_code
+    ):
+        """Self-registrants cannot escalate to PRODUCT_OWNER either."""
+        resp = client.post("/auth/register", json={
+            "email": "escalate2@example.com",
+            "username": "escalate2",
+            "password": "Secure@pass1",
+            "invite_code": test_invite_code.code,
+            "role": "product_owner",
+        })
+        assert resp.status_code == 201
+        assert resp.json()["role"] == "voter"
+
+    def test_admin_can_still_set_role(self, client, admin_user):
+        """The admin-created path still honors an explicit role."""
+        resp = client.post("/auth/register", json={
+            "email": "realpo@example.com",
+            "username": "realpo",
+            "password": "Secure@pass1",
+            "role": "product_owner",
+        }, headers=auth_headers(admin_user))
+        assert resp.status_code == 201
+        assert resp.json()["role"] == "product_owner"
+
 
 # ============================================================================
 # Login (POST /auth/login)
