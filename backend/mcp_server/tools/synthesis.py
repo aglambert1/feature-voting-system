@@ -297,13 +297,17 @@ def synthesis_get_config(product_id: int) -> dict:
 
 
 @mcp.tool()
-def synthesis_run_unified(product_id: int) -> dict:
+def synthesis_run_unified(product_id: int, wait_seconds: int = 0) -> dict:
     """Trigger a unified synthesis run.
 
     Auto-triggers missing functional audits for any tracked competitor without a
     report; if any audits had to be triggered, the synthesis is deferred and the
     caller should re-run after audits complete (poll those audit jobs via
     job_get_status).
+
+    Args:
+        product_id: The product to synthesize.
+        wait_seconds: If > 0, wait up to this many seconds (max 120) for the job to finish and return its result inline. Default 0 returns immediately with status "queued" — poll job_get_status. On timeout the result includes "waiting": true. (No effect when the run is deferred for missing audits.)
     """
     from app.models.queue import JobType
     from app.services.queue_service import QueueService
@@ -329,10 +333,11 @@ def synthesis_run_unified(product_id: int) -> dict:
         )
 
         from mcp_server.db import dispatch_task
+        from mcp_server.job_wait import maybe_wait
         result = dispatch_task(unified_synthesis_task, job.id)
         queue_service.mark_queued(job.id, result.id)
 
-        return {
+        return maybe_wait({
             "job_id": job.id,
             "job_uuid": job.job_uuid,
             "status": "queued",
@@ -341,7 +346,7 @@ def synthesis_run_unified(product_id: int) -> dict:
                 "If competitor audits were missing, the job returns "
                 "status='deferred' with the audit job IDs to poll first."
             ),
-        }
+        }, wait_seconds)
 
 
 def _latest_synthesis_report(db, product_id: int):
