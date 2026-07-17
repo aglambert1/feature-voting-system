@@ -36,7 +36,7 @@ from app.models.idea_status_history import IdeaStatusHistory
 from app.models.vote import Vote
 from app.models.user import User, UserRole
 from app.models.queue import JobType
-from app.models.competitor_intelligence import CIProduct, ProductPermission, ProductPermissionLevel
+from app.models.competitor_intelligence import CIProduct, ProductPermissionLevel
 from app.api.deps import verify_product_access
 from app.schemas.idea import IdeaCreate, IdeaResponse, IdeaListItem, IdeaListResponse, VoteCount, SimilarIdeaResponse
 from app.services.permission_service import PermissionService
@@ -227,25 +227,13 @@ def list_ideas(
     # Determine user's visibility level
     is_po_or_admin = current_user and current_user.role in (UserRole.ADMIN, UserRole.PRODUCT_OWNER)
 
-    # Get accessible product IDs
+    # Accessible product IDs come from the central permission service (VIEW+),
+    # not an inlined copy of the role/grant rules.
     accessible_product_ids = []
-    if is_po_or_admin and current_user:
-        # Admins and POs: products they created + explicitly granted
-        owned = db.query(CIProduct.id).filter(
-            CIProduct.created_by_user_id == current_user.id
-        ).all()
-        granted = db.query(ProductPermission.product_id).filter(
-            ProductPermission.user_id == current_user.id
-        ).all()
-        accessible_product_ids = list(set(
-            [p.id for p in owned] + [p.product_id for p in granted]
-        ))
-    elif current_user:
-        # Voters: only explicitly permitted products
-        permitted = db.query(ProductPermission.product_id).filter(
-            ProductPermission.user_id == current_user.id
-        ).all()
-        accessible_product_ids = [p.product_id for p in permitted]
+    if current_user:
+        accessible_product_ids = [
+            p.id for p in PermissionService(db).get_accessible_products(current_user.id)
+        ]
 
     # Build base query with visibility rules
     if is_po_or_admin and current_user:
@@ -391,34 +379,15 @@ def get_products_for_ideas(
     """
     Get active products for idea submission/filtering.
 
-    Returns products scoped by role:
-    - ADMIN: all active products
-    - PRODUCT_OWNER: products they created + explicitly granted
-    - VOTER: only products with explicit ProductPermission
+    Returns active products the user can access (VIEW+), scoped by role via
+    the central permission service:
+    - ADMIN / PRODUCT_OWNER: products they created + explicitly granted
+    - VOTER: only products with an explicit ProductPermission
 
     Returns:
         List of active products with id and product_name
     """
-    from sqlalchemy import or_, select
-
-    query = db.query(CIProduct).filter(CIProduct.status == "active")
-
-    if current_user.role in (UserRole.ADMIN, UserRole.PRODUCT_OWNER):
-        granted_ids = select(ProductPermission.product_id).where(
-            ProductPermission.user_id == current_user.id
-        )
-        query = query.filter(or_(
-            CIProduct.created_by_user_id == current_user.id,
-            CIProduct.id.in_(granted_ids)
-        ))
-    else:
-        # VOTER: only explicitly permitted products
-        permitted_ids = select(ProductPermission.product_id).where(
-            ProductPermission.user_id == current_user.id
-        )
-        query = query.filter(CIProduct.id.in_(permitted_ids))
-
-    products = query.all()
+    products = PermissionService(db).get_accessible_products(current_user.id)
 
     return [
         {
