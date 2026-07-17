@@ -24,6 +24,7 @@ You want to understand what's there and run it locally:
 You're setting up demo content or running prod:
 
 - **[Demo recipe](demo-recipe.md)** — step-by-step recipe for building the curated demo product on prod. Covers the full chain: product creation, job map, competitors, audits, synthesis, ideas, and prospect access.
+- **[Self-analysis draft](self-analysis.md)** — draft seed content (product description + candidate job map) for running Feature-IQ on itself. Not a finished artifact — surfaces an open ICP question rather than resolving it.
 
 ## What problem does Feature-IQ solve?
 
