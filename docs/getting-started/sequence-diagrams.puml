@@ -243,11 +243,16 @@ loop each product with scheduled mode
 end
 
 Redis -> Workers : deliver jobs\n(same task code as user-triggered runs,\nFlows A-C)
-Workers -> DB : write reports / ideas
+Workers -> DB : write reports / ideas / alerts
+opt discovery found new competitors
+  Workers -> QS : enqueue send_email_task\nper EDIT+ member\n(AlertNotificationService)
+  QS -> Redis : dispatch email jobs
+end
 note right of Workers
-  Results surface passively: users see
-  fresh reports and alerts on next visit
-  or via MCP (ci_get_alerts). No push
-  notification exists today.
+  New-competitor discovery emails a digest to
+  the product's EDIT+ members (gated by
+  alert_on_new_competitors). Other results
+  (reports, audits) still surface passively —
+  seen on next visit or via MCP (ci_get_alerts).
 end note
 @enduml
