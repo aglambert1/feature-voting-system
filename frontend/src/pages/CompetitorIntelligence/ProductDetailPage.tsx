@@ -935,7 +935,7 @@ export default function ProductDetailPage() {
                     </div>
 
                     <p className="text-sm text-gray-500 mb-3">
-                      Voters can self-register to submit ideas and vote. Existing product owners or admins who redeem an invite code will also gain view access to all analyses and reports.
+                      Anyone who registers or redeems this code gains view access to this product — its ideas, analyses, and reports. Voters can also submit ideas and vote.
                     </p>
 
                     {(() => {

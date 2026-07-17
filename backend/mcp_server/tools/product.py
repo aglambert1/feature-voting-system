@@ -375,6 +375,7 @@ def product_run_analysis(
     source_url: str = "",
     web_research: bool = True,
     source_urls: list[str] | None = None,
+    wait_seconds: int = 0,
 ) -> dict:
     """Queue an AI analysis of a product. By default, supplements provided data with web research (searches for features, pricing, integrations, reviews). Set web_research=false to skip Brave and rely on training knowledge + provided sources.
 
@@ -390,6 +391,7 @@ def product_run_analysis(
         source_url: Optional single URL to fetch as the primary product description (e.g. product homepage). Extracted text replaces the stored product_description for this run.
         web_research: Search the web for additional product information (default true). Set false to skip Brave search and rely on training knowledge + any provided source pages.
         source_urls: Optional list of additional pages (max 5) the agent should use as authoritative context — feature pages, pricing, docs, etc. Complements source_url (which replaces the description). Fetched server-side and passed to the agent as '## Fetched Source Pages'.
+        wait_seconds: If > 0, wait up to this many seconds (max 120) for the job to finish and return its result inline instead of just queuing. Default 0 returns immediately with status "queued" — poll job_get_status. If the job outlives the wait, the result includes "waiting": true.
     """
     from app.models.competitor_intelligence import CIProduct
     from app.models.queue import JobType
@@ -456,10 +458,11 @@ def product_run_analysis(
 
         from app.queue.product_tasks import analyze_product_task
         from mcp_server.db import dispatch_task
+        from mcp_server.job_wait import maybe_wait
         result = dispatch_task(analyze_product_task, job.id)
         queue_service.mark_queued(job.id, result.id)
 
-        return {
+        return maybe_wait({
             "job_id": job.id,
             "job_uuid": job.job_uuid,
             "source_type": source_type,
@@ -467,7 +470,7 @@ def product_run_analysis(
             "status": "queued",
             "message": "Product analysis queued (step 1 of the full workflow). Poll with job_get_status; "
                        "then ci_run_discovery -> ci_run_competitor_audit per competitor -> synthesis_run_unified.",
-        }
+        }, wait_seconds)
 
 
 @mcp.tool()
@@ -885,12 +888,13 @@ def _rebuild_job_map_json(db, product):
 
 
 @mcp.tool()
-def product_extract_job_map(product_id: int, guidance: str = "") -> dict:
+def product_extract_job_map(product_id: int, guidance: str = "", wait_seconds: int = 0) -> dict:
     """Queue the JobMapExtractorAgent to generate a JTBD job map from product information. Returns a job_id for polling.
 
     Args:
         product_id: The product to extract a job map for.
         guidance: Optional guidance for the extraction (e.g. target customer hints, focus areas).
+        wait_seconds: If > 0, wait up to this many seconds (max 120) for the job to finish and return its result inline. Default 0 returns immediately with status "queued" — poll job_get_status. On timeout the result includes "waiting": true.
     """
     from app.models.competitor_intelligence import CIProduct
     from app.models.queue import JobType as QueueJobType
@@ -924,15 +928,16 @@ def product_extract_job_map(product_id: int, guidance: str = "") -> dict:
 
         from app.queue.jtbd_tasks import extract_job_map_task
         from mcp_server.db import dispatch_task
+        from mcp_server.job_wait import maybe_wait
         result = dispatch_task(extract_job_map_task, job.id)
         queue_service.mark_queued(job.id, result.id)
 
-        return {
+        return maybe_wait({
             "job_id": job.id,
             "job_uuid": job.job_uuid,
             "status": "queued",
             "message": "Job map extraction queued. Use job_get_status to check progress.",
-        }
+        }, wait_seconds)
 
 
 @mcp.tool()

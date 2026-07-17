@@ -301,6 +301,7 @@ def internal_submit_feedback(
     deals_json: str = "[]",
     tickets_json: str = "[]",
     source: str = "mcp",
+    wait_seconds: int = 0,
 ) -> dict:
     """Submit internal feedback data (win/loss deals and/or support tickets) for theme extraction. The data will be processed asynchronously by an AI agent to extract themes.
 
@@ -309,6 +310,7 @@ def internal_submit_feedback(
         deals_json: JSON array of deal records. Each deal: {"company_name": "Acme", "deal_value": 50000, "outcome": "lost", "loss_reason": "Missing time tracking", "competitor": "Asana"}. Fields: company_name (required), deal_value, outcome (won/lost), loss_reason, win_reason, competitor.
         tickets_json: JSON array of support tickets. Each ticket: {"subject": "Need time tracking", "category": "feature_request", "priority": "high"}. Fields: subject (required), category, priority, description.
         source: Label for where this data came from (default: "mcp").
+        wait_seconds: If > 0, wait up to this many seconds (max 120) for the extraction job to finish and return its result inline. Default 0 returns immediately with status "queued" — poll job_get_status. On timeout the result includes "waiting": true.
     """
     from app.models.internal_feedback import InternalFeedbackImport
     from app.models.queue import JobType
@@ -363,10 +365,11 @@ def internal_submit_feedback(
         )
 
         from mcp_server.db import dispatch_task
+        from mcp_server.job_wait import maybe_wait
         result = dispatch_task(internal_discovery_task, job.id)
         queue_service.mark_queued(job.id, result.id)
 
-        return {
+        return maybe_wait({
             "import_id": fb_import.id,
             "job_id": job.id,
             "job_uuid": job.job_uuid,
@@ -374,4 +377,4 @@ def internal_submit_feedback(
             "tickets_count": len(tickets),
             "status": "queued",
             "message": "Internal feedback import queued for theme extraction. Use job_get_status to check progress.",
-        }
+        }, wait_seconds)

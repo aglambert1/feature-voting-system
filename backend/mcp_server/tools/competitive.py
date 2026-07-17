@@ -266,7 +266,7 @@ def ci_add_competitor(product_id: int, competitor_name: str, competitor_url: str
 
 
 @mcp.tool()
-def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
+def ci_run_discovery(product_id: int, max_competitors: int = 5, wait_seconds: int = 0) -> dict:
     """Discover competitors automatically using AI analysis of the product. Returns a job ID.
 
     Poll with job_get_status until complete. The completed job's output_data includes competitor_names — use each name to call ci_run_competitor_audit.
@@ -274,6 +274,7 @@ def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
     Args:
         product_id: The product to discover competitors for.
         max_competitors: Maximum number of competitors to discover (1-20, default 5).
+        wait_seconds: If > 0, wait up to this many seconds (max 120) for the job to finish and return its result inline. Default 0 returns immediately with status "queued" — poll job_get_status. On timeout the result includes "waiting": true.
     """
     from app.models.queue import JobType
     from app.services.queue_service import QueueService
@@ -301,10 +302,11 @@ def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
         )
 
         from mcp_server.db import dispatch_task
+        from mcp_server.job_wait import maybe_wait
         result = dispatch_task(discover_competitors_task, job.id)
         queue_service.mark_queued(job.id, result.id)
 
-        return {
+        return maybe_wait({
             "job_id": job.id,
             "job_uuid": job.job_uuid,
             "max_competitors": max_competitors,
@@ -312,7 +314,7 @@ def ci_run_discovery(product_id: int, max_competitors: int = 5) -> dict:
             "message": f"Competitor discovery queued (max {max_competitors}). Poll with job_get_status until complete. "
                        "The completed job's output_data.competitor_names lists discovered names — "
                        "run ci_run_competitor_audit for each name.",
-        }
+        }, wait_seconds)
 
 
 @mcp.tool()
@@ -321,6 +323,7 @@ def ci_run_competitor_audit(
     competitor_name: str,
     web_research: bool = True,
     source_urls: list[str] | None = None,
+    wait_seconds: int = 0,
 ) -> dict:
     """Trigger a functional audit for a single competitor. Returns a job ID — poll with job_get_status until complete. After all competitor audits finish, run synthesis_run_unified for unified synthesis.
 
@@ -329,6 +332,7 @@ def ci_run_competitor_audit(
         competitor_name: Name (or partial name) of the competitor.
         web_research: If true (default), the agent supplements its training knowledge with live Brave web search. Set false to skip Brave and rely on training knowledge + any Evidence records + provided source_urls. Major latency win when false.
         source_urls: Optional list of specific pages to fetch and feed to the agent (max 5 URLs). Useful for grounding analysis in pricing pages, feature lists, or docs you want the agent to cite. For persistent text input, use evidence_add first — Evidence records are reusable across audits and tracked for citations.
+        wait_seconds: If > 0, wait up to this many seconds (max 120) for the job to finish and return its result inline. Default 0 returns immediately with status "queued" — poll job_get_status. On timeout the result includes "waiting": true.
     """
     from app.models.competitor_intelligence import ProductCompetitor
     from app.models.queue import JobType
@@ -372,17 +376,18 @@ def ci_run_competitor_audit(
 
         from app.queue.competitor_tasks import functional_audit_task
         from mcp_server.db import dispatch_task
+        from mcp_server.job_wait import maybe_wait
         result = dispatch_task(functional_audit_task, job.id)
         queue_service.mark_queued(job.id, result.id)
 
-        return {
+        return maybe_wait({
             "job_id": job.id,
             "job_uuid": job.job_uuid,
             "competitor_name": competitor.competitor_name,
             "status": "queued",
             "message": f"Functional audit for {competitor.competitor_name} queued. Poll with job_get_status until complete. "
                        "After all audits finish, run synthesis_run_unified for unified synthesis.",
-        }
+        }, wait_seconds)
 
 
 @mcp.tool()

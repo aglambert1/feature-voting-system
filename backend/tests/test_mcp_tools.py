@@ -193,6 +193,7 @@ def _mock_session(db_session):
         patch("mcp_server.tools.composite.get_session", fake_get_session),
         patch("mcp_server.tools.evidence.get_session", fake_get_session),
         patch("mcp_server.tools.jobs.get_session", fake_get_session),
+        patch("mcp_server.job_wait.get_session", fake_get_session),
         patch("mcp_server.tools.pm_review.get_session", fake_get_session),
         patch("mcp_server.tools.monitoring.get_session", fake_get_session),
     ]
@@ -381,6 +382,78 @@ class TestJobGetStatus:
         with _mock_session(db_session), _patch_user(outsider.id):
             result = job_get_status(job.job_uuid)
             assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# job_wait helper — kickoff tools' optional wait_seconds behavior
+# ---------------------------------------------------------------------------
+
+class TestWaitForJob:
+    def test_finished_job_returns_immediately(self, db_session, job):
+        from mcp_server.job_wait import wait_for_job
+
+        with _mock_session(db_session):
+            result = wait_for_job(job.job_uuid, wait_seconds=30)
+            assert result["status"] == "success"
+            assert "waiting" not in result
+
+    def test_not_found(self, db_session):
+        from mcp_server.job_wait import wait_for_job
+
+        with _mock_session(db_session):
+            result = wait_for_job("nonexistent-uuid", wait_seconds=5)
+            assert "error" in result
+
+    def test_running_job_times_out_with_waiting_flag(self, db_session, product_a):
+        import uuid as _uuid
+        from mcp_server.job_wait import wait_for_job
+        from app.models.queue import QueueJob, JobStatus, JobType
+
+        running = QueueJob(
+            job_uuid=str(_uuid.uuid4()),
+            job_type=JobType.FUNCTIONAL_AUDIT,
+            status=JobStatus.RUNNING,
+            product_id=product_a.id,
+        )
+        db_session.add(running)
+        db_session.commit()
+
+        with _mock_session(db_session):
+            # wait_seconds=0 → deadline already passed, returns promptly
+            result = wait_for_job(running.job_uuid, wait_seconds=0)
+            assert result["status"] == "running"
+            assert result["waiting"] is True
+
+
+class TestMaybeWait:
+    def test_zero_wait_returns_queued_unchanged(self, db_session, job):
+        from mcp_server.job_wait import maybe_wait
+
+        queued = {"job_uuid": job.job_uuid, "status": "queued", "message": "m"}
+        with _mock_session(db_session):
+            result = maybe_wait(queued, wait_seconds=0)
+        assert result == queued  # untouched, no DB hit needed
+
+    def test_positive_wait_merges_final_status(self, db_session, job):
+        from mcp_server.job_wait import maybe_wait
+
+        queued = {"job_uuid": job.job_uuid, "status": "queued", "message": "m"}
+        with _mock_session(db_session):
+            result = maybe_wait(queued, wait_seconds=30)
+        # job fixture is SUCCESS → merged status wins, queued context preserved
+        assert result["status"] == "success"
+        assert result["message"] == "m"
+        assert result["job_uuid"] == job.job_uuid
+
+    def test_wait_error_preserves_queued_context(self, db_session):
+        from mcp_server.job_wait import maybe_wait
+
+        queued = {"job_uuid": "missing-uuid", "status": "queued", "message": "m"}
+        with _mock_session(db_session):
+            result = maybe_wait(queued, wait_seconds=5)
+        # dispatch succeeded; wait failed — keep job_uuid, surface wait_error
+        assert result["job_uuid"] == "missing-uuid"
+        assert "wait_error" in result
 
 
 # ---------------------------------------------------------------------------

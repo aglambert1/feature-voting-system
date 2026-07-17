@@ -5,14 +5,47 @@
  * - useProductJobPolling: poll a product's jobs by type until none are active
  * - useJobStatusPolling: poll a single job by UUID until it finishes
  *
- * Both poll every 2s (configurable) and keep callbacks in refs so callers
- * don't need to memoize them.
+ * Both start polling at 2s (configurable) and back off exponentially up to a
+ * cap while a job stays active, so a long-running job doesn't generate a
+ * request every 2s for minutes. Keeps callbacks in refs so callers don't need
+ * to memoize them.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getJob, getProductJobs } from '../services/api';
 import type { ApiError, QueueJob } from '../types';
 import { JobStatus, JobType } from '../types';
+
+/** Cap for exponential backoff of the polling interval. */
+const MAX_POLL_INTERVAL_MS = 15000;
+
+/**
+ * Poll `fn` on a self-scheduling timer that starts at `baseMs` and doubles
+ * each tick up to MAX_POLL_INTERVAL_MS, while `active` is true. Returns a
+ * cleanup function. Uses setTimeout (not setInterval) so each delay can grow
+ * and a slow request can't overlap the next tick.
+ */
+function scheduleBackoffPolling(
+  fn: () => void | Promise<void>,
+  baseMs: number,
+): () => void {
+  let delay = baseMs;
+  let timer: ReturnType<typeof setTimeout>;
+  let cancelled = false;
+
+  const tick = async () => {
+    await fn();
+    if (cancelled) return;
+    delay = Math.min(delay * 2, MAX_POLL_INTERVAL_MS);
+    timer = setTimeout(tick, delay);
+  };
+
+  timer = setTimeout(tick, delay);
+  return () => {
+    cancelled = true;
+    clearTimeout(timer);
+  };
+}
 
 /** True while a job is pending, queued, or running. */
 export const isJobActive = (job: QueueJob): boolean =>
@@ -96,11 +129,10 @@ export function useProductJobPolling({
     refresh();
   }, [refresh]);
 
-  // Poll only while there's an active job.
+  // Poll only while there's an active job, backing off over time.
   useEffect(() => {
     if (!activeJob) return;
-    const interval = setInterval(refresh, intervalMs);
-    return () => clearInterval(interval);
+    return scheduleBackoffPolling(refresh, intervalMs);
   }, [activeJob, refresh, intervalMs]);
 
   return { activeJob, lastCompletedJob, loading, refresh };
@@ -156,11 +188,10 @@ export function useJobStatusPolling(
     fetchJob();
   }, [fetchJob]);
 
-  // Poll only while the job is active.
+  // Poll only while the job is active, backing off over time.
   useEffect(() => {
     if (!job || !isJobActive(job)) return;
-    const interval = setInterval(fetchJob, intervalMs);
-    return () => clearInterval(interval);
+    return scheduleBackoffPolling(fetchJob, intervalMs);
   }, [fetchJob, job, intervalMs]);
 
   return { job, loading, error };
