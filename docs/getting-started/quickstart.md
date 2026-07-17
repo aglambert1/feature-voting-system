@@ -60,7 +60,7 @@ Open http://localhost:5173.
 cd backend && ./venv/bin/python -m scripts.seed_demo_data
 ```
 
-This creates a demo product (Concur Invoice — an AP automation platform), 14 demo users, a set of pre-classified ideas with votes and comments, and lifecycle statuses. The script is idempotent — safe to re-run. To remove: `./venv/bin/python -m scripts.seed_demo_data --cleanup`.
+This creates a demo product (Concur Invoice — an AP automation platform), 15 demo users, a set of pre-classified ideas with votes and comments, and lifecycle statuses. The script is idempotent — safe to re-run. To remove: `./venv/bin/python -m scripts.seed_demo_data --cleanup`.
 
 > **Known limitation**: the seed script creates ideas directly without running them through the triage agent, so they don't have triage metadata (job linkage, classification rationale, duplicate links). The demo product, users, and votes are correct — but ideas won't show competitive context or job tags until you submit new ones manually. See [tour.md](tour.md) for what to demo around this.
 
@@ -87,14 +87,14 @@ If the demo product doesn't have a job map yet, click **"Generate from product d
 
 ### Step 3 — Submit a new idea and watch triage (2 min)
 Go to **Submit Idea**, write something like *"We need OCR for handwritten receipts"*. Submit. Within a few seconds the triage agent runs (`submit_and_triage_idea_task` in Celery) and:
-- Classifies the idea (`APPROVED`, `NEEDS_REVIEW`, `DUPLICATE`, or `NOT_APPROPRIATE`)
+- Classifies the idea (`ACCEPTED`, `NEEDS_REVIEW`, `DUPLICATE`, `FEATURE_EXISTS`, or `NOT_APPROPRIATE`)
 - Links it to the closest job via embedding similarity
 - Surfaces competitive context if competitors already have this feature
 
 This is the canonical proof that the system isn't a glorified voting board — every idea is grounded in jobs and competitive reality.
 
 ### Step 4 — Run a competitor audit (3 min)
-On the product page, find a competitor with `audit_enabled=True`. Click **Run audit**. This kicks off the two-stage audit (`functional_audit_task`):
+On the product page, find a competitor with `tracked=True`. Click **Run audit**. This kicks off the two-stage audit (`functional_audit_task`):
 - Stage 1 (~45s): web research + raw extraction
 - Stage 2 (~90–150s): structured `job_assessments` per job
 
@@ -113,8 +113,8 @@ Each opportunity row links to its underlying evidence and (for high-priority ite
 ## What just happened
 
 In ten minutes you used:
-- **3 of the 10 LLM agents** — JobMapExtractor, FunctionalAudit (2-stage), IdeaTriage, UnifiedSynthesis
-- **5 of the 7 Celery task files** — product, competitor, triage, synthesis, jtbd
+- **4 of the 10 LLM agents** — JobMapExtractor, FunctionalAudit (2-stage), IdeaTriage, UnifiedSynthesis
+- **5 of the 8 Celery task files** — product, competitor, triage, synthesis, jtbd
 - **All 3 pillars** — Idea Management, Competitive Intelligence, (Internal Feedback if you imported any)
 - **The full closed loop** — competitor signal → synthesized opportunity → idea → triage → vote
 

@@ -43,7 +43,7 @@ Task -> DB : persist status\n(ACCEPTED / NEEDS_REVIEW / DUPLICATE /\nFEATURE_EXI
 Task -> QS : mark_success(output_data)
 
 loop every 2s until job finishes
-  FE -> API : GET /products/jobs/{job_uuid}
+  FE -> API : GET /product-intelligence/jobs/{job_uuid}
   API -> QS : get_job_by_uuid
   QS --> FE : status, progress, output_data
 end
@@ -100,7 +100,7 @@ note right of Task
 end note
 
 loop every 2s until job finishes
-  FE -> API : GET /products/jobs/{job_uuid}
+  FE -> API : GET /product-intelligence/jobs/{job_uuid}
   API -> QS : get_job_by_uuid
   QS --> FE : status, progress
 end
@@ -165,7 +165,7 @@ group _run_unified_synthesis_post_audits
 end
 
 loop every 2s until job finishes
-  FE -> API : GET /products/jobs/{job_uuid}
+  FE -> API : GET /product-intelligence/jobs/{job_uuid}
   API -> QS : get_job_by_uuid
   QS --> FE : status, progress
 end

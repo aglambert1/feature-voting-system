@@ -12,10 +12,10 @@ A demo product that prospects can explore in read-only mode (`ProductPermissionL
 
 **Demo product target — Concur Invoice (AP automation)**:
 - Job map with 5–7 jobs (functional + emotional + social mix)
-- 4–5 competitors total:
-  - **3 fully audited + included in synthesis** (so reports and synthesis are populated for the cold-open demo)
-  - **1 unaudited but enabled** (for the live "watch it run" moment during demos)
-  - **0–1 disabled** (to show toggle controls)
+- 4–5 competitors total (each has a single `tracked` flag — tracked competitors are eligible for audits and included in synthesis):
+  - **3 tracked + audited** (so reports and synthesis are populated for the cold-open demo)
+  - **1 tracked but not yet audited** (for the live "watch it run" moment during demos)
+  - **0–1 untracked** (to show the toggle control)
 - 1 completed unified synthesis report with auto-generated opportunities
 - ~15–20 ideas, mostly submitted via the live triage path (so they have job linkage and competitive context). A small minority can come from the seed script to inflate vote counts.
 - Sample comments and votes on a handful of ideas
@@ -99,10 +99,10 @@ In the product detail, go to the Competitors tab. Either:
 
 (These are real Concur Invoice competitors. Pick 4–5 of them.)
 
-Set toggles — for the demo target:
-- **3 of them**: `audit_enabled = true`, `synthesis_included = true`
-- **1 of them**: `audit_enabled = true`, `synthesis_included = false` (this is the one we'll *not* audit yet — leave it enabled but don't run the audit so the live-demo button works)
-- **1 of them** (optional): `audit_enabled = false` to show the toggle UI
+Set the `tracked` toggle — for the demo target:
+- **3 of them**: `tracked = true` (these get audited in the next step)
+- **1 of them**: `tracked = true`, but don't run the audit yet — leave it tracked with no report so the live-demo "Run Audit" button works
+- **1 of them** (optional): `tracked = false` to show the toggle UI
 
 ---
 
@@ -118,7 +118,7 @@ When each completes, **open the report and skim it**. If the `job_assessments` l
 
 Checkpoint: 3 competitors should have green "Report ready" indicators.
 
-> **Do not** audit the 4th competitor. Leave it `audit_enabled=true` but no report — that's the live-demo target.
+> **Do not** audit the 4th competitor. Leave it `tracked=true` but no report — that's the live-demo target.
 
 ---
 
@@ -174,7 +174,7 @@ For each voter, log in and:
 
 Goal: when a prospect lands on the Ideas board, they see realistic vote distribution (e.g., top idea has 5–6 votes, tail has 1–2) and some social proof in the form of comments.
 
-> Optional: if you want to inflate vote counts further without creating more accounts, run `seed_demo_data.py --product-id <demo_product_id>` (but be aware it won't be tied to the demo product's job map and will create extra ideas without triage — see [seed-script caveat in the quickstart](quickstart.md#3-seed-the-demo-data-30-sec)). Recommend skipping unless you really need higher numbers.
+> Optional: if you want to inflate vote counts further without creating more accounts, re-run `seed_demo_data.py` (it's idempotent and always targets its own "Concur Invoice" demo product — it doesn't take a `--product-id` argument). Be aware its ideas are created directly without triage, so they won't be tied to your curated job map — see [seed-script caveat in the quickstart](quickstart.md#3-seed-the-demo-data-30-sec). Recommend skipping unless you really need higher numbers.
 
 ---
 

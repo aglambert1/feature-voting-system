@@ -39,9 +39,10 @@ This is the load-bearing concept. Everything else is plumbing.
 │                                                                             │
 │   API routers (app/api/)                                                   │
 │     /auth · /ideas · /votes · /submissions · /admin · /invites             │
-│     /product-intelligence/products · /competitive-agents · /job-map         │
-│     /pm-review · /monitoring · /internal-feedback                          │
-│     /synthesis · /evidence · /jobs · /api-keys                             │
+│     /product-intelligence/products (products, evidence, job-map)          │
+│     /product-intelligence/agents · /product-intelligence/jobs             │
+│     /products (synthesis) · /pm-review · /monitoring                      │
+│     /internal-feedback · /api-keys                                        │
 │                                                                             │
 │   Services (app/services/)        Agents (app/agents/)                     │
 │     queue_service                   ProductAnalyzerAgent                   │
@@ -107,7 +108,7 @@ This is the load-bearing concept. Everything else is plumbing.
 4. Opportunities above the priority threshold (default 0.8) auto-generate Ideas via the same triage path
 
 ### D. Idea ↔ Job linkage
-Embeddings are how everything stays connected. When any text-bearing record (Idea, WinLossTheme, SupportTheme, Evidence) is created or updated, its `statement_embedding` is compared against `ProductJob.statement_embedding` and the best-match `job_id_key` is stored. This means synthesis can join across pillars by job without manual tagging.
+Embeddings are how everything stays connected. When any text-bearing record (Idea, WinLossTheme, SupportTheme, Evidence) is created or updated, its `statement_embedding` is compared against `ProductJob.statement_embedding` and the best-match `job_id_key` is stored. Thresholds vary by path — idea triage auto-links at cosine ≥ 0.88 and LLM-validates between 0.75–0.88 (see [sequence-diagrams.puml](sequence-diagrams.puml) Flow A); evidence linkage uses a flat 0.5 cutoff. This means synthesis can join across pillars by job without manual tagging.
 
 ## Major components at a glance
 
@@ -171,7 +172,7 @@ Each product has an access list. Permissions are hierarchical: **OWNER > EDIT > 
 
 - JWT sliding-session with `tokens_valid_after` per user — admin password resets invalidate all existing sessions
 - Optional TOTP MFA — users enable from Profile, login requires a second step when active
-- Account lockout after 5 failed logins within 15 minutes; admin unlock via `/users/{id}/unlock`
+- Account lockout after 5 cumulative failed logins (counter resets on successful login), locking the account for 15 minutes; admin unlock via `/users/{id}/unlock`
 - Self-service password reset via email OTP (SendGrid)
 
 ### Notifications

@@ -2,7 +2,7 @@
 
 A feature inventory grouped by user role. Use this as a demo cheat-sheet — what to show, who it's for, and where it lives in the UI.
 
-> Roles in the system: **Admin**, **Product Owner (PO)**, **Product Manager (PM)**, **Voter**. Permissions are also scoped per-product via `ProductPermission`.
+> System roles (`UserRole`): **Admin**, **Product Owner**, **Voter**. "Product Manager (PM)" below isn't a fourth system role — it's shorthand for anyone with **EDIT+** product permission (typically a Product Owner) who uses the review/triage workflows. Permissions are scoped per-product via `ProductPermission` — see [architecture.md](architecture.md#access-control).
 
 ---
 
@@ -26,7 +26,7 @@ The simplest experience — the "feature voting board" most products would call 
 
 ## For Product Managers (PMs)
 
-PMs use everything voters use, plus the review and triage workflows.
+"PM" here means anyone with EDIT+ permission on a product — not a distinct system role. PMs use everything voters use, plus the review and triage workflows.
 
 | Feature | Where | What it does |
 |---|---|---|
@@ -60,7 +60,7 @@ POs own the analytical spine — the job map, the competitor list, and the synth
 | Feature | Where | What it does |
 |---|---|---|
 | Competitor discovery | Product detail | Runs `CompetitorResearcherAgent` (web-augmented via Brave) to find competitors |
-| Competitor inclusion toggles | Product detail | `audit_enabled` and `synthesis_included` are independent — different competitors can be in audits vs. synthesis |
+| Competitor tracking toggle | Product detail | Single `tracked` flag per competitor — tracked competitors are eligible for audits and included in synthesis. No separate audit/synthesis toggle |
 | Run a competitor audit | Competitor card | Two-stage audit: web research → structured `job_assessments`. ~3 min total |
 | Competitor functional reports | Competitor reports tab | Unified view: each job shows competitor positions (advantage, gap, parity) with supporting evidence |
 | Alerts | Monitoring page | Flag changes in competitor reports across runs |
