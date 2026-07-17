@@ -60,6 +60,26 @@ class TestGetUserProducts:
         )
         assert resp.status_code == 404
 
+    def test_includes_implicit_owner_for_created_product(
+        self, client, db_session, admin_user, po_user, test_product
+    ):
+        """L4: a product the target user created is returned as implicit OWNER
+        even with no explicit ProductPermission row (po_user created
+        test_product; admin has OWNER on it to see the assignment)."""
+        _grant_admin_owner(db_session, admin_user, test_product)
+        # po_user has no explicit ProductPermission on test_product — only the
+        # implicit owner path should surface it.
+        resp = client.get(
+            f"/auth/users/{po_user.id}/products",
+            headers=auth_headers(admin_user),
+        )
+        assert resp.status_code == 200
+        entry = next(
+            (p for p in resp.json() if p["product_id"] == test_product.id), None
+        )
+        assert entry is not None
+        assert entry["permission_level"] == "owner"
+
     def test_voter_cannot_get_user_products(self, client, voter_user):
         resp = client.get(
             f"/auth/users/{voter_user.id}/products",

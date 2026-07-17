@@ -214,6 +214,32 @@ class TestListIdeas:
         assert created_here["source_type"] == "customer_submission"
         assert created_here["external_source"] is None
 
+    def test_list_ideas_admin_with_zero_access_sees_none(
+        self, client, admin_user, db_session, test_product
+    ):
+        """L5: an admin with no product grants and no created products sees no
+        ideas they didn't submit — role alone grants no visibility."""
+        # test_product is created by po_user; admin_user has no grant on it and
+        # did not submit this idea.
+        other = Idea(
+            title="Not Visible To Admin",
+            what_description="An idea on a product the admin can't access",
+            why_description="Used to verify zero-access admins see nothing",
+            use_case_description="Admin has no grant and is not the submitter",
+            product_id=test_product.id,
+            submitter_id=test_product.created_by_user_id,
+            source_type=SourceType.CUSTOMER_SUBMISSION,
+            status=IdeaStatus.ACCEPTED,
+            is_active=True,
+        )
+        db_session.add(other)
+        db_session.commit()
+
+        resp = client.get("/ideas/", headers=auth_headers(admin_user))
+        assert resp.status_code == 200
+        titles = [i["title"] for i in resp.json()["ideas"]]
+        assert "Not Visible To Admin" not in titles
+
 
 class TestIdeaReview:
 
