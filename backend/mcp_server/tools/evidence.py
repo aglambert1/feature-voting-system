@@ -1,4 +1,4 @@
-"""Evidence (factbase) tools for MCP server."""
+"""Evidence (evidence base) tools for MCP server."""
 
 import json
 import logging
@@ -24,7 +24,7 @@ def evidence_add(
     competitor_name: str = "",
     tags: str = "[]",
 ) -> dict:
-    """Add a piece of evidence to the product factbase. Evidence is any product-relevant information: competitive intel, customer interview insights, market signals, research notes, pricing changes, partnership announcements, etc.
+    """Add a piece of evidence to the product evidence base. Evidence is any product-relevant information: competitive intel, customer interview insights, market signals, research notes, pricing changes, partnership announcements, etc.
 
     IMPORTANT: Always provide source_url when the information came from a web page, article, or document. Source links are critical for traceability.
 
@@ -87,7 +87,7 @@ def evidence_add(
             "evidence_type": evidence_type,
             "has_embedding": evidence.content_embedding is not None,
             "jtbd_statement": evidence.jtbd_statement,
-            "message": f"Evidence '{title}' added to factbase.",
+            "message": f"Evidence '{title}' added to evidence base.",
         }
         if resolved_competitor:
             result["linked_competitor"] = resolved_competitor
@@ -105,7 +105,7 @@ def evidence_list(
     tag: str = "",
     limit: int = 20,
 ) -> dict:
-    """Browse evidence in the product factbase with optional filters.
+    """Browse evidence in the product evidence base with optional filters.
 
     Args:
         product_id: The product to list evidence for.
@@ -163,7 +163,7 @@ def evidence_list(
 
 @mcp.tool()
 def evidence_delete(evidence_id: int) -> dict:
-    """Delete an evidence record from the factbase.
+    """Delete an evidence record from the evidence base.
 
     Args:
         evidence_id: The ID of the evidence record to delete.

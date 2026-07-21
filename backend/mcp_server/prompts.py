@@ -35,8 +35,8 @@ def empathy_validation_gate(product_id: int) -> str:
     return f"""Prepare the empathy validation gate for product {product_id}. This gate asks the PM: "Does this synthesis match my direct experience of these customers as people with real problems?"
 
 Steps:
-1. Use internal_get_signals and ideas_get_top_voted to pull the strongest customer signals, and evidence_list for recent factbase evidence
-2. Use synthesis_get_sources to check fact-base freshness — flag any stale sources explicitly
+1. Use internal_get_signals and ideas_get_top_voted to pull the strongest customer signals, and evidence_list for recent evidence base entries
+2. Use synthesis_get_sources to check evidence base freshness — flag any stale sources explicitly
 3. Present the synthesized picture organized by customer problem / JTBD, with source links for every claim
 4. Surface gaps: segments with thin evidence, themes resting on few data points, signals without a home in the job map
 

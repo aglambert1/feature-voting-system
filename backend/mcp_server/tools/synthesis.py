@@ -19,12 +19,12 @@ VALID_SOURCE_TYPES = {"competitive", "customer", "internal", "evidence"}
 
 @mcp.tool()
 def synthesis_get_sources(product_id: int) -> dict:
-    """Check fact-base health and freshness — what data sources are available for synthesis, when each was last updated, and which are stale.
+    """Check evidence base health and freshness — what data sources are available for synthesis, when each was last updated, and which are stale.
 
     Per-source `is_stale` flags surface staleness for PM judgment (competitive
     reports >30 days, internal imports >90 days). `synthesis_stale` is true
     when the newest synthesis report predates newer evidence/ideas/reports —
-    i.e. the synthesis no longer reflects the current fact-base.
+    i.e. the synthesis no longer reflects the current evidence base.
     """
     from datetime import datetime, timedelta, timezone
 

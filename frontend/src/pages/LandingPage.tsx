@@ -7,7 +7,7 @@ const GITHUB_URL = 'https://github.com/aglambert1/feature-voting-system';
 const GITHUB_DISCUSSIONS_URL = 'https://github.com/aglambert1/feature-voting-system/discussions';
 const GITHUB_ISSUES_URL = 'https://github.com/aglambert1/feature-voting-system/issues';
 const LICENSE_URL = 'https://github.com/aglambert1/feature-voting-system/blob/main/LICENSE';
-const FEEDBACK_EMAIL = 'featureiq@gmail.com';
+const FEEDBACK_EMAIL = 'ag@feature-iq.app';
 
 const SCREENSHOT_JOB_MAP = '/screenshots/jobmap.png';
 const SCREENSHOT_SYNTHESIS = '/screenshots/synthesis.png';
@@ -60,11 +60,10 @@ const LandingPage = () => {
             transformed by AI agents.
           </p>
           <p className="text-lg text-gray-700 leading-relaxed mb-8">
-            Feature-IQ is one step of that workflow: a continuous fact-base for market and customer
+            Feature-IQ is one step of that workflow: a continuous evidence base for market and customer
             signal, synthesized through a Jobs-to-be-Done spine, with every claim traceable back to
-            its source. It is intended
-            to deliver value today, and it's also an experiment in how AI is changing the practice of
-            product management. The opportunity in transforming product processes with AI is to strip
+            its source. It is intended to deliver value today, and it's also an experiment in how AI is
+            changing the practice of product management. The opportunity in transforming product processes with AI is to strip
             product management down to its core — understanding and empathizing with customers'
             needs — and remove the administrative and project management overhead. When you use it,
             I want to hear what you think.

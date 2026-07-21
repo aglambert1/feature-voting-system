@@ -9,7 +9,7 @@ from mcp_server.permissions import require_product_access
 def evaluate_feature_evidence(product_id: int, feature_description: str) -> dict:
     """Gather all available evidence about a feature capability from competitive data, customer ideas, and internal feedback. Does NOT recommend build/don't-build — returns evidence for PM decision-making.
 
-    Competitive/customer/factbase sources use semantic (vector) search;
+    Competitive/customer/evidence-base sources use semantic (vector) search;
     internal themes are keyword-matched. For internal feedback alone use
     internal_get_signals.
     """
@@ -58,7 +58,7 @@ def evaluate_feature_evidence(product_id: int, feature_description: str) -> dict
             + [{"type": "support", **m} for m in st_matches]
         )
 
-        # Search factbase evidence
+        # Search evidence base
         evidence_signals = VectorService.find_similar_evidence(
             db, query_emb, product_id, limit=5
         )
@@ -89,7 +89,7 @@ def evaluate_feature_evidence(product_id: int, feature_description: str) -> dict
         # Dynamic evidence gaps based on what's actually available
         evidence_gaps = []
         if not factbase_evidence:
-            evidence_gaps.append("no factbase evidence found — use evidence_add to capture relevant intel")
+            evidence_gaps.append("no evidence base entries found — use evidence_add to capture relevant intel")
         if not any(e["evidence_type"] == "customer_interview" for e in factbase_evidence):
             evidence_gaps.append("no customer interview data available")
         evidence_gaps.extend([
@@ -116,7 +116,7 @@ def evaluate_feature_evidence(product_id: int, feature_description: str) -> dict
 
 @mcp.tool()
 def get_jobs_cluster(product_id: int, job_query: str) -> dict:
-    """Find all evidence related to a customer job across ideas, competitive features, internal themes, synthesized opportunities, and factbase evidence. Groups related signals by the underlying job customers are trying to accomplish."""
+    """Find all evidence related to a customer job across ideas, competitive features, internal themes, synthesized opportunities, and the evidence base. Groups related signals by the underlying job customers are trying to accomplish."""
     from app.services.embedding_service import generate_embedding
     from app.services.vector_service import VectorService
 
@@ -150,7 +150,7 @@ def get_jobs_cluster(product_id: int, job_query: str) -> dict:
             for m in comp_matches
         ]
 
-        # Search factbase evidence
+        # Search evidence base
         evidence_matches = VectorService.find_similar_evidence(
             db, query_emb, product_id, limit=5
         )
