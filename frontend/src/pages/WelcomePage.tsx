@@ -45,9 +45,9 @@ const WelcomePage = () => {
             Hi{user?.full_name ? `, ${user.full_name.split(' ')[0]}` : ''}.
           </h1>
           <p className="text-lg text-gray-700">
-            Feature-IQ builds a living factbase for your product — signals from competitors, customer
-            ideas, your internal data, and any evidence you upload (interview transcripts, extra
-            competitive research, anything). It organizes everything around your customers'
+            Feature-IQ builds a continuously updated evidence base for your product — signals from
+            competitors, customer ideas, your internal data, and any evidence you upload (interview
+            transcripts, extra competitive research, anything). It organizes everything around your customers'
             Jobs-to-be-Done, then synthesizes it into prioritized opportunities that flow into a
             voting board.
           </p>
@@ -67,8 +67,8 @@ const WelcomePage = () => {
               <p>
                 <span className="font-medium text-gray-900">Full ownership of products you create</span>{' '}
                 — create your own product, add your competitors, run analysis pipelines, invite voters. 
-                As product creator, you control who can see your product and its ideas, and who can vote on them. 
-                You can also upload your own evidence (interview transcripts, competitive research, etc.) to enrich the factbase.
+                As product creator, you control who can see your product and its ideas, and who can vote on them.
+                You can also upload your own materials (interview transcripts, competitive research, etc.) to enrich the evidence base.
               </p>
             )}
           </div>
@@ -91,7 +91,7 @@ const WelcomePage = () => {
               title="Connect an AI assistant over MCP"
               time="5 min"
               body={
-                'Feature-IQ exposes its factbase through MCP, so you can query and drive it in plain ' +
+                'Feature-IQ exposes its evidence base through MCP, so you can query and drive it in plain ' +
                 'English from the MCP-capable tool of your choice. Easiest path, no install: in ' +
                 'claude.ai go to Settings → Connectors → Add custom connector, paste the MCP server ' +
                 'URL below, and leave the OAuth Client ID and Secret blank — sign in with your ' +
@@ -155,10 +155,10 @@ const WelcomePage = () => {
           <ul className="space-y-2 text-gray-700">
             <li>
               <span className="font-medium">Anything at all?</span>{' '}
-              <a href="mailto:featureiq@gmail.com" className="text-blue-600 hover:underline">
+              <a href="mailto:ag@feature-iq.app" className="text-blue-600 hover:underline">
                 Email me
               </a>{' '}
-              (featureiq@gmail.com) — happy to walk you through setup, the JTBD model, or what the
+              (ag@feature-iq.app) — happy to walk you through setup, the JTBD model, or what the
               system can do, and to share the reference docs.
             </li>
             <li>
