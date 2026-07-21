@@ -159,29 +159,9 @@ CREATE TABLE password_reset_tokens (
 - Notification sent after password change
 - Alerts user to unauthorized changes
 
-## Email Service (MVP Implementation)
+## Email Service
 
-**Current State:**
-- Emails are logged to console/server logs
-- OTP codes printed for easy testing
-- No actual SMTP sending
-
-**Production TODO:**
-```python
-# In app/utils/email.py
-
-# Option 1: SendGrid
-import sendgrid
-sg = sendgrid.SendGridAPIClient(api_key=settings.sendgrid_api_key)
-
-# Option 2: AWS SES
-import boto3
-ses = boto3.client('ses', region_name=settings.aws_region)
-
-# Option 3: SMTP
-import smtplib
-server = smtplib.SMTP(settings.smtp_host, settings.smtp_port)
-```
+Sent via SendGrid in production (`sendgrid_api_key` / `sendgrid_from_email` in config); falls back to console logging in local dev when no SendGrid key is set. See [DEV_MODE_OTP.md](DEV_MODE_OTP.md) for local-dev OTP workarounds.
 
 ## Testing
 
@@ -319,33 +299,20 @@ All endpoints return clear error messages:
 }
 ```
 
+## Related Auth Features (Shipped Since This Doc Was Written)
+
+These live in `app/api/auth.py` / `app/models/user.py` and aren't covered above:
+
+- **Password strength validation** — `_validate_password_strength()` in `app/schemas/auth.py`, applied to registration, reset-confirm, and change
+- **Account lockout** — 5 failed logins within 15 minutes locks the account; admin unlock via `POST /users/{id}/unlock`
+- **Session invalidation** — `tokens_valid_after` on the user record; admin password resets and unlocks invalidate all existing JWTs
+- **Optional TOTP MFA** — users enable/disable from Profile > Security; adds a second login step when active (separate from password reset)
+- **Admin-initiated password reset** — an admin can force-reset a user's password, which also invalidates existing sessions
+
 ## Future Enhancements
 
-1. **Email Templates**
-   - HTML email templates
-   - Branded emails with logo
-   - Multi-language support
-
-2. **Additional Security**
-   - Rate limiting on reset requests
-   - CAPTCHA for public endpoints
-   - IP-based throttling
-   - Account lockout after N failed attempts
-
-3. **Password Complexity**
-   - Require uppercase/lowercase
-   - Require numbers
-   - Require special characters
-   - Check against common passwords
-
-4. **Two-Factor Authentication**
-   - TOTP-based 2FA
-   - SMS-based 2FA
-   - Backup codes
-
-5. **Password History**
-   - Prevent reusing last N passwords
-   - Track password change history
+- **Email Templates** — HTML/branded emails, multi-language support
+- **Password History** — prevent reusing last N passwords, track change history
 
 ## Files Created
 

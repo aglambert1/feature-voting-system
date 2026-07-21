@@ -1,6 +1,6 @@
 # Demo Recipe — Building the Sample Product on Prod
 
-A step-by-step recipe for setting up a curated demo product on production at [https://feature-iq.onrender.com](https://feature-iq.onrender.com). Run this once per fresh prod environment. Total time: ~60–90 minutes (most of it waiting on background tasks).
+A step-by-step recipe for setting up a curated demo product on production at [https://feature-iq.app](https://feature-iq.app). Run this once per fresh prod environment. Total time: ~60–90 minutes (most of it waiting on background tasks).
 
 > **Audience**: this doc is for the operator (the person who owns the Feature-IQ deployment). End users / prospects shouldn't need to read it.
 

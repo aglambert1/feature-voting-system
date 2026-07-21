@@ -53,6 +53,10 @@ Common patterns - verify against source if unsure:
 When adding, removing, or changing scripts, migrations, or CLI tools, update the relevant README:
 - `backend/scripts/README.md` — management scripts, DB utilities, migrations
 
+`docs/getting-started/` is the living, current documentation set (architecture, quickstart, tour, welcome, demo-recipe, claude-desktop, self-analysis) — keep it accurate. `docs/development/` is a historical design archive (prompts/specs from earlier builds); don't hold it to the same bar, and don't fix its internal cross-references to other archived docs.
+
+If a change renames or removes a model, service, endpoint, file path, or count (e.g. MCP tool count) that's named explicitly in `docs/getting-started/*.md`, flag it and ask whether that doc needs updating — don't silently let it drift.
+
 ## Git Workflow (always follow)
 
 - **Never push directly to `main`** — all changes go through a PR
@@ -89,7 +93,8 @@ If a secret is accidentally committed: rotate it immediately (assume compromised
 
 - `backend/` - FastAPI backend with SQLAlchemy models
 - `frontend/` - React TypeScript frontend
-- `docs/development/` - Design documents and prompts
+- `docs/getting-started/` - Living documentation (architecture, quickstart, tour) — keep current
+- `docs/development/` - Historical design archive (prompts, specs) — not held to the same accuracy bar
 
 ## Development Commands
 

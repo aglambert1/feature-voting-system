@@ -30,7 +30,6 @@ frontend/        React TypeScript SPA
 docs/            Documentation
   getting-started/    Start here
   development/        Design archive (prompts, specs)
-  archive/            Superseded docs
 ```
 
 ## Other documentation
@@ -43,7 +42,6 @@ docs/            Documentation
 | Password / OTP flows | [backend/PASSWORD_MANAGEMENT.md](backend/PASSWORD_MANAGEMENT.md) · [backend/DEV_MODE_OTP.md](backend/DEV_MODE_OTP.md) |
 | Demo conversation guide | [DEMO_INTERVIEW_GUIDE.md](DEMO_INTERVIEW_GUIDE.md) |
 | Positioning / GTM | [COMPETITIVE_POSITIONING.md](COMPETITIVE_POSITIONING.md) · [GTM_STRATEGY.md](GTM_STRATEGY.md) |
-| Release history | [CHANGELOG.md](CHANGELOG.md) |
 
 ## License
 

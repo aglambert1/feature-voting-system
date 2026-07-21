@@ -31,60 +31,34 @@
 
 ## Render CI/CD
 
-### How Automatic Deployments Work
+### Blueprint setup
 
-```
-Push to GitHub main → Render detects → Builds → Deploys
-        ↓                                    ↓
-    (2-5 min)                         (zero downtime)
-```
+All services are defined in [`render.yaml`](render.yaml) at the repo root (a [Render Blueprint](https://render.com/docs/blueprint-spec)):
 
-### Setup Steps
+- `feature-iq-api` — FastAPI backend (Docker, `backend/Dockerfile`)
+- `feature-iq-worker` — Celery worker + beat scheduler
+- `feature-iq-mcp` — MCP HTTP server (remote MCP client access)
+- `feature-iq` — frontend static site
+- `feature-iq-redis` — Celery broker
+- `feature-iq-db` — PostgreSQL database
 
-1. **Connect GitHub repo to Render**
-   - Render Dashboard → New → Web Service
-   - Select your repo and branch (usually `main`)
+To stand up a fresh environment: Render Dashboard → New → Blueprint → select this repo. Render reads `render.yaml` and creates all services and the database together.
 
-2. **Configure build settings**
-   ```
-   Build Command: pip install -r requirements.txt
-   Start Command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-   ```
+### Auto-deploy is OFF
 
-3. **Set environment variables**
-   - Dashboard → Your Service → Environment
-   - Add: `SECRET_KEY`, `DATABASE_URL`, `ANTHROPIC_API_KEY`, etc.
+Every service has `autoDeploy: false`. Pushing to `main` does **not** trigger a deploy — you must manually trigger one from the Render dashboard per service (or via the Render API/CLI). This is intentional: it decouples merging from deploying, so a merged PR doesn't immediately hit production.
 
-4. **Enable auto-deploy**
-   - Settings → Auto-Deploy → Yes (default)
+### Database migrations
 
-### What Happens During Deploy
+`feature-iq-api` runs `preDeployCommand: alembic upgrade head` automatically before each deploy — no manual migration step needed for routine changes.
 
-1. Render detects push to watched branch
-2. Spins up new container, runs build command
-3. Starts new version alongside old version
-4. Health check: hits your app's root endpoint
-5. If healthy → switches traffic to new version
-6. If unhealthy → keeps old version running (no downtime)
+**Fresh database bootstrap** (new environment, empty DB): `alembic upgrade head` from zero can fail if the migration chain doesn't cleanly replay onto a blank schema. The recovery path:
+1. Temporarily run `create_all()` (e.g. via a one-off shell/script against the new `DATABASE_URL`) to build the schema directly from current models
+2. Run `alembic stamp head` to mark the migration history as satisfied without replaying it
+3. Deploy normally
+4. Revert `preDeployCommand` back to `alembic upgrade head` for all subsequent deploys
 
-### Database Migrations
-
-**Option A: Manual (recommended for now)**
-```bash
-# After deploy, run via Render Shell
-alembic upgrade head
-```
-
-**Option B: Auto-run on deploy**
-```bash
-# Build command (runs migrations before start)
-pip install -r requirements.txt && alembic upgrade head
-```
-
-⚠️ **Warning:** Destructive migrations (dropping columns) can break the old version during rolling deploy. For these:
-1. Deploy code that handles both old and new schema
-2. Run migration
-3. Deploy code that only uses new schema
+⚠️ Destructive migrations (dropping/renaming columns) can still break a service that's serving traffic during the brief window between deploy and restart. For these, prefer expand/contract: deploy code that handles both old and new schema, run the migration, then deploy code that drops the old-schema support.
 
 ### Rollback
 
@@ -244,22 +218,16 @@ Render can use this for health checks during deploy.
 
 ### Before First Deploy
 
-- [ ] Security fixes applied (see SECURITY_FIXES_PROMPT.md)
 - [ ] Environment variables documented in `.env.example`
 - [ ] `.env` is gitignored
-- [ ] Database migration strategy decided
 - [ ] Health check endpoint exists
 
 ### Render Setup
 
 - [ ] Create Render account
 - [ ] Connect GitHub repo
-- [ ] Create Web Service (backend)
-- [ ] Create PostgreSQL database
-- [ ] Create Redis instance (for Celery)
-- [ ] Create Background Worker (Celery)
-- [ ] Create Static Site (frontend)
-- [ ] Set environment variables
+- [ ] Deploy via Blueprint (`render.yaml`) — see [Blueprint setup](#blueprint-setup) above
+- [ ] Set `sync: false` environment variables manually in the dashboard (API keys, admin credentials, SendGrid)
 - [ ] Test deploy
 
 ### After First Deploy

@@ -9,7 +9,7 @@ No major PM tool (Jira, Aha!, Productboard, ProductPlan, Linear, Asana) has robu
 - Separate tools like Crayon (expensive, requires context switching)
 - Manual monitoring (time-consuming, inconsistent)
 
-Your feature-voting-system fills this gap with AI-powered competitive analysis integrated alongside idea management.
+Feature-IQ fills this gap with AI-powered competitive analysis integrated alongside idea management.
 
 ---
 
@@ -143,7 +143,7 @@ Cross-signal synthesis — connecting customer feedback, internal win/loss data,
 
 ### Positioning Statement:
 
-> "Feature Voting System gives product teams AI-powered competitive intelligence — discover competitors, analyze their features, and find gaps — without leaving your workflow. Works alongside Jira, Productboard, or any PM tool."
+> "Feature-IQ gives product teams AI-powered competitive intelligence — discover competitors, analyze their features, and find gaps — without leaving your workflow. Works alongside Jira, Productboard, or any PM tool."
 
 ---
 

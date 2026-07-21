@@ -97,7 +97,10 @@ Full project setup from scratch: creates venv, installs dependencies, runs tests
 
 ## MCP Server (`backend/mcp_server/`)
 
-Local MCP server for Claude Desktop. Exposes ~23 tools for competitive intelligence, customer ideas, synthesis, and internal feedback as structured evidence.
+MCP server exposing 78 tools across product/competitor intelligence, customer ideas, synthesis, and internal feedback. Built on FastMCP, with two transports:
+
+- **Stdio** — for Claude Desktop, run locally against your own `DATABASE_URL`
+- **HTTP + OAuth** — `mcp_server/http_server.py`, deployed as `feature-iq-mcp` on Render for remote MCP clients (OAuth via `oauth_provider.py` / `oauth_jwt.py`)
 
 ```bash
 cd backend
