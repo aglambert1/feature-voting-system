@@ -3,26 +3,23 @@
 ## Navigation Structure
 
 ```
-Home (Multi-Product Summary)
+Product Intelligence (Multi-Product Summary) | Browse Ideas | Submit Idea
 │
-├── [+ New Product] → Product Setup Flow → Product Dashboard
+├── [+ New Product] → Product Setup Flow (/product-intelligence/products/create) → Product Dashboard
 │
 └── [Product Card] → Product Dashboard
                         │
-                        ├── Review Queues
-                        │   ├── Ideas Queue
-                        │   ├── Competitive Alerts
-                        │   └── Reports
+                        ├── Agent Status
+                        │   ├── Idea Triage Agent
+                        │   ├── Market Discovery Agent
+                        │   └── Competitor Analysis Agent
                         │
-                        ├── Views
-                        │   ├── Comparison View
-                        │   ├── All Ideas
-                        │   └── All Competitors
+                        ├── Current Product Analysis
                         │
-                        └── Settings
-                            ├── Product Info (update anytime)
-                            ├── Agent Configuration
-                            └── Report Configuration
+                        ├── Product Info (update anytime)
+                        │
+                        └──  Product Analysis History
+
 ```
 
 ---
@@ -30,48 +27,49 @@ Home (Multi-Product Summary)
 ## Level 0: Home / Multi-Product Summary
 
 ### Purpose
+
 Entry point showing all products and aggregate action items.
 
 ### Layout
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Product Insight Assistant                       [+ New Product] │
+│  Product Intelligence                      [+ New Product] │
 ├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ⚡ Action Summary (All Products)                               │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐               │
-│  │ 8 Ideas     │ │ 3 Competitive│ │ 2 Reports   │               │
-│  │ need review │ │ alerts       │ │ ready       │               │
-│  └─────────────┘ └─────────────┘ └─────────────┘               │
-│                                                                 │
+|                                                                 │
 │  Products                                                       │
-│  ┌─────────────────────────────────────────────────────────┐   │
+│  ┌──────────────────────────────────────────────────────────┐   │
 │  │ 🔵 Acme Analytics                                        │   │
-│  │    5 ideas pending │ 2 alerts │ Agents: ✓✓✓ │ Last: 2h   │→ │
-│  ├─────────────────────────────────────────────────────────┤   │
+│  │    3 product info sources │ 2 competitive alerts         │   │
+│  │    5 ideas pending (7 auto-responded) │ Last analysis: 2h│   │
+│  ├──────────────────────────────────────────────────────────┤   │
 │  │ 🟢 DataFlow Pro                                          │   │
-│  │    3 ideas pending │ 1 alert  │ Agents: ✓✓○ │ Last: 1d   │→ │
+│  │    3 product info sources │ 2 competitive alerts         │   │
+│  │    5 ideas pending (7 auto-responded) │ Last analysis: 2h│   │
 │  ├─────────────────────────────────────────────────────────┤   │
 │  │ 🟡 InsightHub                                            │   │
-│  │    0 ideas pending │ 0 alerts │ Agents: ✓○○ │ Last: 5m   │→ │
+│  │    3 product info sources │ 2 competitive alerts         │   │
+│  │    5 ideas pending (7 auto-responded) │ Last analysis: 2h│   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Interactions
+
 - Click product card → Product Dashboard
 - Click "+ New Product" → Product Setup Flow
-- Click action summary cards → Filtered queue view (all products)
+- Note: product card should extend across screen to better display if only one product and more room for summary data displayed.
 
 ---
 
 ## Level 1: Product Setup Flow
 
 ### Purpose
-Create new product OR update existing product definition.
 
-### Step 1/3: Define Product
+Create new product OR update existing product definition. Add or remove product data sources. Same as existing.
+
+### Define Product by adding or removing product information sources
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -89,381 +87,141 @@ Create new product OR update existing product definition.
 │  │                                                         │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
-│  {For updates only:}                                            │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ ℹ️ Current product definition shown below. The AI will   │   │
-│  │   analyze what has changed.                              │   │
-│  └─────────────────────────────────────────────────────────┘   │
+│  Add one or more sources: type text directly, upload documents (PDF, DOCX, TXT, MD), or fetch content from URLs. All sources will be combined for AI analysis.
 │                                                                 │
-│                                             [Analyze Product →] │
+│                                   [Cancel]  [Analyze Product →] │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Step 1b/3: Review & Edit Structured Data
+### Interactions
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  {New Product Setup | Update Product}              Step 1 of 3  │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Here's what I understand:                                      │
-│                                                                 │
-│  Product Name                                                   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Acme Analytics                                          │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  Category                                                       │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Business Intelligence                                   │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  Core Features                                           [+ Add]│
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ • Real-time dashboards                              [×] │   │
-│  │ • SQL query builder                                 [×] │   │
-│  │ • Embedded analytics                                [×] │   │
-│  │ • Role-based access control                         [×] │   │
-│  │ • Scheduled reports                                 [×] │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  Target Users                                                   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Data analysts, Product managers, Business executives    │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  {For updates: Show diff highlighting what changed}             │
-│                                                                 │
-│                                   [← Back]  [Looks Good →]      │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Step 2/3: Configure Agents
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  {New Product Setup | Update Product}              Step 2 of 3  │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  What should I help you with?                                   │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ ☑ Idea Triage Agent                          [Configure]│   │
-│  │   Auto-respond to submissions, find duplicates,         │   │
-│  │   recommend actions                                      │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ ☑ Competitive Monitor                        [Configure]│   │
-│  │   Track competitor changes, generate alerts             │   │
-│  │                                                         │   │
-│  │   {For new products:}                                   │   │
-│  │   Found 12 competitors. [Select which to monitor →]     │   │
-│  │                                                         │   │
-│  │   {For updates:}                                        │   │
-│  │   Currently monitoring 8 competitors. [Manage →]        │   │
-│  │   ☐ Re-discover competitors based on updated product    │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ ☑ Report Generator                           [Configure]│   │
-│  │   Scheduled reports on competitive intel, voting,       │   │
-│  │   and customer feedback                                 │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│                                   [← Back]  [Set Up Agents →]   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Step 3/3: Ready
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  {New Product Setup | Update Product}              Step 3 of 3  │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ✓ {Acme Analytics is set up | Acme Analytics updated}         │
-│                                                                 │
-│  Agents:                                                        │
-│  • Idea Triage - Watching for new submissions                  │
-│  • Competitive Monitor - {First scan | Next scan} running...   │
-│  • Report Generator - Monthly report scheduled                  │
-│                                                                 │
-│  {For updates:}                                                 │
-│  Changes applied:                                               │
-│  • Product description updated                                  │
-│  • 2 features added, 1 removed                                 │
-│  • Competitor re-discovery triggered                            │
-│                                                                 │
-│  I'll notify you when there's something to review.             │
-│                                                                 │
-│                                        [Go to Dashboard →]      │
-└─────────────────────────────────────────────────────────────────┘
-```
+- Add text, documents or URL and extract text
+- Existing product info can be deleted with X on right side
+- Click (Re-)Analyze Product to create (if new) and analyze product
+- Next page (after interim analysis running page)→ Product Dashboard
 
 ---
 
 ## Level 2: Product Dashboard
 
 ### Purpose
+
 Central hub for a single product's insights and actions.
 
 ### Layout
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  ← All Products    Acme Analytics                   [Settings]  │
+│ ← All Products Acme Analytics [Settings] │
 ├─────────────────────────────────────────────────────────────────┤
+│  Analyzed (v3)                                                  │
+│  Category Name                                                  │
+│  Description:
+│  Acme Analytics is a business intelligence product providing    │
+│  flexible analytics for smb companies. It competes in the       │
+│  business intelligence platform market.                         │
 │                                                                 │
-│  Review Queues                                                  │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐               │
-│  │ Ideas       │ │ Competitive │ │ Reports     │               │
-│  │ ●●●●●  5    │ │ ●●○○○  2    │ │ ●○○○○  1    │               │
-│  │ [Review →]  │ │ [Review →]  │ │ [View →]    │               │
-│  └─────────────┘ └─────────────┘ └─────────────┘               │
-│                                                                 │
-│  Agent Status                                                   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 🟢 Idea Triage       Active     Last run: 2 hours ago   │   │
-│  │ 🔄 Competitive       Running    Scanning CompetitorX... │   │
-│  │ 🟢 Report Generator  Active     Next: Jan 1, 9:00 AM    │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  Recent Activity                                                │
-│  • Auto-responded to "Dark mode support" - 2h ago              │
-│  • Detected 3 new features at CompetitorX - 4h ago             │
-│  • Monthly report generated - 1d ago                           │
-│  • Merged duplicate ideas (#45, #47) - 2d ago                  │
-│                                                                 │
-│  Quick Actions                                                  │
-│  [Run Competitive Scan] [View Comparison] [Generate Report]    │
-│                                                                 │
+│ Agent Status                                                    │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ 🟢 Idea Triage Active Last run: 2 hours ago   [Setup]   │ │
+│ │ 5 ideas pending response [Go to Ideas]                  │ │
+│ │ 23 ideas responded to by Agent │ Automatic Responses On │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ 🟢 Market Discovery Agent Last run: 2 hours ago[Run Now] [Setup] │ │
+│ │ 11 competitors discovered; 1 new [Show Competitors]     │ │
+│ │  5 competitors selected for deep analysis               │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ 🟢 Competitive Analysis Agent Last run: 2 hours ago[Run Now] [Setup] │ │
+│ │  3 new competitive alerts [Go To Report]                │ │
+│ │  43 competitive features extracted                      │ │
+│ │  5 competitive feature clusters; 3 ideas created        │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│ Current Product Analysis                                    │
+│ • Core Features (7)                                         │
+│ ....                                                        │
+│ • Target Users                                              │
+│ ....                                                        │
+│ • Value Propositions │
+│  ....                                                     │
+│ • Competitor Search Keywords │
+│ ....
+│                                                       │
+│ Product Information Sources [Change Sources]          │
+│ (List of sources with title and URL/file name if available) │
+│                                                       │
+│ Product Analysis History (3)                          │
+│  Version 3 (Current) ...                                        │
 └─────────────────────────────────────────────────────────────────┘
+
 ```
+
+### Interactions
+
+- Setup goes to appropriate setup page for each agent
+  Idea Triage Agent Setup provides option to enable automatic responses and confidence threshold
+  Market Discovery Agent Setup provides options for scheduling (every X months), whether to automatically run after new product analysis, and enable/disable.
+  Competitive Analysis Agent Setup provides options for schedule, strategic analysis components, feature similarity threshold, idea generation threshold, and enable/disable.
+- Run Now initiates Agent as task in background. When complete the Agent Status tiles should update with results.
+- Go to Ideas goes to Level 0 Ideas page for product with Pending Ideas at top
+- Show Competitors goes to page listing all competitors found in last Market Discovery run and with existing selections of competitors selected for deep analysis. Similar to existing page, but "Extract Features" option removed and explanatory text that selecting competitors tags them for deep analysis and feature extraction.
+- Go to Report goes to Competitive Report page with feature extraction and competitive analysis for each deep analysis competitor, and a list of feature clusters found. Recommend design for this page.
+- Change Sources goes to the Re-Analyze product page where source data can be added or removed and product re-analyzed.
 
 ---
 
-## Level 3: Review Queues
+## Level 2 - Competitor Report Page
 
-### Ideas Queue
+Hybrid layout: Cross-competitor summaries at top, then per-competitor full details in accordions
 
-```
 ┌─────────────────────────────────────────────────────────────────┐
-│  ← Dashboard    Ideas to Review (5)                 [Bulk Actions]│
+│ ← Product Dashboard [Product Name] │
+│ Last updated: 2 hours ago │
 ├─────────────────────────────────────────────────────────────────┤
-│  Filter: [All ▼]  Sort: [Newest ▼]                              │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ "Dark mode support"                      Submitted: 2h   │   │
-│  │ Source: Customer (user@example.com)                      │   │
-│  │                                                         │   │
-│  │ Agent Assessment:                                       │   │
-│  │ • Similar to 2 existing ideas                           │   │
-│  │ • CompetitorX has this (detected 3 months ago)          │   │
-│  │ • 4 previous submissions mention "dark mode"            │   │
-│  │                                                         │   │
-│  │ Auto-Response: ✓ Sent                                   │   │
-│  │                                                         │   │
-│  │ Recommendation: Merge with #42 (87% confidence)         │   │
-│  │                                                         │   │
-│  │ [Approve] [Merge →] [Edit & Approve] [Dismiss]         │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ "Real-time collaboration"                Submitted: 4h   │   │
-│  │ Source: Competitor (from CompetitorX scan)               │   │
-│  │                                                         │   │
-│  │ Agent Assessment:                                       │   │
-│  │ • New capability - no similar existing ideas            │   │
-│  │ • HIGH priority: 2 competitors have this               │   │
-│  │                                                         │   │
-│  │ Recommendation: Approve for voting (92% confidence)     │   │
-│  │                                                         │   │
-│  │ [Approve for Voting] [Edit First] [Dismiss]            │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
+│ │
+│ FEATURE CLUSTERS │
+│ ┌─────────────────────────────┬─────────────────────────────┐ │
+│ │ Dashboard Analytics [High] │ User Management [Medium]│ │
+│ │ 5 competitors • 12 features │ 3 competitors • 8 features │ │
+│ │ [Create Idea] [View Details]│ ✓ Idea generated [Details] │ │
+│ └─────────────────────────────┴─────────────────────────────┘ │
+│ │
+│ STRATEGIC INSIGHTS SUMMARY │
+│ ┌──────────────┬──────────────┬──────────────┐ │
+│ │ Pricing │ Positioning │ Momentum │ ← tabs │
+│ └──────────────┴──────────────┴──────────────┘ │
+│ ┌─────────────────────────────────────────────────────────────┐│
+│ │ Competitor │ Model │ Free │ Trial │ Enterprise ││
+│ │───────────────┼──────────┼──────┼───────┼──────────────────││
+│ │ Competitor A │ Freemium │ ✓ │ 14d │ ✓ ││
+│ │ Competitor B │ Tiered │ ✗ │ 30d │ ✓ ││
+│ └─────────────────────────────────────────────────────────────┘│
+│ │
+│ COMPETITOR DETAILS │
+│ ┌─────────────────────────────────────────────────────────────┐│
+│ │ ▼ Competitor A ││
+│ │ ┌─────────────────────────────────────────────────────┐ ││
+│ │ │ Strategic Insights │ ││
+│ │ │ • Pricing: Freemium model, 3 tiers, 14-day trial │ ││
+│ │ │ • Positioning: "Analytics for everyone" │ ││
+│ │ │ • Momentum: ↑ Rising (Score: 78%) │ ││
+│ │ │ • Recent: 2 changes in last 30 days │ ││
+│ │ └─────────────────────────────────────────────────────┘ ││
+│ │ ┌─────────────────────────────────────────────────────┐ ││
+│ │ │ Features (12) [Select] │ ││
+│ │ │ ☐ Real-time dashboards [NEW] - 92% confidence │ ││
+│ │ │ ☐ Custom widgets [MODIFIED] - 87% confidence │ ││
+│ │ │ ☐ Export to PDF - 95% confidence │ ││
+│ │ │ ... │ ││
+│ │ │ [Create Ideas from Selected (0)] │ ││
+│ │ └─────────────────────────────────────────────────────┘ ││
+│ ├─────────────────────────────────────────────────────────────┤│
+│ │ ▶ Competitor B (8 features) ││
+│ └─────────────────────────────────────────────────────────────┘│
+│ │
 └─────────────────────────────────────────────────────────────────┘
-```
-
-### Competitive Alerts Queue
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  ← Dashboard    Competitive Alerts (2)               [Settings]  │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 🔴 HIGH: CompetitorX launched AI features               │   │
-│  │ Detected: 4 hours ago                                   │   │
-│  │                                                         │   │
-│  │ Changes:                                                │   │
-│  │ • NEW: AI-powered insights                              │   │
-│  │ • NEW: Natural language queries                         │   │
-│  │ • MODIFIED: Pricing (new AI tier)                       │   │
-│  │                                                         │   │
-│  │ Context:                                                │   │
-│  │ • CompetitorY added similar features last month         │   │
-│  │ • 2 customer ideas mention "AI"                         │   │
-│  │                                                         │   │
-│  │ Recommendation: Create ideas for voting                 │   │
-│  │                                                         │   │
-│  │ [Create Ideas (2)] [View Details] [Dismiss] [Snooze]   │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 🟡 MEDIUM: CompetitorZ removed features                 │   │
-│  │ Detected: 1 day ago                                     │   │
-│  │                                                         │   │
-│  │ Changes:                                                │   │
-│  │ • REMOVED: Advanced API access                          │   │
-│  │ • REMOVED: Custom integrations                          │   │
-│  │                                                         │   │
-│  │ Insight: Possible pivot or cost-cutting                 │   │
-│  │                                                         │   │
-│  │ [Note] [Dismiss] [Snooze]                              │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Level 4: Comparison View
-
-### Purpose
-Side-by-side feature comparison: your product vs selected competitors.
-
-### Layout
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  ← Dashboard    Feature Comparison                              │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Compare with: ☑ CompetitorX  ☑ CompetitorY  ☐ CompetitorZ     │
-│                                                        [Update] │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Your Advantages (features they lack)                     │   │
-│  ├─────────────────────────────────────────────────────────┤   │
-│  │ Feature          │ You │ CompX │ CompY │                │   │
-│  │ ─────────────────┼─────┼───────┼───────┤                │   │
-│  │ Embedded Analytics│ ✓   │ ✗     │ ✗     │                │   │
-│  │ SOC2 Compliance  │ ✓   │ ✗     │ ✗     │                │   │
-│  │ Custom Branding  │ ✓   │ ✗     │ ✓     │                │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Gaps (features you lack)                    Customer    │   │
-│  │                                             Interest    │   │
-│  ├─────────────────────────────────────────────────────────┤   │
-│  │ Feature          │ You │ CompX │ CompY │ Votes         │   │
-│  │ ─────────────────┼─────┼───────┼───────┼───────────────┤   │
-│  │ AI Insights      │ ✗   │ ✓     │ ✓     │ 47 votes      │   │
-│  │ Real-time Collab │ ✗   │ ✓     │ ✗     │ 31 votes      │   │
-│  │ Mobile App       │ ✗   │ ✓     │ ✓     │ 28 votes      │   │
-│  │                                                         │   │
-│  │              [Create Idea from Gap →]                   │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Feature Parity (both have)                              │   │
-│  ├─────────────────────────────────────────────────────────┤   │
-│  │ • Dashboard Builder  • Data Export  • User Management   │   │
-│  │ • API Access  • Scheduled Reports  • Alerts             │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  [Export Comparison]  [Add to Report]                          │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Level 5: Settings
-
-### Product Info (Editable Anytime)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  ← Dashboard    Settings: Product Info                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Product Name                                                   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Acme Analytics                                          │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  Description                                                    │
-│  ○ Edit text    ○ Upload new document    ○ Paste URL           │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Business intelligence platform for data teams...        │   │
-│  │                                                         │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  Core Features                                          [+ Add] │
-│  • Real-time dashboards                                    [×]  │
-│  • SQL query builder                                       [×]  │
-│  • Embedded analytics                                      [×]  │
-│                                                                 │
-│  When saving changes:                                           │
-│  ☐ Re-analyze product with AI                                  │
-│  ☐ Re-discover competitors                                     │
-│  ☐ Trigger competitive scan                                    │
-│                                                                 │
-│  Last updated: Dec 15, 2024                                    │
-│                                                                 │
-│                                    [Cancel]  [Save Changes]     │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Agent Configuration
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  ← Dashboard    Settings: Agents                                │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Idea Triage Agent                               [Enabled ✓]    │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Auto-response tone: [Professional ▼]                    │   │
-│  │ Duplicate threshold: [95% ▼]                            │   │
-│  │ Similar threshold: [85% ▼]                              │   │
-│  │ ☑ Always queue for review (don't auto-approve)         │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  Competitive Monitor                             [Enabled ✓]    │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Scan frequency: [Weekly ▼]  Day: [Monday ▼]            │   │
-│  │ Competitors monitored: 8 [Manage →]                     │   │
-│  │ ☑ Auto-generate ideas from new features                │   │
-│  │ ☑ Alert on pricing changes                             │   │
-│  │ Alert threshold: [Medium ▼]                            │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  Report Generator                                [Enabled ✓]    │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Configured reports: 2 [Manage Reports →]               │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│                                              [Save All Changes] │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Component Summary
-
-| Component | Purpose |
-|-----------|---------|
-| `ProductCard` | Summary card for product list |
-| `ActionSummaryCard` | Aggregate pending actions |
-| `AgentStatusIndicator` | Show agent state (active/running/error) |
-| `ReviewQueueCard` | Pending items count with link |
-| `IdeaReviewItem` | Single idea in review queue |
-| `CompetitiveAlertItem` | Single alert in queue |
-| `FeatureComparisonTable` | Side-by-side feature matrix |
-| `GapAnalysisTable` | Features you lack with customer interest |
-| `ProductSetupWizard` | Multi-step product setup/update |
-| `AgentConfigPanel` | Per-agent settings |
-| `ReportConfigPanel` | Report builder interface |
+This design provides:
+Quick comparison: Cross-competitor tables for pricing, positioning, momentum at a glance
+Deep dive: Full details per competitor in expandable accordions
+Dual idea creation: From clusters OR from individual selected features

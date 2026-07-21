@@ -59,8 +59,6 @@ class ReviewQueueStatus(str, enum.Enum):
 class AlertType(str, enum.Enum):
     """
     Types of competitive alerts.
-
-    From agent_competitive_monitor.md spec.
     """
     NEW_COMPETITOR = "new_competitor"         # New competitor entered market
     COMPETITOR_REMOVED = "competitor_removed" # Competitor no longer active
