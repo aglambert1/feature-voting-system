@@ -135,6 +135,10 @@ class JobAssessment(BaseModel):
     score_rationale: str = Field(
         description="Explanation of what drives the score difference"
     )
+    confidence: str = Field(
+        default="medium",
+        description="Your confidence in this assessment: high, medium, or low. Use low when the competitor's public material is thin or ambiguous on this job."
+    )
     features: List[JobFeatureAssessment] = Field(
         default=[],
         description="Features that contribute to the scores (both advantages and gaps)"
@@ -142,6 +146,50 @@ class JobAssessment(BaseModel):
     outcome_coverage: List[OutcomeCoverage] = Field(
         default=[],
         description="How each desired outcome is covered by both products"
+    )
+
+
+class StoredJobAssessment(JobAssessment):
+    """A job assessment as persisted, with system-derived and human review state.
+
+    `JobAssessment` is the contract the agent fills in. These extra fields are
+    added after the agent returns and are never emitted by the model:
+
+    - `system_position` is derived from the two rubric scores (see
+      `app.utils.job_position`) and is the stable value change detection
+      compares. It is recomputed on every run.
+    - `human_position` is a PM's override. It is authoritative for display and
+      is carried forward across re-audits so a new run never silently reverts
+      it. Change detection ignores it — a human disagreeing with the model is
+      not a competitor changing.
+
+    Review is optional. An assessment nobody has reviewed keeps
+    `human_position` as None, which is a normal state: a PM may accept the
+    system levels without reviewing them.
+    """
+    system_position: Optional[str] = Field(
+        default=None,
+        description="Derived from the score bands: advantage, gap, parity, or unknown"
+    )
+    human_position: Optional[str] = Field(
+        default=None,
+        description="PM override of the system position. None means unreviewed or agreed."
+    )
+    reviewed_at: Optional[str] = Field(
+        default=None,
+        description="When a PM confirmed or overrode this assessment"
+    )
+    reviewed_by: Optional[int] = Field(
+        default=None,
+        description="User id of the PM who reviewed this assessment"
+    )
+    reviewed_job_statement: Optional[str] = Field(
+        default=None,
+        description="The job statement as worded when the review was made — the basis the override was judged against"
+    )
+    review_stale: bool = Field(
+        default=False,
+        description="True when the job has been restated since the override was made, so the override may no longer apply. Sticky until reviewed again."
     )
 
 
@@ -255,7 +303,7 @@ class FunctionalReportResponse(BaseModel):
     functional_comparison: Optional[List[FunctionalComparison]] = None
     gaps_deep_dive: Optional[List[GapDeepDive]] = None
     technical_constraints: Optional[TechnicalConstraints] = None
-    job_assessments: Optional[List[JobAssessment]] = None
+    job_assessments: Optional[List[StoredJobAssessment]] = None
     evidence_citations: Optional[List[EvidenceCitation]] = None
     generated_at: Optional[str] = None
     queue_job_id: Optional[int] = None
