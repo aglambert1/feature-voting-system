@@ -80,6 +80,12 @@ class Evidence(Base):
     # Source tracking
     source_url = Column(String(500), nullable=True)
     source_description = Column(String(255), nullable=True)
+    # When the source was actually read. Distinct from created_at (when the row
+    # was written) and from any date inside the content: a page describing a
+    # 2026-07 release tells you nothing about whether it was fetched today or
+    # months ago. Freshness is computed from this. Null for rows created before
+    # it was tracked, and for evidence a human typed in rather than fetched.
+    retrieved_at = Column(DateTime(timezone=True), nullable=True)
 
     # Optional link to a known competitor
     competitor_id = Column(
@@ -135,6 +141,7 @@ class Evidence(Base):
             "content": self.content,
             "source_url": self.source_url,
             "source_description": self.source_description,
+            "retrieved_at": self.retrieved_at.isoformat() if self.retrieved_at else None,
             "competitor_id": self.competitor_id,
             "tags": self.tags,
             "extra_data": self.extra_data,
@@ -155,6 +162,7 @@ class Evidence(Base):
             "title": self.title,
             "source_url": self.source_url,
             "source_description": self.source_description,
+            "retrieved_at": self.retrieved_at.isoformat() if self.retrieved_at else None,
             "competitor_id": self.competitor_id,
             "tags": self.tags,
             "jtbd_statement": self.jtbd_statement,

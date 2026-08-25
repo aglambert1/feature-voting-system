@@ -3,9 +3,30 @@ Change Detection Service.
 
 Computes structured diffs when competitive reports are re-run,
 surfacing what actually changed between versions.
+
+The diff is keyed on `job_id`, never on feature names. Feature names are
+model-generated prose and vary between runs describing the same capability
+("Scheduled spend reports" vs "Recurring report delivery"), so a name-keyed
+diff reports a removal plus an addition when nothing has changed. The stable
+coordinate is (job, competitor), and the comparable value on it is the derived
+`system_position` — a band comparison rather than a raw score, so within-band
+score jitter doesn't register as change. See `app.utils.job_position`.
+
+A position flip is a CANDIDATE change, not a confirmed one: two runs on the
+same subject with the same evidence can disagree. Each flip is therefore
+tagged with whether the underlying evidence changed, so a caller can weigh a
+flip backed by new sources differently from one that moved on its own. What to
+do with an unsubstantiated flip — suppress it, downgrade it, escalate it — is
+the caller's decision, not this service's.
+
+Human overrides (`human_position`) are deliberately ignored here. A PM
+disagreeing with the model is not a competitor changing, and folding overrides
+into the diff would report a correction as market movement.
 """
 
 from typing import Dict, Any, List, Optional
+
+from app.utils.job_position import evidence_ids_for_assessment
 
 
 class ChangeDetectionService:
@@ -19,233 +40,161 @@ class ChangeDetectionService:
         """Compare two functional audit report versions.
 
         Args:
-            current_data: Dict with functional_comparison, competitor_context,
-                         gaps_deep_dive from the new report
+            current_data: Dict with job_assessments and competitor_context
+                          from the new report
             previous_data: Same structure from the previous report version
 
         Returns:
-            Structured diff dict with new_features, removed_features,
-            status_changes, positioning_changes, and summary.
+            Structured diff with job_position_changes, jobs_added,
+            jobs_removed, positioning_changes, assessment_diff_available,
+            and summary.
         """
-        curr_features = {
-            f.get("competitor_feature_name", f.get("feature_name", "")): f
-            for f in current_data.get("functional_comparison", [])
+        curr_assessments = {
+            a.get("job_id"): a
+            for a in (current_data.get("job_assessments") or [])
+            if isinstance(a, dict) and a.get("job_id")
         }
-        prev_features = {
-            f.get("competitor_feature_name", f.get("feature_name", "")): f
-            for f in previous_data.get("functional_comparison", [])
+        prev_assessments = {
+            a.get("job_id"): a
+            for a in (previous_data.get("job_assessments") or [])
+            if isinstance(a, dict) and a.get("job_id")
         }
 
-        curr_names = set(curr_features.keys())
-        prev_names = set(prev_features.keys())
-
-        # New features (in current but not previous)
-        new_features = [
-            {
-                "feature_name": name,
-                "category": curr_features[name].get("feature_category", ""),
-                "mapping_status": curr_features[name].get("mapping_status", ""),
-            }
-            for name in sorted(curr_names - prev_names)
-        ]
-
-        # Removed features (in previous but not current)
-        removed_features = [
-            {
-                "feature_name": name,
-                "category": prev_features[name].get("feature_category", ""),
-            }
-            for name in sorted(prev_names - curr_names)
-        ]
-
-        # Status changes (same feature, different mapping_status)
-        status_changes = []
-        for name in sorted(curr_names & prev_names):
-            old_status = prev_features[name].get("mapping_status", "")
-            new_status = curr_features[name].get("mapping_status", "")
-            if old_status != new_status:
-                status_changes.append({
-                    "feature_name": name,
-                    "old_status": old_status,
-                    "new_status": new_status,
-                })
-
-        # Positioning changes
+        # Positioning is comparable regardless of whether a job map exists.
         positioning_changes = None
-        curr_context = current_data.get("competitor_context", {})
-        prev_context = previous_data.get("competitor_context", {})
+        curr_context = current_data.get("competitor_context") or {}
+        prev_context = previous_data.get("competitor_context") or {}
         if curr_context and prev_context:
             old_pos = prev_context.get("positioning", "")
             new_pos = curr_context.get("positioning", "")
             if old_pos != new_pos and old_pos and new_pos:
                 positioning_changes = {"old": old_pos, "new": new_pos}
 
-        # Summary
+        # Without job assessments on both sides there is no stable coordinate
+        # to compare. The old feature-name diff is not used as a fallback: it
+        # reports rewording as change, and a known-noisy result is worse than
+        # an explicit absence.
+        if not curr_assessments or not prev_assessments:
+            return {
+                "job_position_changes": [],
+                "jobs_added": [],
+                "jobs_removed": [],
+                "positioning_changes": positioning_changes,
+                "assessment_diff_available": False,
+                "summary": ChangeDetectionService._build_functional_summary(
+                    [], [], [], positioning_changes, assessment_diff_available=False
+                ),
+            }
+
+        curr_ids = set(curr_assessments.keys())
+        prev_ids = set(prev_assessments.keys())
+
+        jobs_added = [
+            {
+                "job_id": job_id,
+                "job_statement": curr_assessments[job_id].get("job_statement", ""),
+                "position": curr_assessments[job_id].get("system_position"),
+            }
+            for job_id in sorted(curr_ids - prev_ids)
+        ]
+
+        jobs_removed = [
+            {
+                "job_id": job_id,
+                "job_statement": prev_assessments[job_id].get("job_statement", ""),
+                "was_position": prev_assessments[job_id].get("system_position"),
+            }
+            for job_id in sorted(prev_ids - curr_ids)
+        ]
+
+        job_position_changes = []
+        for job_id in sorted(curr_ids & prev_ids):
+            curr = curr_assessments[job_id]
+            prev = prev_assessments[job_id]
+
+            old_position = prev.get("system_position")
+            new_position = curr.get("system_position")
+            if old_position == new_position:
+                continue
+
+            prev_evidence = evidence_ids_for_assessment(prev)
+            curr_evidence = evidence_ids_for_assessment(curr)
+            new_evidence = curr_evidence - prev_evidence
+
+            job_position_changes.append({
+                "job_id": job_id,
+                "job_statement": curr.get("job_statement", ""),
+                "importance": curr.get("importance", ""),
+                "old_position": old_position,
+                "new_position": new_position,
+                "old_scores": {
+                    "ours": prev.get("our_score"),
+                    "theirs": prev.get("competitor_score"),
+                },
+                "new_scores": {
+                    "ours": curr.get("our_score"),
+                    "theirs": curr.get("competitor_score"),
+                },
+                "confidence": curr.get("confidence"),
+                # The instrumentation signal: a flip with no new evidence
+                # behind it is more likely model variance than market change.
+                "evidence_changed": bool(new_evidence),
+                "new_evidence_ids": sorted(new_evidence),
+            })
+
         summary = ChangeDetectionService._build_functional_summary(
-            new_features, removed_features, status_changes, positioning_changes
+            job_position_changes, jobs_added, jobs_removed, positioning_changes
         )
 
         return {
-            "new_features": new_features,
-            "removed_features": removed_features,
-            "status_changes": status_changes,
+            "job_position_changes": job_position_changes,
+            "jobs_added": jobs_added,
+            "jobs_removed": jobs_removed,
             "positioning_changes": positioning_changes,
-            "summary": summary,
-        }
-
-    @staticmethod
-    def compute_landscape_report_diff(
-        current_data: Dict[str, Any],
-        previous_data: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Compare two landscape opportunity report versions.
-
-        Args:
-            current_data: Dict with feature_opportunities, high_impact_gaps
-            previous_data: Same structure from the previous version
-
-        Returns:
-            Structured diff with new/removed opportunities, score changes,
-            new/resolved gaps, and summary.
-        """
-        # Index opportunities by feature_name
-        curr_opps = {
-            o.get("feature_name", ""): o
-            for o in current_data.get("feature_opportunities", [])
-        }
-        prev_opps = {
-            o.get("feature_name", ""): o
-            for o in previous_data.get("feature_opportunities", [])
-        }
-
-        curr_opp_names = set(curr_opps.keys())
-        prev_opp_names = set(prev_opps.keys())
-
-        new_opportunities = [
-            {
-                "name": name,
-                "priority_score": curr_opps[name].get("priority_score", 0),
-            }
-            for name in sorted(curr_opp_names - prev_opp_names)
-        ]
-
-        removed_opportunities = [
-            {
-                "name": name,
-                "was_priority_score": prev_opps[name].get("priority_score", 0),
-            }
-            for name in sorted(prev_opp_names - curr_opp_names)
-        ]
-
-        # Score changes for opportunities present in both
-        score_changes = []
-        for name in sorted(curr_opp_names & prev_opp_names):
-            old_score = prev_opps[name].get("priority_score", 0) or 0
-            new_score = curr_opps[name].get("priority_score", 0) or 0
-            if abs(old_score - new_score) >= 1:  # Ignore trivial float diffs
-                score_changes.append({
-                    "name": name,
-                    "old_score": old_score,
-                    "new_score": new_score,
-                    "direction": "up" if new_score > old_score else "down",
-                })
-
-        # High-impact gap changes
-        curr_gaps = {
-            g.get("feature_name", ""): g
-            for g in current_data.get("high_impact_gaps", [])
-        }
-        prev_gaps = {
-            g.get("feature_name", ""): g
-            for g in previous_data.get("high_impact_gaps", [])
-        }
-
-        curr_gap_names = set(curr_gaps.keys())
-        prev_gap_names = set(prev_gaps.keys())
-
-        new_high_impact_gaps = [
-            {
-                "feature_name": name,
-                "market_gravity": curr_gaps[name].get("market_gravity", ""),
-            }
-            for name in sorted(curr_gap_names - prev_gap_names)
-        ]
-
-        resolved_gaps = [
-            {"feature_name": name}
-            for name in sorted(prev_gap_names - curr_gap_names)
-        ]
-
-        summary = ChangeDetectionService._build_landscape_summary(
-            new_opportunities, removed_opportunities, score_changes,
-            new_high_impact_gaps, resolved_gaps
-        )
-
-        return {
-            "new_opportunities": new_opportunities,
-            "removed_opportunities": removed_opportunities,
-            "score_changes": score_changes,
-            "new_high_impact_gaps": new_high_impact_gaps,
-            "resolved_gaps": resolved_gaps,
+            "assessment_diff_available": True,
             "summary": summary,
         }
 
     @staticmethod
     def _build_functional_summary(
-        new_features: List,
-        removed_features: List,
-        status_changes: List,
+        job_position_changes: List,
+        jobs_added: List,
+        jobs_removed: List,
         positioning_changes: Optional[Dict],
+        assessment_diff_available: bool = True,
     ) -> str:
-        """Generate human-readable summary for functional report diff."""
+        """Generate human-readable summary for functional report diff.
+
+        Flips backed by new evidence are reported separately from flips that
+        moved without any: the second group is the one a reader should treat
+        with suspicion rather than act on.
+        """
         parts = []
-        if new_features:
-            parts.append(f"{len(new_features)} new feature(s) detected")
-        if removed_features:
-            parts.append(f"{len(removed_features)} feature(s) removed")
-        if status_changes:
-            gaps_closed = sum(
-                1 for s in status_changes if s["old_status"] == "Gap"
+
+        if job_position_changes:
+            substantiated = sum(
+                1 for c in job_position_changes if c.get("evidence_changed")
             )
-            new_gaps = sum(
-                1 for s in status_changes if s["new_status"] == "Gap"
-            )
-            if gaps_closed:
-                parts.append(f"{gaps_closed} gap(s) closed")
-            if new_gaps:
-                parts.append(f"{new_gaps} new gap(s)")
-            other = len(status_changes) - gaps_closed - new_gaps
-            if other > 0:
-                parts.append(f"{other} other status change(s)")
+            unsubstantiated = len(job_position_changes) - substantiated
+            if substantiated:
+                parts.append(f"{substantiated} job position change(s) with new evidence")
+            if unsubstantiated:
+                parts.append(
+                    f"{unsubstantiated} job position change(s) without new evidence"
+                )
+        if jobs_added:
+            parts.append(f"{len(jobs_added)} job(s) newly assessed")
+        if jobs_removed:
+            parts.append(f"{len(jobs_removed)} job(s) no longer assessed")
         if positioning_changes:
             parts.append("positioning changed")
 
-        return ", ".join(parts) if parts else "No significant changes"
+        if not parts:
+            if not assessment_diff_available:
+                return "No job assessments to compare"
+            return "No significant changes"
 
-    @staticmethod
-    def _build_landscape_summary(
-        new_opportunities: List,
-        removed_opportunities: List,
-        score_changes: List,
-        new_gaps: List,
-        resolved_gaps: List,
-    ) -> str:
-        """Generate human-readable summary for landscape report diff."""
-        parts = []
-        if new_opportunities:
-            parts.append(f"{len(new_opportunities)} new opportunity/ies")
-        if removed_opportunities:
-            parts.append(f"{len(removed_opportunities)} removed opportunity/ies")
-        if score_changes:
-            ups = sum(1 for s in score_changes if s["direction"] == "up")
-            downs = sum(1 for s in score_changes if s["direction"] == "down")
-            if ups:
-                parts.append(f"{ups} priority increase(s)")
-            if downs:
-                parts.append(f"{downs} priority decrease(s)")
-        if new_gaps:
-            parts.append(f"{len(new_gaps)} new high-impact gap(s)")
-        if resolved_gaps:
-            parts.append(f"{len(resolved_gaps)} resolved gap(s)")
+        if not assessment_diff_available:
+            parts.append("job assessments unavailable for comparison")
 
-        return ", ".join(parts) if parts else "No significant changes"
+        return ", ".join(parts)

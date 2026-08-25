@@ -166,6 +166,39 @@ flag?) is deliberately out of scope.
 | `prior_position` | Optional | Present only on a re-run. |
 | `change_justification` | Optional | Required *if* `prior_position` is present and differs from `position`. |
 | `reconciled_against` | Optional | `run_id` of the findings file this run was compared against. |
+| `human_position` | Optional | A reviewer's override. See below. |
+
+### Producer verdict vs. human verdict
+
+`position` is always the **producer's** verdict, regenerated on every run. A
+consumer may additionally hold a **human** verdict for the same
+`(job_id_key, competitor)` pair — a reviewer disagreeing with the producer.
+
+Two rules follow, and both matter more than they look:
+
+- **A producer never overwrites a human verdict.** A re-run regenerates its own
+  verdict *alongside* the human's, not on top of it. Silently reverting someone's
+  correction on the next run destroys trust in the whole artifact.
+- **Diffs compare producer-to-producer.** A human disagreeing with the model is
+  not a competitor changing; folding overrides into change detection would report
+  a correction as market movement.
+
+Review is optional. `human_position: null` means unreviewed *or* tacitly agreed —
+those are not distinguishable, and a consumer must not treat unreviewed as
+suspect. A reviewer may accept every producer verdict without ever looking at it.
+
+### Authored vs. derived position
+
+A producer may either author `position` directly or derive it from an underlying
+score. Feature-IQ derives it: Stage 2 scores each product 1-10 against a job, and
+the position is a comparison of the two scores' **rubric bands** rather than the
+raw numbers — a 7-vs-8 difference for the same capability is model noise, not
+signal, and banding discards it.
+
+Consequence worth knowing: a derived position yields only
+`advantage`/`gap`/`parity` (plus `unknown` when a score is missing).
+`differentiator` requires a judgement scores don't carry, so it remains a
+feature-level value.
 
 ### Enums (closed vocabularies)
 

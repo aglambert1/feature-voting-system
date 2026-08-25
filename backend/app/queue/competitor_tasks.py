@@ -26,6 +26,7 @@ from app.services.llm_service import LLMService
 from app.services.competitive_report_metrics import count_gaps
 from app.agents.competitor_researcher import CompetitorResearcherAgent
 from app.utils.url import extract_domain
+from app.utils.job_position import enrich_assessments
 from app.queue.helpers import (
     get_db,
     _fetch_source_urls,
@@ -473,14 +474,28 @@ def functional_audit_task(self, job_id: int):
             CompetitorFunctionalReport.product_id == product_id
         ).first()
 
-        # Capture previous data for change detection before overwriting
+        # Capture previous data for change detection before overwriting.
+        # job_assessments carries the stable (job, position) coordinate the diff
+        # compares, and the human review state that must survive a re-audit.
         previous_data = None
+        previous_assessments = None
         if existing_report:
+            previous_assessments = existing_report.job_assessments or []
             previous_data = {
                 "functional_comparison": existing_report.functional_comparison or [],
                 "competitor_context": existing_report.competitor_context or {},
                 "gaps_deep_dive": existing_report.gaps_deep_dive or [],
+                "job_assessments": previous_assessments,
             }
+
+        # Derive system_position and carry forward any PM overrides from the
+        # previous version — a re-audit regenerates the system verdict alongside
+        # a human's, never on top of it.
+        enriched_assessments = enrich_assessments(
+            result.get("job_assessments"), previous_assessments
+        )
+
+        if existing_report:
             # Update existing report
             existing_report.report_version += 1
             existing_report.report_content_md = markdown_content
@@ -491,7 +506,7 @@ def functional_audit_task(self, job_id: int):
             existing_report.raw_search_results = web_search_results if isinstance(web_search_results, list) else None
             existing_report.queue_job_id = job_id
             # Store JTBD fields (may be empty if no job map)
-            existing_report.job_assessments = result.get("job_assessments")
+            existing_report.job_assessments = enriched_assessments
             existing_report.evidence_citations = result.get("evidence_citations")
             report = existing_report
         else:
@@ -508,7 +523,7 @@ def functional_audit_task(self, job_id: int):
                 raw_search_results=web_search_results if isinstance(web_search_results, list) else None,
                 queue_job_id=job_id,
                 # JTBD fields (may be empty if no job map)
-                job_assessments=result.get("job_assessments"),
+                job_assessments=enriched_assessments,
                 evidence_citations=result.get("evidence_citations"),
             )
             db.add(report)
@@ -540,6 +555,7 @@ def functional_audit_task(self, job_id: int):
                     "functional_comparison": result['functional_comparison'],
                     "competitor_context": result['competitor_context'],
                     "gaps_deep_dive": result['gaps_deep_dive'],
+                    "job_assessments": enriched_assessments,
                 }
                 report.changes_from_previous = ChangeDetectionService.compute_functional_report_diff(
                     current_data, previous_data

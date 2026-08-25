@@ -6,6 +6,7 @@ with embedding generation, JTBD extraction, and competitor association.
 """
 
 import logging
+from datetime import datetime
 from typing import Optional, List
 
 from sqlalchemy.orm import Session
@@ -28,6 +29,7 @@ def create_evidence(
     competitor_id: Optional[int] = None,
     tags: Optional[list] = None,
     created_by: str = "api",
+    retrieved_at: Optional[datetime] = None,
 ) -> Evidence:
     """Create an evidence record with embedding and JTBD extraction.
 
@@ -42,6 +44,10 @@ def create_evidence(
         competitor_id: Optional FK to product_competitors.
         tags: Optional list of categorization tags.
         created_by: Provenance label (e.g. "web_ui", "mcp", "crm_import").
+        retrieved_at: When the source was actually read. Pass this whenever the
+            content came from fetching a URL, so freshness can be computed
+            later. Leave None for evidence a human typed in — an invented
+            timestamp would assert a retrieval that never happened.
 
     Returns:
         The created Evidence record (already added to session, not yet committed).
@@ -74,6 +80,7 @@ def create_evidence(
         source_description=source_description or None,
         competitor_id=competitor_id,
         tags=tags if tags else None,
+        retrieved_at=retrieved_at,
         jtbd_statement=jtbd_statement,
         jtbd_embedding=jtbd_embedding,
         content_embedding=content_embedding,
