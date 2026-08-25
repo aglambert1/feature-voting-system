@@ -273,3 +273,136 @@ class TestHumanVerdictsSurviveReaudit:
         diff = ChangeDetectionService.compute_functional_report_diff(current, previous)
 
         assert diff["job_position_changes"] == []
+
+
+# ---------------------------------------------------------------------------
+# Restated jobs — the same key can describe a different job
+# ---------------------------------------------------------------------------
+
+class TestRestatedJobs:
+    def test_restated_job_is_not_reported_as_a_position_change(self):
+        # j1 means something different now, so its old and new positions are
+        # not two readings of the same thing.
+        previous = _report([_assessment("j1", 7, 7)])
+        current = _report([_assessment("j1", 3, 9, job_statement="An entirely different job")])
+
+        diff = ChangeDetectionService.compute_functional_report_diff(current, previous)
+
+        assert diff["job_position_changes"] == []
+        assert len(diff["jobs_restated"]) == 1
+        restated = diff["jobs_restated"][0]
+        assert restated["job_id"] == "j1"
+        assert restated["old_job_statement"] == "Statement for j1"
+        assert restated["new_job_statement"] == "An entirely different job"
+        assert restated["positions_comparable"] is False
+        assert "not comparable" in diff["summary"]
+
+    @pytest.mark.parametrize("variant", [
+        "  Statement for j1  ",
+        "Statement  for   j1",
+        "STATEMENT FOR J1",
+        "Statement for j1\n",
+    ])
+    def test_whitespace_and_case_changes_are_not_restatements(self, variant):
+        previous = _report([_assessment("j1", 5, 7)])
+        current = _report([_assessment("j1", 5, 7, job_statement=variant)])
+
+        diff = ChangeDetectionService.compute_functional_report_diff(current, previous)
+
+        assert diff["jobs_restated"] == []
+        assert diff["job_position_changes"] == []
+
+
+class TestOverrideStaleness:
+    def test_override_goes_stale_when_the_job_is_restated(self):
+        previous = [_assessment(
+            "j1", 5, 7,
+            human_position="parity",
+            reviewed_at="2026-08-01T00:00:00Z",
+            reviewed_by=3,
+            reviewed_job_statement="Statement for j1",
+        )]
+        fresh = [{
+            "job_id": "j1",
+            "job_statement": "A materially rewritten job",
+            "our_score": 5,
+            "competitor_score": 7,
+            "features": [],
+        }]
+
+        enriched = enrich_assessments(fresh, previous)
+
+        # Kept, not silently dropped — but flagged rather than silently trusted.
+        assert enriched[0]["human_position"] == "parity"
+        assert enriched[0]["review_stale"] is True
+
+    def test_override_stays_fresh_when_the_job_is_unchanged(self):
+        previous = [_assessment(
+            "j1", 5, 7,
+            human_position="parity",
+            reviewed_job_statement="Statement for j1",
+        )]
+        fresh = [{
+            "job_id": "j1",
+            "job_statement": "Statement for j1",
+            "our_score": 4,
+            "competitor_score": 9,
+            "features": [],
+        }]
+
+        enriched = enrich_assessments(fresh, previous)
+
+        assert enriched[0]["review_stale"] is False
+
+    def test_staleness_is_sticky_across_later_runs(self):
+        # Once the basis is gone it stays gone until someone reviews again,
+        # even though later runs no longer see the original wording.
+        stale = [_assessment(
+            "j1", 5, 7,
+            job_statement="A materially rewritten job",
+            human_position="parity",
+            reviewed_job_statement="Statement for j1",
+            review_stale=True,
+        )]
+        fresh = [{
+            "job_id": "j1",
+            "job_statement": "A materially rewritten job",
+            "our_score": 5,
+            "competitor_score": 7,
+            "features": [],
+        }]
+
+        enriched = enrich_assessments(fresh, stale)
+
+        assert enriched[0]["review_stale"] is True
+
+    def test_unreviewed_assessment_is_never_stale(self):
+        previous = [_assessment("j1", 5, 7)]
+        fresh = [{
+            "job_id": "j1",
+            "job_statement": "A materially rewritten job",
+            "our_score": 5,
+            "competitor_score": 7,
+            "features": [],
+        }]
+
+        enriched = enrich_assessments(fresh, previous)
+
+        assert enriched[0]["human_position"] is None
+        assert enriched[0]["review_stale"] is False
+
+    def test_restatement_detected_without_a_recorded_review_basis(self):
+        # Reviews recorded before reviewed_job_statement existed fall back to
+        # the previous run's wording.
+        previous = [_assessment("j1", 5, 7, human_position="parity")]
+        fresh = [{
+            "job_id": "j1",
+            "job_statement": "A materially rewritten job",
+            "our_score": 5,
+            "competitor_score": 7,
+            "features": [],
+        }]
+
+        enriched = enrich_assessments(fresh, previous)
+
+        assert enriched[0]["review_stale"] is True

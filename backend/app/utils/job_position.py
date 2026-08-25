@@ -29,6 +29,25 @@ POSITION_GAP = "gap"
 POSITION_PARITY = "parity"
 POSITION_UNKNOWN = "unknown"
 
+
+def normalize_statement(statement: Any) -> str:
+    """Normalize a job statement for comparison across report versions.
+
+    A job key (`j1`) is stable, but the statement it points at is editable. Two
+    versions of a report can therefore carry the same key for materially
+    different jobs. Comparison collapses whitespace and case so that a typo fix
+    or reflow isn't mistaken for a restatement, while any real edit to the
+    wording is caught.
+
+    Deliberately an exact comparison after normalizing rather than a similarity
+    score: the result drives whether a verdict is comparable at all, and that
+    decision should be deterministic and explainable rather than sitting on a
+    threshold.
+    """
+    if not isinstance(statement, str):
+        return ""
+    return " ".join(statement.split()).casefold()
+
 # A score of 0 means "unknown", not "worst possible" — see JobAssessment.
 _UNKNOWN_SCORE = 0
 _MAX_SCORE = 10
@@ -100,6 +119,13 @@ def enrich_assessments(
 
     Review is optional: an assessment nobody has looked at keeps human_position
     as None, which is a normal state and not a deficiency.
+
+    A review is made against a job as it was worded at the time. Because job
+    keys are stable but statements are editable, an override can outlive the
+    statement that justified it. When that happens the override is kept but
+    marked `review_stale`, rather than silently dropped (destroying a PM's work
+    without asking) or silently kept (presenting a judgement about one job as
+    though it were about another). Staleness sticks until someone reviews again.
     """
     if not assessments:
         return []
@@ -123,6 +149,27 @@ def enrich_assessments(
         item["human_position"] = prior.get("human_position")
         item["reviewed_at"] = prior.get("reviewed_at")
         item["reviewed_by"] = prior.get("reviewed_by")
+        item["reviewed_job_statement"] = prior.get("reviewed_job_statement")
+
+        # The wording the review was actually made against. Falls back to the
+        # previous run's statement for reviews recorded before that snapshot was
+        # kept — weaker, but it still catches a restatement at the run where it
+        # happens, and the sticky flag carries the finding forward from there.
+        review_basis = (
+            item.get("reviewed_job_statement")
+            or prior.get("job_statement")
+        )
+
+        already_stale = bool(prior.get("review_stale"))
+        drifted = bool(
+            item.get("human_position")
+            and review_basis
+            and normalize_statement(review_basis)
+            != normalize_statement(item.get("job_statement"))
+        )
+        item["review_stale"] = bool(item.get("human_position")) and (
+            already_stale or drifted
+        )
 
         enriched.append(item)
 

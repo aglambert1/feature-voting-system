@@ -19,6 +19,11 @@ flip backed by new sources differently from one that moved on its own. What to
 do with an unsubstantiated flip — suppress it, downgrade it, escalate it — is
 the caller's decision, not this service's.
 
+Job keys are stable but the statements behind them are editable, so the same
+key can describe materially different jobs in two versions. Those are reported
+as restatements rather than position changes: comparing verdicts across a
+rewritten job is the feature-name error one level up.
+
 Human overrides (`human_position`) are deliberately ignored here. A PM
 disagreeing with the model is not a competitor changing, and folding overrides
 into the diff would report a correction as market movement.
@@ -26,7 +31,7 @@ into the diff would report a correction as market movement.
 
 from typing import Dict, Any, List, Optional
 
-from app.utils.job_position import evidence_ids_for_assessment
+from app.utils.job_position import evidence_ids_for_assessment, normalize_statement
 
 
 class ChangeDetectionService:
@@ -79,6 +84,7 @@ class ChangeDetectionService:
                 "job_position_changes": [],
                 "jobs_added": [],
                 "jobs_removed": [],
+                "jobs_restated": [],
                 "positioning_changes": positioning_changes,
                 "assessment_diff_available": False,
                 "summary": ChangeDetectionService._build_functional_summary(
@@ -108,12 +114,32 @@ class ChangeDetectionService:
         ]
 
         job_position_changes = []
+        jobs_restated = []
         for job_id in sorted(curr_ids & prev_ids):
             curr = curr_assessments[job_id]
             prev = prev_assessments[job_id]
 
             old_position = prev.get("system_position")
             new_position = curr.get("system_position")
+
+            # Job keys are stable but their statements are editable. If the
+            # statement changed, the two versions of this key describe
+            # materially different jobs and their positions are not comparable —
+            # the same error as diffing on feature names, one level up. Report
+            # the restatement instead of a change that cannot be interpreted.
+            if normalize_statement(prev.get("job_statement")) != normalize_statement(
+                curr.get("job_statement")
+            ):
+                jobs_restated.append({
+                    "job_id": job_id,
+                    "old_job_statement": prev.get("job_statement", ""),
+                    "new_job_statement": curr.get("job_statement", ""),
+                    "old_position": old_position,
+                    "new_position": new_position,
+                    "positions_comparable": False,
+                })
+                continue
+
             if old_position == new_position:
                 continue
 
@@ -143,13 +169,15 @@ class ChangeDetectionService:
             })
 
         summary = ChangeDetectionService._build_functional_summary(
-            job_position_changes, jobs_added, jobs_removed, positioning_changes
+            job_position_changes, jobs_added, jobs_removed, positioning_changes,
+            jobs_restated=jobs_restated,
         )
 
         return {
             "job_position_changes": job_position_changes,
             "jobs_added": jobs_added,
             "jobs_removed": jobs_removed,
+            "jobs_restated": jobs_restated,
             "positioning_changes": positioning_changes,
             "assessment_diff_available": True,
             "summary": summary,
@@ -162,6 +190,7 @@ class ChangeDetectionService:
         jobs_removed: List,
         positioning_changes: Optional[Dict],
         assessment_diff_available: bool = True,
+        jobs_restated: Optional[List] = None,
     ) -> str:
         """Generate human-readable summary for functional report diff.
 
@@ -186,6 +215,10 @@ class ChangeDetectionService:
             parts.append(f"{len(jobs_added)} job(s) newly assessed")
         if jobs_removed:
             parts.append(f"{len(jobs_removed)} job(s) no longer assessed")
+        if jobs_restated:
+            parts.append(
+                f"{len(jobs_restated)} job(s) restated — positions not comparable"
+            )
         if positioning_changes:
             parts.append("positioning changed")
 

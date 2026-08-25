@@ -231,6 +231,17 @@ matches on.
 **Never compared:** `rationale`, `description`, `features[]` contents, any other prose. These
 regenerate fresh each run and are expected to differ in wording while meaning the same thing.
 
+**A restated job is not a changed verdict.** `job_id_key` is stable, but the statement behind
+it is editable, so the same key can describe materially different jobs in two runs. Comparing
+positions across that is the feature-name error one level up. Compare the job statement
+(whitespace- and case-normalized, so a typo fix isn't a restatement); if it changed, report a
+restatement and mark the positions not comparable rather than reporting a change nobody can
+interpret.
+
+The same edit invalidates the basis of any human review on that job, so a reviewer's verdict
+carries the wording it was made against and is marked stale — kept, not dropped — when that
+wording changes. Staleness sticks until someone reviews again.
+
 **A position flip is a candidate change, not a confirmed one.** Two runs of the same producer,
 on the same subject, on the same day, can disagree. The `prior_position` /
 `change_justification` fields exist so a producer must either substantiate a flip against new
@@ -302,8 +313,9 @@ Enum values are append-only within a major version.
   separately" survives; a single schema home prevents silent drift across independent forks.
 
 **Open:**
-- **Job-map versioning semantics** — the schema only *detects* a mismatch. What a consumer
-  should do about it is undecided.
+- **Job-map versioning semantics** — `map_version` detects that *a* map changed, but not
+  *which* jobs changed within it. Per-job restatement is handled separately (below); a
+  bumped `map_version` with no restated statements still has no defined meaning.
 - **`product.yaml`** — sketched, not specified. Possibly near-empty for the competitive
   producer, which only assesses "theirs".
 - **Scoring** — deliberately excluded. `our_score`/`competitor_score` need product data a

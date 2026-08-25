@@ -183,6 +183,14 @@ class StoredJobAssessment(JobAssessment):
         default=None,
         description="User id of the PM who reviewed this assessment"
     )
+    reviewed_job_statement: Optional[str] = Field(
+        default=None,
+        description="The job statement as worded when the review was made — the basis the override was judged against"
+    )
+    review_stale: bool = Field(
+        default=False,
+        description="True when the job has been restated since the override was made, so the override may no longer apply. Sticky until reviewed again."
+    )
 
 
 class EvidenceCitation(BaseModel):
