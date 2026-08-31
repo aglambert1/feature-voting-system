@@ -218,11 +218,11 @@ MAP HEALTH
   8 jobs · 3 with a non-product source            38%
   ███████░░░░░░░░░░░░░
 
-  product-derived only ····· 5    ⚠ these came from the product's
-  + signal ················· 2      own description, so scoring
-  + competitor ············· 1      against them is partly circular
-  pm-authored ·············· 0
-  2 unvalidated
+  product-derived, uncorroborated ··· 5   ⚠ came from the product's
+  product-derived + signals ········· 2     own description with no
+  competitor-derived ················ 1     independent support, so
+  pm-authored ······················· 0     scoring against them is
+  2 unvalidated · 1 out of target           partly circular
 ──────────────────────────────────────────────────────────────────
 [ job list follows ]
 ```
@@ -246,7 +246,7 @@ Shown only when the ratio is poor; silent otherwise, so it stays a signal rather
 | 1 | **Self-assessment capability** — agent + task scoring our product per job | Evidence-gated: draws on support themes, win/loss, evidence records. Marks itself provisional + low confidence when only product description is available. |
 | 2 | **Stage 2 audit scores the competitor only** | Removes `our_score` from the audit's job. Coupled to task 1 — must land together. |
 | 3 | **Audit emits `unmapped_capabilities`** | Competitor capabilities matching no job. Feeds need suggestions. |
-| 4 | **`ProductJob` map fields** + migration | Set-valued `provenance` with source refs; `validation_state`; `serve_intent`; `statement_updated_at`. See below. |
+| 4 | **`ProductJob` map fields** + migration | Entry `provenance` (with source ref); `validation_state`; `serve_intent`; `statement_updated_at`. Corroboration is derived, not stored. See below. |
 | 5 | **Remove `best_in_class` / `our_rank` / `total_ranked`** | Agent prompt, `schemas/unified_synthesis.py`, `job_scorecard` docstring |
 | 6 | **Aggregation endpoint** — job coverage across tracked competitors | Pure join over existing audits + self-assessment. No LLM. |
 | 7 | **Review/override API** — agree, override, and their persistence | Fields already exist on `StoredJobAssessment` from PR #110 |
@@ -257,16 +257,34 @@ Shown only when the ratio is poor; silent otherwise, so it stays a signal rather
 Improving job-map creation is a separate investment (see future work), but four cheap decisions
 here determine whether it is easy or expensive later:
 
-- **Provenance entries carry a source reference**, not just a type: `{type, source_ref,
-  added_at}`. `signal_derived` alone says a signal produced the job but not which one, and
-  lineage cannot be reconstructed after the fact. Needed to trace a job back to the interview,
-  ticket, or lost deal that motivated it, and to re-evaluate when that source changes.
+- **Entry provenance is stored; corroboration is derived.** These answer different questions
+  and only the first needs a field.
+
+  *Entry* — how the job got into the map (`product_derived` / `signal_derived` /
+  `competitor_derived` / `pm_authored`), one event with a source reference so the originating
+  interview, ticket, or competitor capability can be traced. This is what measures
+  **circularity**, and it cannot be computed from linkage, which doesn't know where a job
+  came from.
+
+  *Corroboration* — the sources that establish the job is real. Already derivable: `Evidence`,
+  `Idea`, `WinLossTheme`, `SupportTheme` and `SynthesizedOpportunity` all carry `job_id_key`,
+  so every signal linked to a job is evidence for it. A query, not a stored list, which means
+  it self-updates as signals arrive with no write path to maintain.
+
+  Corroboration establishes a job **is real**, not that it is **described correctly**. Twelve
+  support themes linking to a job say the job exists; they say nothing about whether the
+  statement is worded right. That is what the optional validation pass addresses.
 - **A serve-intent marker** distinguishing "not in our market model" from "in the model,
   deliberately out of our scope". This is behavioural, not cosmetic: the plan adds
   competitor-derived job suggestions precisely to de-circularize the map, but a job the PM
   doesn't intend to serve shows as a glaring gap and drags down every coverage view — so PMs
   will reject exactly the non-circular suggestions to keep their scores clean, defeating the
   mechanism. `ProductJob.status` (active/retired) does not express this.
+
+  Binary for now (`in_target` / `out_of_target`). The natural expansion is per-segment — a job
+  in target for enterprise and out for SMB — and `CIProduct.target_customer_profile` already
+  exists as its home. Naming should not preclude that, but modelling segments now is exactly
+  the friction the map-creation work has to avoid.
 - **`statement_updated_at`** on `ProductJob`. `updated_at` moves on any field change and so
   cannot answer "when did this job's meaning last change" — the question that governs review
   invalidation and position comparability.
