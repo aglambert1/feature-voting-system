@@ -206,6 +206,37 @@ is a symptom. The substantive reason is that acting on a competitor gap in isola
 parity-chasing. The PM's contribution at this layer is agree/override on the evidence; synthesis
 turns judgment into opportunities and ideas.
 
+### View 4 — Map health
+
+Provenance is shown per job in Views 1-3, but the *aggregate* is the number that matters, and
+it has no home in those layouts. Its primary home is the Job Map page, where a PM can act on it.
+
+```
+Job Map · Concur Invoice               [ Generate from product info ]
+──────────────────────────────────────────────────────────────────
+MAP HEALTH
+  8 jobs · 3 with a non-product source            38%
+  ███████░░░░░░░░░░░░░
+
+  product-derived only ····· 5    ⚠ these came from the product's
+  + signal ················· 2      own description, so scoring
+  + competitor ············· 1      against them is partly circular
+  pm-authored ·············· 0
+  2 unvalidated
+──────────────────────────────────────────────────────────────────
+[ job list follows ]
+```
+
+It also appears as a **one-line caveat on the comparison views**, because that is where the
+misleading conclusion actually gets drawn — a PM reading "we score 4-5 on everything" needs to
+know the map came entirely from their own product copy:
+
+```
+⚠ Map is 100% product-derived — coverage scores may be optimistic.
+```
+
+Shown only when the ratio is poor; silent otherwise, so it stays a signal rather than furniture.
+
 ## Work breakdown
 
 ### Phase 1 — Facts (backend, no UI)
@@ -215,11 +246,37 @@ turns judgment into opportunities and ideas.
 | 1 | **Self-assessment capability** — agent + task scoring our product per job | Evidence-gated: draws on support themes, win/loss, evidence records. Marks itself provisional + low confidence when only product description is available. |
 | 2 | **Stage 2 audit scores the competitor only** | Removes `our_score` from the audit's job. Coupled to task 1 — must land together. |
 | 3 | **Audit emits `unmapped_capabilities`** | Competitor capabilities matching no job. Feeds need suggestions. |
-| 4 | **`ProductJob.provenance`** + migration | **Set-valued, not single.** `product_derived` / `signal_derived` / `competitor_derived` / `pm_authored` (`interview_derived` later). See below. |
+| 4 | **`ProductJob` map fields** + migration | Set-valued `provenance` with source refs; `validation_state`; `serve_intent`; `statement_updated_at`. See below. |
 | 5 | **Remove `best_in_class` / `our_rank` / `total_ranked`** | Agent prompt, `schemas/unified_synthesis.py`, `job_scorecard` docstring |
 | 6 | **Aggregation endpoint** — job coverage across tracked competitors | Pure join over existing audits + self-assessment. No LLM. |
 | 7 | **Review/override API** — agree, override, and their persistence | Fields already exist on `StoredJobAssessment` from PR #110 |
 | 8 | **Deprecate idea creation from competitive reports** | Per decision 6. Removes `POST /competitors/{id}/features/create-ideas`, `POST /competitors/{id}/gaps/create-ideas`, `services/idea_generation_service.py`, the `CompetitorGeneratedIdea` model + its relationships, and the frontend call. Verify no other callers first. |
+
+#### Forward-compatibility for future job-map work
+
+Improving job-map creation is a separate investment (see future work), but four cheap decisions
+here determine whether it is easy or expensive later:
+
+- **Provenance entries carry a source reference**, not just a type: `{type, source_ref,
+  added_at}`. `signal_derived` alone says a signal produced the job but not which one, and
+  lineage cannot be reconstructed after the fact. Needed to trace a job back to the interview,
+  ticket, or lost deal that motivated it, and to re-evaluate when that source changes.
+- **A serve-intent marker** distinguishing "not in our market model" from "in the model,
+  deliberately out of our scope". This is behavioural, not cosmetic: the plan adds
+  competitor-derived job suggestions precisely to de-circularize the map, but a job the PM
+  doesn't intend to serve shows as a glaring gap and drags down every coverage view — so PMs
+  will reject exactly the non-circular suggestions to keep their scores clean, defeating the
+  mechanism. `ProductJob.status` (active/retired) does not express this.
+- **`statement_updated_at`** on `ProductJob`. `updated_at` moves on any field change and so
+  cannot answer "when did this job's meaning last change" — the question that governs review
+  invalidation and position comparability.
+- **Unmapped capabilities route through the existing need-suggestion mechanism.** This plan
+  adds a second job-proposer; if it builds its own path, later sources (interviews, lost deals)
+  each will too, and nothing can dedupe a job proposed by both a support theme and a competitor.
+
+Deliberately deferred: a first-class `ProposedJob` entity with cross-source dedupe by
+embedding. Suggestions currently live as metadata on `PMReviewQueue`, which is fine for two
+proposers and strains at four. Revisit when a third source lands.
 
 #### Why provenance is set-valued
 
@@ -252,8 +309,9 @@ prior reviews on that job and makes its positions incomparable across versions.
 
 | # | Task |
 |---|---|
-| 16 | Provenance breakdown on the job map page — "% of jobs with a non-product source" |
-| 17 | "Add to job map" from unmapped capabilities → need-suggestion queue |
+| 16 | **Map health panel** on the Job Map page — "% of jobs with a non-product source", provenance breakdown, unvalidated count |
+| 17 | Map-health caveat line on comparison views, shown only when the ratio is poor |
+| 18 | "Add to job map" from unmapped capabilities → **existing** need-suggestion queue |
 
 ## Design consequences worth deciding during implementation
 
