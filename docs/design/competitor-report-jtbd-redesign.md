@@ -23,10 +23,14 @@ The JTBD layer is **fully built server-side and entirely unrendered**:
 The frontend was never updated after the JTBD redesign. Nothing needs inventing; it needs
 rendering — plus the backend corrections below.
 
-A second, quieter defect: the **gap → idea workflow is dead for JTBD products**. It is driven
-by `gaps_deep_dive`, which Stage 2 only reliably populates when there is *no* job map. A
-product with a job map gets an empty Gap Analysis section and silently loses the "Create Ideas
-for Voting" action. Carrying that workflow to job level is a requirement, not an option.
+A second, quieter defect found alongside it: the **gap → idea workflow is already dead for JTBD
+products**. It is driven by `gaps_deep_dive`, which Stage 2 only reliably populates when there
+is *no* job map, so a product with a job map gets an empty Gap Analysis section and silently
+loses the "Create Ideas for Voting" action.
+
+This plan does **not** carry that workflow to job level — see decision 6. It removes it. The
+defect is worth recording because it explains why nobody has reported the loss, and because the
+same investigation turned up the endpoints and models that removal will clean up.
 
 ## Decisions this plan encodes
 
@@ -47,6 +51,12 @@ for Voting" action. Carrying that workflow to job level is a requirement, not an
    step produces one score per job.
 5. **The job map models the customer's jobs, not the product's coverage.** Jobs served badly or
    not at all belong in it. A map where everything scores 4-5 is a symptom, not a success.
+6. **Ideas are created after synthesis, not from competitive reports.** Creating an idea
+   directly from a competitor gap encodes "they have it, so we should build it" — feature-parity
+   chasing, which is what the JTBD spine exists to prevent. The insight is not lost by waiting:
+   in the JTBD model the gap is already a durable, job-keyed record that synthesis consumes,
+   so capture is automatic. What a PM contributes at the comparison layer is judgment about the
+   *evidence* (agree / override), not a proposed solution.
 
 ## Target flow
 
@@ -135,10 +145,11 @@ Cheap aggregation over existing audits. No synthesis, no LLM call.
 ```
 Job Coverage · All Tracked Competitors             [ Export .md ]
 ──────────────────────────────────────────────────────────────────
-4 competitors audited · oldest audit Aug 12 · 1 stale
+4 competitors audited · self-assessment Aug 20
 Sorted by importance, then by weakest coverage
 ──────────────────────────────────────────────────────────────────
-                             Us   Prodbrd   Canny   Aha!   JPD
+                             Us   Prodbrd   Canny   Aha!   JPD ⚠
+                                  Aug 25   Aug 24  Aug 22  Jul 14
 ──────────────────────────────────────────────────────────────────
 j1  Credible competitive      3       4        1      4      2
     view          CRITICAL           GAP      ADV    GAP    ADV
@@ -146,7 +157,7 @@ j1  Credible competitive      3       4        1      4      2
 j2  Feedback → underlying     3       5        5      4      3
     need               HIGH         GAP      GAP    GAP    PAR
 ──────────────────────────────────────────────────────────────────
-j4  Prompt notice when a      4       1        1      2      1 ⚠
+j4  Prompt notice when a      4       1        1      2      1
     competitor ships   HIGH         ADV      ADV    ADV    ADV
 ──────────────────────────────────────────────────────────────────
 j5  Dedup / already           2       4        5      4      3
@@ -154,6 +165,9 @@ j5  Dedup / already           2       4        5      4      3
 ──────────────────────────────────────────────────────────────────
  ⚠ audit older than 30 days              click any cell → job detail
 ```
+
+Staleness is a property of the **audit**, so it belongs in the competitor column header with
+that audit's date — not on a job row, where it would read as though the job were stale.
 
 `Us` is a single column — the payoff of the self-assessment step. Without it this column would
 carry a different number per competitor.
@@ -182,8 +196,15 @@ CANNY                 5/5    GAP      conf high    unreviewed
 AHA!                  4/5    GAP      conf med     ✓ agreed
 JIRA PRODUCT DISC.    3/5    PARITY   conf low     ⚠ stale audit
 ──────────────────────────────────────────────────────────────────
-                                       [ Create idea from this gap ]
+This job is carried into synthesis, where it is weighed against
+internal demand and evidence.  Confirmed verdicts weigh more.
 ```
+
+**No idea creation here** (decision 6). A job-level gap is supported by several features across
+several competitors, so "create an idea from this gap" has no well-defined subject — but that
+is a symptom. The substantive reason is that acting on a competitor gap in isolation is
+parity-chasing. The PM's contribution at this layer is agree/override on the evidence; synthesis
+turns judgment into opportunities and ideas.
 
 ## Work breakdown
 
@@ -194,29 +215,45 @@ JIRA PRODUCT DISC.    3/5    PARITY   conf low     ⚠ stale audit
 | 1 | **Self-assessment capability** — agent + task scoring our product per job | Evidence-gated: draws on support themes, win/loss, evidence records. Marks itself provisional + low confidence when only product description is available. |
 | 2 | **Stage 2 audit scores the competitor only** | Removes `our_score` from the audit's job. Coupled to task 1 — must land together. |
 | 3 | **Audit emits `unmapped_capabilities`** | Competitor capabilities matching no job. Feeds need suggestions. |
-| 4 | **`ProductJob.provenance`** + migration | `product_derived` / `signal_derived` / `competitor_derived` / `pm_authored` |
+| 4 | **`ProductJob.provenance`** + migration | **Set-valued, not single.** `product_derived` / `signal_derived` / `competitor_derived` / `pm_authored` (`interview_derived` later). See below. |
 | 5 | **Remove `best_in_class` / `our_rank` / `total_ranked`** | Agent prompt, `schemas/unified_synthesis.py`, `job_scorecard` docstring |
 | 6 | **Aggregation endpoint** — job coverage across tracked competitors | Pure join over existing audits + self-assessment. No LLM. |
 | 7 | **Review/override API** — agree, override, and their persistence | Fields already exist on `StoredJobAssessment` from PR #110 |
+| 8 | **Deprecate idea creation from competitive reports** | Per decision 6. Removes `POST /competitors/{id}/features/create-ideas`, `POST /competitors/{id}/gaps/create-ideas`, `services/idea_generation_service.py`, the `CompetitorGeneratedIdea` model + its relationships, and the frontend call. Verify no other callers first. |
+
+#### Why provenance is set-valued
+
+A job can arrive from several sources, and the overlap is the most informative case: one that
+originated in product copy *but was independently corroborated by three support themes* is far
+less circular than one that wasn't. A single value discards exactly the signal worth having.
+
+So the health metric is **"% of jobs with at least one non-product source"**, not
+"% product-derived".
+
+**Editing is a separate axis from origin.** A PM rewriting a statement should not erase where
+the job came from — both facts matter. Validation state (`unvalidated` / `validated` / `edited`)
+is therefore its own field, and it is where the optional PM review process (future work) will
+live. Note that editing a statement already carries consequences from PR #110: it invalidates
+prior reviews on that job and makes its positions incomparable across versions.
 
 ### Phase 2 — Rendering (frontend)
 
 | # | Task |
 |---|---|
-| 8 | TypeScript types for `job_assessments` (none exist today) |
-| 9 | View 1 — per-competitor job report, replacing feature table + gap analysis |
-| 10 | View 2 — all-tracked comparison |
-| 11 | View 3 — one job across competitors |
-| 12 | Review/override controls + unreviewed-as-neutral styling |
-| 13 | Render `changes_from_previous`, distinguishing flips with and without new evidence |
-| 14 | Carry the gap → idea workflow to job level |
+| 9 | TypeScript types for `job_assessments` (none exist today) |
+| 10 | View 1 — per-competitor job report, replacing feature table + gap analysis |
+| 11 | View 2 — all-tracked comparison, staleness in the competitor column header |
+| 12 | View 3 — one job across competitors |
+| 13 | Review/override controls + unreviewed-as-neutral styling |
+| 14 | Render `changes_from_previous`, distinguishing flips with and without new evidence |
+| 15 | Provenance badges on job rows |
 
 ### Phase 3 — Map quality (small pieces only)
 
 | # | Task |
 |---|---|
-| 15 | Provenance breakdown on the job map page as a health indicator |
-| 16 | "Add to job map" from unmapped capabilities → need-suggestion queue |
+| 16 | Provenance breakdown on the job map page — "% of jobs with a non-product source" |
+| 17 | "Add to job map" from unmapped capabilities → need-suggestion queue |
 
 ## Design consequences worth deciding during implementation
 
@@ -230,10 +267,10 @@ expressible, which it isn't today. The awkward one: a competitor report's diff c
 because **we** changed, not because they did. Change detection needs to distinguish those, or
 it will attribute our own progress to competitor movement.
 
-**Existing reports keep audit-era `our_score`.** After task 2 lands, older
-`job_assessments` still carry a score that new ones won't. Not backfilling is the honest
-choice — those numbers were really produced — but they need labelling rather than silent
-mixing.
+**Existing audits do not need to survive.** Usage on feature-iq.app is still minimal, so
+pre-change `job_assessments` carrying an audit-era `our_score` can simply be discarded or left
+to be overwritten by the next audit. No backfill, no labelling of mixed-era scores, no
+compatibility shim. Migrations only — avoid anything requiring a database reset.
 
 **The rubric's top band is comparative.** "Best-in-class" cannot be judged without reference to
 a class, so a self-assessment against that anchor isn't fully independent. The anchors need
@@ -265,6 +302,16 @@ Directions considered, none scoped:
 The binding constraint on all of these is **PM friction**. A map that demands a research
 project up front will not get made. The plan's stance — ship a fast product-derived draft,
 label it, and let signals improve it passively — is a deliberate trade, not a solution.
+
+**Optional PM validation pass (follow-on).** A review flow where the PM walks the map job by
+job, editing statements or confirming that each belongs. It must be *optional* — a PM who never
+runs it should still get a working map, and the UI must not nag. This is where the
+`unvalidated` / `validated` / `edited` state earns its keep, and it pairs naturally with the
+provenance metric: validating the product-derived jobs is the cheapest way to reduce
+circularity without new data sources. Deliberately not scoped here.
+
+More generally, **making job-map creation robust without adding friction is its own investment**
+— closer to a product in its own right than a task on this plan.
 
 Also unresolved:
 
