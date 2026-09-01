@@ -559,6 +559,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
 
         {jobAssessments.length > 0 ? (
           <JobCoverageReport
+            productId={productId}
             competitorName={selectedReport.competitor_name}
             reportVersion={selectedReport.report_version}
             generatedAt={formatDateTime(selectedReport.generated_at)}

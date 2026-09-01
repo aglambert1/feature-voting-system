@@ -900,21 +900,6 @@ export const getGapIdeaStatuses = async (
 };
 
 /**
- * Export selected gaps as JSON
- */
-export const exportGapsJson = async (
-  productId: number,
-  competitorId: number,
-  gapIndices: number[]
-): Promise<any> => {
-  const response = await api.post(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/gaps/export-json`,
-    { gap_indices: gapIndices }
-  );
-  return response.data;
-};
-
-/**
  * Trigger full V2 competitive analysis
  */
 export const triggerCompetitiveAnalysisV2 = async (productId: number): Promise<AgentJobResponse> => {

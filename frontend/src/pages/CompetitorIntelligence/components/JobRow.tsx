@@ -5,7 +5,7 @@
  * Importance rendered as a 4-button pill row with color coding.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { differenceInDays, parseISO } from 'date-fns';
 import type { JobImportance, JobSignals, JtbdJob, JobUpdateRequest } from '../../../types';
 import { getJobSignals, linkIdeaToJob } from '../../../services/api';
@@ -46,6 +46,8 @@ interface JobRowProps {
   job: JtbdJob;
   productId: number;
   returnIdeaId?: string | null;
+  /** Open this job's signals on mount — set when linked to from a competitor report. */
+  autoOpenSignals?: boolean;
   onSave: (jobIdKey: string, patch: JobUpdateRequest) => Promise<void>;
   onDelete: (jobIdKey: string, relink: boolean) => Promise<void>;
 }
@@ -84,7 +86,7 @@ function importanceLabel(importance: JobImportance): string {
   return IMPORTANCE_OPTIONS.find((o) => o.value === importance)?.label ?? importance;
 }
 
-export default function JobRow({ job, productId, returnIdeaId, onSave, onDelete }: JobRowProps) {
+export default function JobRow({ job, productId, returnIdeaId, autoOpenSignals, onSave, onDelete }: JobRowProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [relinkChoice, setRelinkChoice] = useState<'relink' | 'clear'>('relink');
@@ -100,6 +102,7 @@ export default function JobRow({ job, productId, returnIdeaId, onSave, onDelete 
   const [signalsLoading, setSignalsLoading] = useState(false);
   const [showSignals, setShowSignals] = useState(false);
   const [linking, setLinking] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
 
   const fetchSignals = () => {
     if (signals) return; // already loaded
@@ -109,6 +112,18 @@ export default function JobRow({ job, productId, returnIdeaId, onSave, onDelete 
       .catch(() => {})
       .finally(() => setSignalsLoading(false));
   };
+
+  // Opened straight from a competitor report, where a job showed "N linked signals".
+  // Expanding alone is not enough: on a map with a dozen jobs the reader still lands at
+  // the top and has to hunt for the one they clicked. Scroll it into view and mark it,
+  // so the page answers the question that brought them here.
+  useEffect(() => {
+    if (!autoOpenSignals) return;
+    fetchSignals();
+    setShowSignals(true);
+    rowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpenSignals]);
 
   const handleSignalsBadgeClick = () => {
     fetchSignals();
@@ -184,7 +199,14 @@ export default function JobRow({ job, productId, returnIdeaId, onSave, onDelete 
   const isStale = staleDays !== null && staleDays >= 90;
 
   return (
-    <div className="bg-white border border-gray-200 rounded-md p-4">
+    <div
+      ref={rowRef}
+      className={`bg-white border rounded-md p-4 ${
+        autoOpenSignals
+          ? 'border-teal-500 ring-2 ring-teal-100'
+          : 'border-gray-200'
+      }`}
+    >
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import type {
   FunctionalReportChanges,
   JobAssessment,
@@ -15,6 +16,7 @@ import type {
  */
 
 interface Props {
+  productId: number;
   competitorName: string;
   reportVersion: number;
   generatedAt: string;
@@ -93,6 +95,7 @@ function ReviewState({ job }: { job: JobAssessment }) {
 }
 
 export default function JobCoverageReport({
+  productId,
   competitorName,
   reportVersion,
   generatedAt,
@@ -243,9 +246,16 @@ export default function JobCoverageReport({
                       {job.importance}
                     </span>
                     {signalCount > 0 && (
-                      <span className="text-[0.66rem] text-teal-700 border border-teal-600 rounded px-1.5">
+                      // A link rather than a tooltip: the signals are the reason to
+                      // trust this job at all, and the job map already lists them per
+                      // job. Opening there beats duplicating the list here.
+                      <Link
+                        to={`/product-intelligence/products/${productId}/job-map?job=${job.job_id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-[0.66rem] text-teal-700 border border-teal-600 rounded px-1.5 hover:bg-teal-50"
+                      >
                         {signalCount} linked signal{signalCount === 1 ? '' : 's'}
-                      </span>
+                      </Link>
                     )}
                   </div>
                 </div>
@@ -272,6 +282,16 @@ export default function JobCoverageReport({
               {open && (
                 <div className="px-4 pb-5 border-t border-dashed border-gray-200 -mt-px">
                   <div className="pt-4 space-y-4">
+                    {!verdictShown && grounding?.reason && (
+                      <div className="text-sm text-gray-600 bg-gray-50 border border-dashed border-gray-300 rounded p-2.5 max-w-2xl">
+                        <b className="text-gray-900">
+                          No verdict, because our own score for this job has nothing independent
+                          behind it.
+                        </b>{' '}
+                        {grounding.reason} {competitorName}'s side is still reported.
+                      </div>
+                    )}
+
                     {change && (
                       <div
                         className={`text-sm text-gray-600 bg-gray-50 rounded-r p-2.5 border-l-2 ${
@@ -296,16 +316,6 @@ export default function JobCoverageReport({
                             last time, so this is as likely to be model variance as a real change.
                           </>
                         )}
-                      </div>
-                    )}
-
-                    {!verdictShown && grounding?.reason && (
-                      <div className="text-sm text-gray-600 bg-gray-50 border border-dashed border-gray-300 rounded p-2.5 max-w-2xl">
-                        <b className="text-gray-900">
-                          No verdict, because our own score for this job has nothing independent
-                          behind it.
-                        </b>{' '}
-                        {grounding.reason} {competitorName}'s side is still reported.
                       </div>
                     )}
 

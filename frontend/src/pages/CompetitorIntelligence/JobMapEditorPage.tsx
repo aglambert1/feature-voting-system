@@ -53,6 +53,9 @@ export default function JobMapEditorPage() {
   const [searchParams] = useSearchParams();
   const returnTo = searchParams.get('returnTo'); // e.g. "idea/47"
   const returnIdeaId = returnTo?.startsWith('idea/') ? returnTo.slice(5) : null;
+  // Set when arriving from a competitor report's "N linked signals" badge — opens that
+  // job's signals directly rather than dropping the reader on the whole map.
+  const focusJobKey = searchParams.get('job');
 
   const [data, setData] = useState<JobMapResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -356,6 +359,7 @@ export default function JobMapEditorPage() {
                   job={job}
                   productId={numProductId}
                   returnIdeaId={returnIdeaId}
+                  autoOpenSignals={focusJobKey === job.job_id_key}
                   onSave={handleSaveJob}
                   onDelete={handleDeleteJob}
                 />
