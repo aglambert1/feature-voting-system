@@ -64,6 +64,10 @@ class JobType(str, enum.Enum):
     FUNCTIONAL_AUDIT = "functional_audit"  # Per-competitor functional audit
     LANDSCAPE_SYNTHESIS = "landscape_synthesis"  # Cross-competitor landscape synthesis
 
+    # Self-assessment: our product against its own job map, scored once rather than
+    # re-derived inside every competitor audit
+    SELF_ASSESSMENT = "self_assessment"
+
     # Internal Discovery job types (three-source synthesis)
     INTERNAL_DISCOVERY = "internal_discovery"  # Process uploaded internal feedback
     OPPORTUNITY_SYNTHESIS = "opportunity_synthesis"  # Three-source synthesis

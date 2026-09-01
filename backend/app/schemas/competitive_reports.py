@@ -219,6 +219,74 @@ class UnmappedCapability(BaseModel):
     )
 
 
+class SelfJobAssessment(BaseModel):
+    """How well OUR product serves one job.
+
+    Structurally a competitor audit's assessment with the other side removed. It carries
+    no competitor score because there is no competitor here — a self-assessment is an
+    audit whose subject is us, and reusing the two-sided shape with a dummy value would
+    invite readers to compare against nothing.
+
+    Assessed ONCE per job rather than re-derived inside each competitor audit, where the
+    same job could otherwise carry a different "our" score in every report.
+    """
+    job_id: str = Field(description="Job ID from the product's job map (e.g., 'j1')")
+    job_statement: str = Field(description="The full job statement")
+    importance: str = Field(
+        default="medium",
+        description="How important this job is: critical, high, medium, or low"
+    )
+    score: int = Field(
+        ge=0, le=10,
+        description=(
+            "How well our product serves this job (1-10, 0 if unknown), judged against "
+            "the job itself — how completely it gets done for the customer"
+        )
+    )
+    confidence: str = Field(
+        default="medium",
+        description=(
+            "Confidence in this assessment: high, medium, or low. Use low when the only "
+            "basis is the product's own description, with no independent evidence."
+        )
+    )
+    score_rationale: str = Field(
+        description="What drives the score — which capabilities carry the job and where it falls short"
+    )
+    features: List[JobFeatureAssessment] = Field(
+        default=[],
+        description="Our capabilities that serve this job (whose is always 'ours')"
+    )
+    outcome_coverage: List[OutcomeCoverage] = Field(
+        default=[],
+        description="How well each desired outcome is covered by our product"
+    )
+    evidence_ids: List[int] = Field(
+        default=[],
+        description="IDs of evidence records that informed this assessment"
+    )
+
+
+class SelfAssessmentOutput(BaseModel):
+    """Complete output schema for SelfAssessmentAgent."""
+    job_assessments: List[SelfJobAssessment] = Field(
+        default=[],
+        description="One assessment per job in the map"
+    )
+    evidence_based: bool = Field(
+        default=False,
+        description=(
+            "Whether independent evidence informed this assessment. False means it rests "
+            "only on the product's own description, which makes every score partly "
+            "self-referential — the jobs were derived from that same description."
+        )
+    )
+    assessment_summary: str = Field(
+        default="",
+        description="Two or three sentences on where the product is strong and weak across the map"
+    )
+
+
 class EvidenceCitation(BaseModel):
     """Tracks which evidence informed a specific finding."""
     evidence_id: int = Field(description="ID of the evidence record")

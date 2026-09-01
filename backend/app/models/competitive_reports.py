@@ -131,6 +131,71 @@ class CompetitorFunctionalReport(Base):
         }
 
 
+class ProductSelfAssessment(Base):
+    """How well our own product serves each job in the map.
+
+    Deliberately shaped like CompetitorFunctionalReport: a self-assessment is an audit
+    whose subject is us. Same job-keyed structure, same evidence citations, same
+    versioning — which is what lets a comparison view put us in a column beside the
+    competitors with no special-casing, and lets our score inherit the change detection
+    and review machinery built for competitor reports.
+
+    Assessed once per product rather than re-derived inside each competitor audit, where
+    the same job could otherwise carry a different "our" score in every report.
+    """
+    __tablename__ = "product_self_assessments"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    product_id = Column(
+        Integer,
+        ForeignKey("ci_products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Increments with each re-assessment, mirroring CompetitorFunctionalReport
+    assessment_version = Column(Integer, nullable=False, default=1)
+
+    # Which job map this was assessed against. A restated job makes the assessment of it
+    # incomparable to later ones, the same way it does for competitor reports.
+    job_map_version = Column(Integer, nullable=True)
+
+    # [{job_id, job_statement, importance, score, confidence, score_rationale,
+    #   features: [...], outcome_coverage: [...], evidence_ids: [...]}]
+    job_assessments = Column(JSON, nullable=True)
+
+    # False when nothing but the product's own description was available. Recorded rather
+    # than inferred because it changes how every score should be read: the job map is
+    # generated from that same description, so scoring against it without independent
+    # evidence is circular.
+    evidence_based = Column(Boolean, nullable=False, default=False, server_default='0')
+
+    assessment_summary = Column(Text, nullable=True)
+
+    generated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    queue_job_id = Column(Integer, ForeignKey("queue_jobs.id"), nullable=True)
+
+    product = relationship("CIProduct", backref="self_assessments")
+
+    def __repr__(self):
+        return (
+            f"<ProductSelfAssessment(id={self.id}, product_id={self.product_id}, "
+            f"v={self.assessment_version}, evidence_based={self.evidence_based})>"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "product_id": self.product_id,
+            "assessment_version": self.assessment_version,
+            "job_map_version": self.job_map_version,
+            "job_assessments": self.job_assessments,
+            "evidence_based": self.evidence_based,
+            "assessment_summary": self.assessment_summary,
+            "generated_at": self.generated_at.isoformat() if self.generated_at else None,
+        }
+
+
 class CompetitorAlert(Base):
     """
     Tracks alerts for competitor changes.
