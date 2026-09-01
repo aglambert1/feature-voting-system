@@ -389,6 +389,17 @@ circularity without new data sources. Deliberately not scoped here.
 More generally, **making job-map creation robust without adding friction is its own investment**
 — closer to a product in its own right than a task on this plan.
 
+**Legacy session-model cluster.** Removing idea creation (task 8) took
+`CompetitorGeneratedIdea` and `services/idea_generation_service.py` with it, which
+unblocked one item on a long-standing legacy-cleanup list. Four models remain —
+`CompetitorAnalysisSession`, `SessionCompetitor`, `ProductCompetitorFeature`,
+`CompetitorFeature` — still read by `session_service.py`, `adapters/competitor_feature.py`
+and `api/products.py`. They are a connected subsystem rather than a prune, and unrelated
+to this redesign, so they are deliberately not bundled here: this work already spans eight
+tasks, and mixing in a subsystem retirement would make it hard to review and hard to
+revert. The real blocker is a decision about whether those flows are being deprecated at
+all, not the code.
+
 Also unresolved:
 
 - **Job-map versioning.** A restated job invalidates prior reviews and makes positions

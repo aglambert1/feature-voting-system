@@ -106,7 +106,6 @@ class CIProduct(Base):
     # Relationships
     sessions = relationship("CompetitorAnalysisSession", back_populates="product", cascade="all, delete-orphan")
     competitors = relationship("ProductCompetitor", back_populates="product", cascade="all, delete-orphan")
-    generated_ideas = relationship("CompetitorGeneratedIdea", back_populates="product", cascade="all, delete-orphan")
     agent_logs = relationship("AgentExecutionLog", back_populates="product")
     permissions = relationship("ProductPermission", back_populates="product", cascade="all, delete-orphan")
     analysis_history = relationship("ProductAnalysisHistory", back_populates="product", cascade="all, delete-orphan")
@@ -290,7 +289,6 @@ class CompetitorAnalysisSession(Base):
     # Relationships
     product = relationship("CIProduct", back_populates="sessions")
     session_competitors = relationship("SessionCompetitor", back_populates="session", cascade="all, delete-orphan")
-    generated_ideas = relationship("CompetitorGeneratedIdea", back_populates="session")
     agent_logs = relationship("AgentExecutionLog", back_populates="session")
 
     def __repr__(self):
@@ -443,44 +441,9 @@ class CompetitorFeature(Base):
     # Relationships
     session_competitor = relationship("SessionCompetitor", back_populates="features")
     product_feature = relationship("ProductCompetitorFeature", back_populates="session_instances")
-    generated_idea = relationship("CompetitorGeneratedIdea", back_populates="feature", uselist=False)
 
     def __repr__(self):
         return f"<CompetitorFeature(id={self.id}, name='{self.feature_name}', session_competitor_id={self.session_competitor_id})>"
-
-
-class CompetitorGeneratedIdea(Base):
-    """
-    DEPRECATED: This model is part of the legacy session-based workflow.
-
-    In V2, ideas are generated from SynthesisReport.opportunities
-    via the idea normalization pipeline (IdeaNormalizerService).
-    The database should be reinitialized to drop this table.
-    """
-    __tablename__ = "competitor_generated_ideas"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    feature_id = Column(Integer, ForeignKey("competitor_features.id", ondelete="CASCADE"), nullable=False, index=True)
-    session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=False, index=True)
-    product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
-    idea_what = Column(Text, nullable=False)
-    idea_why = Column(Text, nullable=False)
-    idea_use_case = Column(Text, nullable=False)
-    is_differential = Column(Boolean, default=False)
-    user_edited = Column(Boolean, default=False)
-    user_approved = Column(Boolean, default=False)
-    submitted_to_ideas = Column(Boolean, default=False, index=True)
-    final_idea_id = Column(Integer, ForeignKey("ideas.id"))
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    edited_at = Column(DateTime(timezone=True))
-
-    # Relationships
-    feature = relationship("CompetitorFeature", back_populates="generated_idea")
-    session = relationship("CompetitorAnalysisSession", back_populates="generated_ideas")
-    product = relationship("CIProduct", back_populates="generated_ideas")
-
-    def __repr__(self):
-        return f"<CompetitorGeneratedIdea(id={self.id}, feature_id={self.feature_id}, submitted={self.submitted_to_ideas})>"
 
 
 class AgentExecutionLog(Base):

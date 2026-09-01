@@ -17,7 +17,6 @@ import {
   triggerFunctionalAudit,
   exportFunctionalReportMd,
   getGapIdeaStatuses,
-  createIdeasFromGaps,
   exportGapsJson,
   getAgentCompetitors,
   getAgentConfig,
@@ -524,26 +523,6 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     }
   };
 
-  const handleCreateIdeasFromGaps = async () => {
-    if (!selectedReport || selectedGaps.size === 0) return;
-
-    try {
-      setActionLoading('create-ideas');
-      const gapIndices = Array.from(selectedGaps);
-      await createIdeasFromGaps(productId, selectedReport.product_competitor_id, gapIndices);
-      setSuccessMessage(`Ideas created for ${gapIndices.length} gap(s)`);
-
-      // Refresh idea statuses
-      const statuses = await getGapIdeaStatuses(productId, selectedReport.product_competitor_id);
-      setGapIdeaStatuses(statuses);
-      setSelectedGaps(new Set());
-    } catch (err: any) {
-      setError(err.message || 'Failed to create ideas');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
   const handleExportGapsJson = async () => {
     if (!selectedReport || selectedGaps.size === 0) return;
 
@@ -754,13 +733,6 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
                 </p>
                 <div className="flex gap-3">
                   <button
-                    onClick={handleCreateIdeasFromGaps}
-                    disabled={actionLoading === 'create-ideas'}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm disabled:opacity-50"
-                  >
-                    {actionLoading === 'create-ideas' ? 'Creating...' : 'Create Ideas for Voting'}
-                  </button>
-                  <button
                     onClick={handleExportGapsJson}
                     disabled={actionLoading === 'export-json'}
                     className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium text-sm disabled:opacity-50"
@@ -771,7 +743,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
                 {countSelectedWithExistingIdeas() > 0 && (
                   <p className="text-xs text-gray-500 mt-2">
                     Note: {countSelectedWithExistingIdeas()} selected gap{countSelectedWithExistingIdeas() !== 1 ? 's' : ''} already
-                    {countSelectedWithExistingIdeas() !== 1 ? ' have' : ' has'} an idea - will be skipped for idea creation but included in export.
+                    {countSelectedWithExistingIdeas() !== 1 ? ' have' : ' has'} an idea from a previous run.
                   </p>
                 )}
               </div>
