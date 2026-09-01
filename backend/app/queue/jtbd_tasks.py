@@ -36,7 +36,10 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
     Returns:
         Dictionary with extraction results
     """
-    from app.models.competitor_intelligence import CIProduct, ProductJob, JobType as JTBDJobType, JobImportance
+    from app.models.competitor_intelligence import (
+        CIProduct, ProductJob, JobType as JTBDJobType, JobImportance,
+        JOB_PROVENANCE_PRODUCT,
+    )
     from app.models.evidence import Evidence
     from app.agents.job_map_extractor import JobMapExtractorAgent
     from app.services.embedding_service import generate_embeddings_batch
@@ -144,6 +147,16 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
                             job_data.get("importance", "medium"),
                             JobImportance.MEDIUM,
                         ),
+                        # Inferred from the product's own description. Recording it is
+                        # what lets the map-health metric show how much of the map is
+                        # self-referential — jobs derived from what the product already
+                        # does, which make coverage scores near-tautological.
+                        provenance={
+                            "type": JOB_PROVENANCE_PRODUCT,
+                            "source_ref": f"product:{product_id}",
+                            "added_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                        statement_updated_at=datetime.now(timezone.utc),
                     )
                     db.add(product_job)
                     all_jobs.append(product_job)
