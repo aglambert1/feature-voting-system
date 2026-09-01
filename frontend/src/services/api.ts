@@ -826,6 +826,27 @@ export const getFunctionalReports = async (productId: number): Promise<Functiona
 };
 
 /**
+ * Record a PM's judgement on one (job, competitor) assessment.
+ *
+ * `agree` records that a human looked and the system verdict stands — it deliberately
+ * sets no position, so the verdict can still be re-derived later. `override` replaces it.
+ * `clear` returns to unreviewed, which is not the same as agreeing.
+ */
+export const reviewJobAssessment = async (
+  productId: number,
+  competitorId: number,
+  jobId: string,
+  action: 'agree' | 'override' | 'clear',
+  position?: string,
+  note?: string
+): Promise<void> => {
+  await api.post(
+    `/product-intelligence/products/${productId}/competitors/${competitorId}/job-assessments/${jobId}/review`,
+    { action, position, note }
+  );
+};
+
+/**
  * Get functional report detail for a competitor
  */
 export const getFunctionalReport = async (

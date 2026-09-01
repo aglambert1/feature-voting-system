@@ -1020,6 +1020,17 @@ export interface FunctionalReportDetail {
   changes_from_previous: FunctionalReportChanges | null;
   generated_at: string;
   job_status: string | null;
+
+  /** Server-decided per job. The client renders this; it must not re-derive it. */
+  verdict_grounding: Record<string, { shown: boolean; reason: string | null }> | null;
+  corroborating_signals: Record<string, number> | null;
+  self_assessment_version: number | null;
+  self_assessed_at: string | null;
+  map_health: {
+    total_jobs: number;
+    jobs_with_independent_source: number;
+    independent_source_pct: number | null;
+  } | null;
 }
 
 /**

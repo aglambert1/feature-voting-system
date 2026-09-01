@@ -276,7 +276,19 @@ class FunctionalReportDetail(BaseModel):
     functional_comparison: Optional[List[dict]] = None
     gaps_deep_dive: Optional[List[dict]] = None
     technical_constraints: Optional[dict] = None
+    job_assessments: Optional[List[dict]] = None
+    unmapped_capabilities: Optional[List[dict]] = None
+    changes_from_previous: Optional[dict] = None
     generated_at: Optional[datetime] = None
+
+    # Whether each job's comparison verdict is worth stating, keyed by job_id. Decided
+    # here rather than in the client so this report, the markdown export and the MCP
+    # tools cannot disagree about which verdicts are trustworthy.
+    verdict_grounding: Optional[dict] = None
+    corroborating_signals: Optional[dict] = None
+    self_assessment_version: Optional[int] = None
+    self_assessed_at: Optional[datetime] = None
+    map_health: Optional[dict] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1199,6 +1211,26 @@ def get_functional_report(
     if not report:
         return None
 
+    from app.models.competitive_reports import ProductSelfAssessment
+    from app.services.job_provenance import map_health, signal_counts
+    from app.utils.job_position import verdict_grounding as _verdict_grounding
+
+    self_assessment = db.query(ProductSelfAssessment).filter(
+        ProductSelfAssessment.product_id == product_id
+    ).order_by(ProductSelfAssessment.assessment_version.desc()).first()
+
+    corroboration = signal_counts(db, product_id)
+    grounding: dict = {}
+    signals: dict = {}
+    for entry in (report.job_assessments or []):
+        if not isinstance(entry, dict) or not entry.get("job_id"):
+            continue
+        job_id = entry["job_id"]
+        total = (corroboration.get(job_id) or {}).get("total", 0)
+        shown, reason = _verdict_grounding(entry.get("our_confidence"), total)
+        grounding[job_id] = {"shown": shown, "reason": reason}
+        signals[job_id] = total
+
     return FunctionalReportDetail(
         id=report.id,
         product_competitor_id=report.product_competitor_id,
@@ -1210,7 +1242,17 @@ def get_functional_report(
         functional_comparison=report.functional_comparison,
         gaps_deep_dive=report.gaps_deep_dive,
         technical_constraints=report.technical_constraints,
-        generated_at=report.generated_at
+        job_assessments=report.job_assessments,
+        unmapped_capabilities=report.unmapped_capabilities,
+        changes_from_previous=report.changes_from_previous,
+        generated_at=report.generated_at,
+        verdict_grounding=grounding,
+        corroborating_signals=signals,
+        self_assessment_version=(
+            self_assessment.assessment_version if self_assessment else None
+        ),
+        self_assessed_at=self_assessment.generated_at if self_assessment else None,
+        map_health=map_health(db, product_id),
     )
 
 
