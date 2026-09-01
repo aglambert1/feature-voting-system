@@ -339,3 +339,168 @@ class TestAuditWarnsWhenSelfAssessmentIsMissing:
         resp = self._trigger(client, test_product, comp, po_user)
 
         assert resp.json()["warnings"] == []
+
+
+class TestReviewEndpoint:
+    """Three states, and the gap between the first two is the point: corrections alone
+    tell you where the model is wrong and never where it is right, and cannot be told
+    apart from nobody having looked."""
+
+    def _url(self, product, competitor, job_id="j1"):
+        return (
+            f"/product-intelligence/products/{product.id}"
+            f"/competitors/{competitor.id}/job-assessments/{job_id}/review"
+        )
+
+    def _setup(self, db_session, product):
+        _job(db_session, product, "j1")
+        comp = _competitor(db_session, product, "Productboard")
+        _report(db_session, product, comp, [{
+            "job_id": "j1",
+            "job_statement": "Statement for j1",
+            "competitor_score": 8,
+            "our_score": 4,
+            "system_position": "gap",
+        }])
+        return comp
+
+    def test_agreeing_records_the_review_without_asserting_a_position(
+        self, db_session, client, test_product, po_user
+    ):
+        # Recording agreement as an override would freeze today's verdict against
+        # future re-derivation.
+        comp = self._setup(db_session, test_product)
+
+        resp = client.post(
+            self._url(test_product, comp),
+            json={"action": "agree"},
+            headers=auth_headers(po_user),
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["human_position"] is None
+        assert body["reviewed_at"] is not None
+        assert body["system_position"] == "gap"
+
+    def test_override_sets_the_human_verdict(
+        self, db_session, client, test_product, po_user
+    ):
+        comp = self._setup(db_session, test_product)
+
+        resp = client.post(
+            self._url(test_product, comp),
+            json={"action": "override", "position": "parity", "note": "They dropped it"},
+            headers=auth_headers(po_user),
+        )
+
+        body = resp.json()
+        assert body["human_position"] == "parity"
+        # The system verdict is kept alongside, not replaced.
+        assert body["system_position"] == "gap"
+
+    def test_override_requires_a_position(
+        self, db_session, client, test_product, po_user
+    ):
+        comp = self._setup(db_session, test_product)
+        resp = client.post(
+            self._url(test_product, comp),
+            json={"action": "override"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 400
+        assert "position is required" in resp.json()["detail"]
+
+    def test_unknown_cannot_be_asserted_by_a_human(
+        self, db_session, client, test_product, po_user
+    ):
+        # `unknown` is what the system says when it cannot compare. A person has no
+        # reason to claim it.
+        comp = self._setup(db_session, test_product)
+        resp = client.post(
+            self._url(test_product, comp),
+            json={"action": "override", "position": "unknown"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 400
+
+    def test_clear_returns_to_unreviewed_not_agreed(
+        self, db_session, client, test_product, po_user
+    ):
+        # Undoing a mistaken override is not an assertion that the verdict is right.
+        comp = self._setup(db_session, test_product)
+        client.post(
+            self._url(test_product, comp),
+            json={"action": "override", "position": "parity"},
+            headers=auth_headers(po_user),
+        )
+
+        resp = client.post(
+            self._url(test_product, comp),
+            json={"action": "clear"},
+            headers=auth_headers(po_user),
+        )
+
+        body = resp.json()
+        assert body["human_position"] is None
+        assert body["reviewed_at"] is None
+
+    def test_review_snapshots_the_wording_judged_against(
+        self, db_session, client, test_product, po_user
+    ):
+        comp = self._setup(db_session, test_product)
+        client.post(
+            self._url(test_product, comp),
+            json={"action": "agree"},
+            headers=auth_headers(po_user),
+        )
+
+        report = db_session.query(CompetitorFunctionalReport).filter(
+            CompetitorFunctionalReport.product_competitor_id == comp.id
+        ).first()
+        db_session.refresh(report)
+        # Without this snapshot a later restatement would silently apply the review to
+        # a materially different job.
+        assert report.job_assessments[0]["reviewed_job_statement"] == "Statement for j1"
+
+    def test_unknown_job_is_rejected(self, db_session, client, test_product, po_user):
+        comp = self._setup(db_session, test_product)
+        resp = client.post(
+            self._url(test_product, comp, job_id="j99"),
+            json={"action": "agree"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 404
+
+    def test_unaudited_competitor_is_rejected(
+        self, db_session, client, test_product, po_user
+    ):
+        _job(db_session, test_product, "j1")
+        comp = _competitor(db_session, test_product, "Never audited")
+        resp = client.post(
+            self._url(test_product, comp),
+            json={"action": "agree"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 404
+
+    def test_invalid_action_is_rejected(self, db_session, client, test_product, po_user):
+        comp = self._setup(db_session, test_product)
+        resp = client.post(
+            self._url(test_product, comp),
+            json={"action": "approve"},
+            headers=auth_headers(po_user),
+        )
+        assert resp.status_code == 400
+
+    def test_voter_cannot_review(
+        self, db_session, client, test_product, voter_user, voter_product_access
+    ):
+        # Reviewing is an edit to the analysis, not a read of it.
+        comp = self._setup(db_session, test_product)
+        resp = client.post(
+            self._url(test_product, comp),
+            json={"action": "agree"},
+            headers=auth_headers(voter_user),
+        )
+        assert resp.status_code in (403, 404)

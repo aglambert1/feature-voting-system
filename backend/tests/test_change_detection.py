@@ -344,6 +344,7 @@ class TestOverrideStaleness:
         previous = [_assessment(
             "j1", 5, 7,
             human_position="parity",
+            reviewed_at="2026-08-01T00:00:00Z",
             reviewed_job_statement="Statement for j1",
         )]
         fresh = [{
@@ -365,6 +366,7 @@ class TestOverrideStaleness:
             "j1", 5, 7,
             job_statement="A materially rewritten job",
             human_position="parity",
+            reviewed_at="2026-08-01T00:00:00Z",
             reviewed_job_statement="Statement for j1",
             review_stale=True,
         )]
@@ -398,7 +400,11 @@ class TestOverrideStaleness:
     def test_restatement_detected_without_a_recorded_review_basis(self):
         # Reviews recorded before reviewed_job_statement existed fall back to
         # the previous run's wording.
-        previous = [_assessment("j1", 5, 7, human_position="parity")]
+        previous = [_assessment(
+            "j1", 5, 7,
+            human_position="parity",
+            reviewed_at="2026-08-01T00:00:00Z",
+        )]
         fresh = [{
             "job_id": "j1",
             "job_statement": "A materially rewritten job",
@@ -483,3 +489,26 @@ class TestFlipAttribution:
         current = _report([_assessment("j1", 0, 9)])
         diff = ChangeDetectionService.compute_functional_report_diff(current, previous)
         assert diff["job_position_changes"][0]["attributed_to"] == "unclear"
+
+
+    def test_a_plain_confirmation_also_goes_stale(self):
+        # Agreeing with a verdict is a judgement about the job as it was worded. A
+        # restatement invalidates that as much as it invalidates a correction — and a
+        # confirmation records no human_position, so keying staleness on that alone
+        # would have let confirmations silently outlive their basis.
+        previous = [_assessment(
+            "j1", 5, 7,
+            reviewed_at="2026-08-01T00:00:00Z",
+            reviewed_job_statement="Statement for j1",
+        )]
+        fresh = [{
+            "job_id": "j1",
+            "job_statement": "A materially rewritten job",
+            "competitor_score": 7,
+            "features": [],
+        }]
+
+        enriched = enrich_assessments(fresh, previous, self_scores={"j1": 5})
+
+        assert enriched[0]["human_position"] is None
+        assert enriched[0]["review_stale"] is True

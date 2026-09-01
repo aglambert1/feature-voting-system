@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -239,4 +240,136 @@ def get_job_coverage(
             # whole "us" column is self-referential and should be read that way.
             "evidence_based": assessment.evidence_based if assessment else None,
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Review: agree with or override a system verdict
+# ---------------------------------------------------------------------------
+
+# A human may only assert a real position. `unknown` is what the system says when it
+# cannot compare, which is never something a person needs to claim.
+REVIEWABLE_POSITIONS = {"advantage", "gap", "parity", "differentiator"}
+
+
+class JobAssessmentReviewRequest(BaseModel):
+    """Agree with, override, or clear a review on one job assessment."""
+    action: str = Field(description="agree, override, or clear")
+    position: Optional[str] = Field(
+        default=None,
+        description="Required for override: advantage, gap, parity, or differentiator"
+    )
+    note: Optional[str] = Field(default=None, description="Optional reason for the reviewer")
+
+
+@router.post(
+    "/{product_id}/competitors/{competitor_id}/job-assessments/{job_id}/review"
+)
+def review_job_assessment(
+    product_id: int,
+    competitor_id: int,
+    job_id: str,
+    body: JobAssessmentReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Record a PM's judgement on one (job, competitor) assessment.
+
+    Three states, and the difference between the first two matters:
+
+    - unreviewed  — nobody has looked. `reviewed_at` is null.
+    - agreed      — reviewed and the system verdict stands. `human_position` stays null,
+                    because the PM asserted nothing of their own; recording their
+                    agreement as an override would freeze today's verdict against future
+                    re-derivation.
+    - overridden  — reviewed and corrected. `human_position` is authoritative for display.
+
+    Capturing agreement separately is what stops the record being all negatives:
+    corrections alone tell you where the model is wrong and never where it is right, and
+    they cannot be told apart from "nobody looked".
+    """
+    _verify_product_access(db, product_id, current_user, ProductPermissionLevel.EDIT)
+
+    action = (body.action or "").strip().lower()
+    if action not in {"agree", "override", "clear"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="action must be one of: agree, override, clear",
+        )
+
+    if action == "override":
+        if not body.position:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="position is required when overriding",
+            )
+        if body.position not in REVIEWABLE_POSITIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "position must be one of: "
+                    + ", ".join(sorted(REVIEWABLE_POSITIONS))
+                ),
+            )
+
+    report = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_id == product_id,
+        CompetitorFunctionalReport.product_competitor_id == competitor_id,
+    ).first()
+    if not report or not report.job_assessments:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No audit report for this competitor yet.",
+        )
+
+    assessments = list(report.job_assessments)
+    target = next(
+        (
+            (i, a) for i, a in enumerate(assessments)
+            if isinstance(a, dict) and a.get("job_id") == job_id
+        ),
+        None,
+    )
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job '{job_id}' is not assessed in this competitor's report.",
+        )
+
+    index, entry = target
+    updated = dict(entry)
+
+    if action == "clear":
+        # A PM who overrode by mistake needs a way back to the system verdict. This
+        # returns the assessment to unreviewed rather than to "agreed" — clearing is not
+        # an assertion that the verdict is right.
+        updated["human_position"] = None
+        updated["reviewed_at"] = None
+        updated["reviewed_by"] = None
+        updated["reviewed_job_statement"] = None
+        updated["review_stale"] = False
+        updated["review_note"] = None
+    else:
+        updated["human_position"] = body.position if action == "override" else None
+        updated["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+        updated["reviewed_by"] = current_user.id
+        # Snapshot the wording judged against, so a later restatement can mark this
+        # review stale rather than silently applying it to a different job.
+        updated["reviewed_job_statement"] = updated.get("job_statement")
+        updated["review_stale"] = False
+        updated["review_note"] = body.note
+
+    assessments[index] = updated
+    report.job_assessments = assessments
+    db.commit()
+
+    return {
+        "product_id": product_id,
+        "competitor_id": competitor_id,
+        "job_id": job_id,
+        "action": action,
+        "system_position": updated.get("system_position"),
+        "human_position": updated.get("human_position"),
+        "reviewed_at": updated.get("reviewed_at"),
+        "review_stale": updated.get("review_stale", False),
     }

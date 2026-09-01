@@ -133,11 +133,15 @@ def enrich_assessments(
     as None, which is a normal state and not a deficiency.
 
     A review is made against a job as it was worded at the time. Because job
-    keys are stable but statements are editable, an override can outlive the
-    statement that justified it. When that happens the override is kept but
-    marked `review_stale`, rather than silently dropped (destroying a PM's work
+    keys are stable but statements are editable, a review can outlive the
+    statement that justified it. When that happens it is kept but marked
+    `review_stale`, rather than silently dropped (destroying a PM's work
     without asking) or silently kept (presenting a judgement about one job as
     though it were about another). Staleness sticks until someone reviews again.
+
+    This applies to a plain confirmation as much as to an override: agreeing
+    with a verdict is still a judgement about the job as it was worded, and a
+    restatement invalidates it just the same.
     """
     if not assessments:
         return []
@@ -181,16 +185,18 @@ def enrich_assessments(
             or prior.get("job_statement")
         )
 
+        # Staleness attaches to any review, not just an override. Agreeing with a
+        # verdict is still a judgement about the job as it was worded at the time, so a
+        # restatement invalidates a confirmation exactly as much as a correction.
+        reviewed = bool(item.get("reviewed_at"))
         already_stale = bool(prior.get("review_stale"))
         drifted = bool(
-            item.get("human_position")
+            reviewed
             and review_basis
             and normalize_statement(review_basis)
             != normalize_statement(item.get("job_statement"))
         )
-        item["review_stale"] = bool(item.get("human_position")) and (
-            already_stale or drifted
-        )
+        item["review_stale"] = reviewed and (already_stale or drifted)
 
         enriched.append(item)
 
