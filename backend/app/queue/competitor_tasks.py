@@ -277,8 +277,12 @@ def functional_audit_task(self, job_id: int):
         CompetitorFunctionalAuditAgent,
         generate_markdown_report
     )
-    from app.models.competitive_reports import CompetitorFunctionalReport
-    from app.schemas.competitive_reports import FunctionalAuditOutput
+    from app.models.competitive_reports import (
+        CompetitorFunctionalReport, ProductSelfAssessment,
+    )
+    from app.schemas.competitive_reports import (
+        FunctionalAuditOutput, StoredFunctionalAuditOutput,
+    )
     from app.services.llm_service import LLMService
 
     db = None
@@ -462,12 +466,6 @@ def functional_audit_task(self, job_id: int):
         # gives us a single clean failure point if either stage dropped a required field.
         result = FunctionalAuditOutput(**result).model_dump()
 
-        queue_service.update_progress(job_id, 85.0, "Generating report...")
-
-        # Generate markdown report (convert dict to Pydantic for the report generator)
-        result_model = FunctionalAuditOutput(**result)
-        markdown_content = generate_markdown_report(competitor.competitor_name, result_model)
-
         # Store or update the report
         existing_report = db.query(CompetitorFunctionalReport).filter(
             CompetitorFunctionalReport.product_competitor_id == competitor_id,
@@ -488,12 +486,38 @@ def functional_audit_task(self, job_id: int):
                 "job_assessments": previous_assessments,
             }
 
-        # Derive system_position and carry forward any PM overrides from the
-        # previous version — a re-audit regenerates the system verdict alongside
+        # Our score comes from the product's own self-assessment, not from this audit.
+        # Without one, the audit still reports what the competitor does — position just
+        # cannot be stated, because it needs both sides.
+        self_assessment = db.query(ProductSelfAssessment).filter(
+            ProductSelfAssessment.product_id == product_id
+        ).order_by(ProductSelfAssessment.assessment_version.desc()).first()
+        self_scores = {
+            entry.get("job_id"): entry.get("score")
+            for entry in ((self_assessment.job_assessments or []) if self_assessment else [])
+            if isinstance(entry, dict) and entry.get("job_id")
+        }
+
+        # Join our score in, derive system_position, and carry forward any PM overrides
+        # from the previous version — a re-audit regenerates the system verdict alongside
         # a human's, never on top of it.
         enriched_assessments = enrich_assessments(
-            result.get("job_assessments"), previous_assessments
+            result.get("job_assessments"),
+            previous_assessments,
+            self_scores=self_scores,
+            self_assessment_version=(
+                self_assessment.assessment_version if self_assessment else None
+            ),
         )
+
+        queue_service.update_progress(job_id, 85.0, "Generating report...")
+
+        # Build the report from the enriched assessments rather than the agent's raw
+        # output, so the export shows our score wherever a self-assessment exists.
+        result_model = StoredFunctionalAuditOutput(
+            **{**result, "job_assessments": enriched_assessments}
+        )
+        markdown_content = generate_markdown_report(competitor.competitor_name, result_model)
 
         if existing_report:
             # Update existing report

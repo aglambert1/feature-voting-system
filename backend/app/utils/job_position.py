@@ -109,8 +109,20 @@ def evidence_ids_for_assessment(assessment: Dict[str, Any]) -> set:
 def enrich_assessments(
     assessments: Optional[List[Dict[str, Any]]],
     previous_assessments: Optional[List[Dict[str, Any]]] = None,
+    self_scores: Optional[Dict[str, int]] = None,
+    self_assessment_version: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Add the derived system_position and carry forward human review state.
+    """Join our score in, derive system_position, and carry forward human review state.
+
+    An audit scores the competitor only. Our score comes from the product's own
+    self-assessment, joined here by job_id — so it is one number per job rather than a
+    different one in every competitor's report. `our_score` is still written onto the
+    stored assessment, but as a joined value rather than something the agent authored;
+    `self_assessment_version` records which assessment it came from.
+
+    Position needs both sides, so a job with no self-assessment score is `unknown`
+    rather than guessed. Audits still produce competitor scores without one — the
+    comparison simply cannot be stated until our side is assessed.
 
     The system position is recomputed on every run. Human review state
     (human_position, reviewed_at, reviewed_by) is carried forward from the
@@ -141,8 +153,17 @@ def enrich_assessments(
         if not isinstance(assessment, dict):
             continue
         item = dict(assessment)
+
+        # Our score is joined from the self-assessment, not taken from the audit. If the
+        # agent emitted one anyway it is discarded: an audit has no standing to score us,
+        # and letting it through would reintroduce the per-competitor divergence this
+        # exists to remove.
+        our_score = (self_scores or {}).get(item.get("job_id"))
+        item["our_score"] = our_score
+        item["self_assessment_version"] = self_assessment_version
+
         item["system_position"] = derive_system_position(
-            item.get("our_score"), item.get("competitor_score")
+            our_score, item.get("competitor_score")
         )
 
         prior = prior_by_job.get(item.get("job_id")) or {}

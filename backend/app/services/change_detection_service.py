@@ -31,7 +31,11 @@ into the diff would report a correction as market movement.
 
 from typing import Dict, Any, List, Optional
 
-from app.utils.job_position import evidence_ids_for_assessment, normalize_statement
+from app.utils.job_position import (
+    evidence_ids_for_assessment,
+    normalize_statement,
+    score_to_tier,
+)
 
 
 class ChangeDetectionService:
@@ -166,6 +170,10 @@ class ChangeDetectionService:
                 # behind it is more likely model variance than market change.
                 "evidence_changed": bool(new_evidence),
                 "new_evidence_ids": sorted(new_evidence),
+                # Our score is joined in from a separate self-assessment, so a position
+                # can move because WE changed rather than because they did. Reporting
+                # our own progress as competitor movement would be actively misleading.
+                "attributed_to": ChangeDetectionService._attribute_flip(prev, curr),
             })
 
         summary = ChangeDetectionService._build_functional_summary(
@@ -182,6 +190,43 @@ class ChangeDetectionService:
             "assessment_diff_available": True,
             "summary": summary,
         }
+
+    @staticmethod
+    def _attribute_flip(prev: Dict[str, Any], curr: Dict[str, Any]) -> str:
+        """Say which side of the comparison moved.
+
+        Position is derived from our score and theirs, and our score now comes from a
+        self-assessment that re-runs independently of any audit. So a flip has three
+        possible causes and they mean entirely different things: the competitor shipped
+        something, we shipped something, or both moved at once.
+
+        Compares bands rather than raw scores, for the same reason position does — a 7
+        becoming an 8 for the same capability is model noise, and attributing a flip to
+        it would be inventing a cause.
+        """
+        def side_change(prev_score: Any, curr_score: Any) -> str:
+            prev_tier = score_to_tier(prev_score)
+            curr_tier = score_to_tier(curr_score)
+            # A score appearing or disappearing is not movement. Losing the ability to
+            # judge a side, or gaining it, changes what the comparison rests on rather
+            # than what either product does — calling that "we improved" would invent
+            # a change nobody made.
+            if prev_tier is None or curr_tier is None:
+                return "same" if prev_tier == curr_tier else "basis_changed"
+            return "moved" if prev_tier != curr_tier else "same"
+
+        ours = side_change(prev.get("our_score"), curr.get("our_score"))
+        theirs = side_change(prev.get("competitor_score"), curr.get("competitor_score"))
+
+        if "basis_changed" in (ours, theirs):
+            return "unclear"
+        if theirs == "moved" and ours != "moved":
+            return "competitor"
+        if ours == "moved" and theirs != "moved":
+            return "us"
+        if ours == "moved" and theirs == "moved":
+            return "both"
+        return "unclear"
 
     @staticmethod
     def _build_functional_summary(
@@ -211,6 +256,11 @@ class ChangeDetectionService:
                 parts.append(
                     f"{unsubstantiated} job position change(s) without new evidence"
                 )
+            ours = sum(
+                1 for c in job_position_changes if c.get("attributed_to") == "us"
+            )
+            if ours:
+                parts.append(f"{ours} reflecting a change on our side, not theirs")
         if jobs_added:
             parts.append(f"{len(jobs_added)} job(s) newly assessed")
         if jobs_removed:

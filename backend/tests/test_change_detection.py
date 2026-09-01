@@ -248,7 +248,9 @@ class TestHumanVerdictsSurviveReaudit:
             "features": [],
         }]
 
-        enriched = enrich_assessments(fresh_from_agent, previous)
+        enriched = enrich_assessments(
+            fresh_from_agent, previous, self_scores={"j1": 4}, self_assessment_version=2
+        )
 
         assert enriched[0]["human_position"] == "parity"
         assert enriched[0]["reviewed_by"] == 3
@@ -257,9 +259,11 @@ class TestHumanVerdictsSurviveReaudit:
 
     def test_unreviewed_assessments_stay_unreviewed(self):
         # Review is optional — a PM may accept system levels without looking.
-        enriched = enrich_assessments([
-            {"job_id": "j1", "our_score": 5, "competitor_score": 5, "features": []}
-        ], previous_assessments=None)
+        enriched = enrich_assessments(
+            [{"job_id": "j1", "competitor_score": 5, "features": []}],
+            previous_assessments=None,
+            self_scores={"j1": 5},
+        )
 
         assert enriched[0]["human_position"] is None
         assert enriched[0]["reviewed_at"] is None
@@ -406,3 +410,76 @@ class TestOverrideStaleness:
         enriched = enrich_assessments(fresh, previous)
 
         assert enriched[0]["review_stale"] is True
+
+
+
+# ---------------------------------------------------------------------------
+# Our score is joined, not authored by the audit
+# ---------------------------------------------------------------------------
+
+class TestOurScoreIsJoined:
+    def test_audit_supplied_our_score_is_discarded(self):
+        # An audit has no standing to score us. Letting one through would reintroduce
+        # the per-competitor divergence the self-assessment exists to remove.
+        enriched = enrich_assessments(
+            [{"job_id": "j1", "competitor_score": 8, "our_score": 10}],
+            self_scores={"j1": 3},
+        )
+        assert enriched[0]["our_score"] == 3
+        assert enriched[0]["system_position"] == "gap"
+
+    def test_position_is_unknown_without_a_self_assessment(self):
+        # Position needs both sides. Guessing one would assert a comparison we cannot make.
+        enriched = enrich_assessments([{"job_id": "j1", "competitor_score": 8}])
+        assert enriched[0]["system_position"] == "unknown"
+        assert enriched[0]["our_score"] is None
+
+    def test_records_which_self_assessment_was_used(self):
+        enriched = enrich_assessments(
+            [{"job_id": "j1", "competitor_score": 8}],
+            self_scores={"j1": 4},
+            self_assessment_version=7,
+        )
+        assert enriched[0]["self_assessment_version"] == 7
+
+    def test_jobs_missing_from_the_self_assessment_are_unknown(self):
+        enriched = enrich_assessments(
+            [{"job_id": "j1", "competitor_score": 8}, {"job_id": "j2", "competitor_score": 5}],
+            self_scores={"j1": 4},
+        )
+        by_job = {a["job_id"]: a for a in enriched}
+        assert by_job["j1"]["system_position"] == "gap"
+        assert by_job["j2"]["system_position"] == "unknown"
+
+
+class TestFlipAttribution:
+    """A flip can be caused by them, by us, or by both — and they mean different things."""
+
+    def _pair(self, prev_ours, prev_theirs, curr_ours, curr_theirs):
+        previous = _report([_assessment("j1", prev_ours, prev_theirs)])
+        current = _report([_assessment("j1", curr_ours, curr_theirs)])
+        diff = ChangeDetectionService.compute_functional_report_diff(current, previous)
+        return diff
+
+    def test_competitor_moved(self):
+        diff = self._pair(5, 5, 5, 9)
+        assert diff["job_position_changes"][0]["attributed_to"] == "competitor"
+
+    def test_we_moved(self):
+        # We shipped something. Reporting this as competitor movement would be
+        # actively misleading — nothing changed on their side.
+        diff = self._pair(3, 7, 9, 7)
+        change = diff["job_position_changes"][0]
+        assert change["attributed_to"] == "us"
+        assert "our side, not theirs" in diff["summary"]
+
+    def test_both_moved(self):
+        diff = self._pair(3, 9, 9, 3)
+        assert diff["job_position_changes"][0]["attributed_to"] == "both"
+
+    def test_score_known_becoming_unknown_is_unclear(self):
+        # No band moved, yet position did — the inputs changed shape, not value.
+        previous = _report([_assessment("j1", 5, 9)])
+        current = _report([_assessment("j1", 0, 9)])
+        diff = ChangeDetectionService.compute_functional_report_diff(current, previous)
+        assert diff["job_position_changes"][0]["attributed_to"] == "unclear"

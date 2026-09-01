@@ -199,11 +199,15 @@ Products compete on how well they help customers make progress on specific jobs.
 
 ## When a Job Map is provided
 For each job in the map:
-1. Score our product 1-10 on how well it serves this job
-2. Score the competitor 1-10 on how well they serve this job
-3. Explain what drives the score difference
-4. List features from BOTH products that contribute (advantages AND gaps in one view)
-5. Assess coverage of each desired outcome
+1. Score the competitor 1-10 on how well they serve this job
+2. Explain what drives that score — which capabilities carry the job and where it falls short
+3. List features from BOTH products that contribute (advantages AND gaps in one view)
+4. Assess coverage of each desired outcome
+
+Do NOT score our product. Our score comes from a separate self-assessment made once
+against the job map, so that it is one number per job rather than a different one in
+every competitor's report. Judging it here, from material gathered to research someone
+else, is how that divergence happened.
 
 ## When no Job Map is provided
 Fall back to feature-centric analysis: identify features, categorize as Parity/Advantage/Gap/Differentiator.
@@ -211,7 +215,7 @@ Fall back to feature-centric analysis: identify features, categorize as Parity/A
 ## Evidence Integration
 When evidence is provided, use it to INFORM your assessments. Cite evidence by ID when it influences a finding. Evidence from the product team is curated and high-confidence.
 
-## Scoring Principles (1-10 scale)
+## Scoring Principles (1-10 scale) — applied to the COMPETITOR
 - 9-10: Best-in-class, fully addresses the job with excellent UX
 - 7-8: Strong coverage, minor gaps in desired outcomes
 - 5-6: Adequate but notable missing capabilities
@@ -244,7 +248,6 @@ You MUST respond with a valid JSON object matching this exact structure:
       "job_id": "j1",
       "job_statement": "When I need to..., I want to..., so I can...",
       "importance": "critical",
-      "our_score": 7,
       "competitor_score": 8,
       "score_rationale": "Explanation of what drives the score difference",
       "features": [
@@ -401,14 +404,16 @@ Respond with a valid JSON object matching this exact structure (and nothing else
 This is STAGE 2 of a two-stage audit. Stage 1 (competitor_context + functional_comparison +
 technical_constraints) is already complete and will be provided in the user prompt as
 conditioning context. In this stage you produce ONLY these sections:
-- job_assessments (one per job in the job map; features[] with position=advantage/gap/parity/differentiator)
+- job_assessments (one per job in the job map; competitor_score only — do NOT score our
+  product, that comes from a separate self-assessment; features[] with
+  position=advantage/gap/parity/differentiator)
 - evidence_citations (link evidence IDs to specific findings)
 - unmapped_capabilities (competitor capabilities that fit no job in the map)
 - gaps_deep_dive (ONLY if no job map is provided)
 
 Do NOT restate or modify Stage 1 output — use it as given.
 
-## Scoring Principles (1-10 scale)
+## Scoring Principles (1-10 scale) — applied to the COMPETITOR
 - 9-10: Best-in-class, fully addresses the job with excellent UX
 - 7-8: Strong coverage, minor gaps in desired outcomes
 - 5-6: Adequate but notable missing capabilities
@@ -430,7 +435,6 @@ Respond with a valid JSON object matching this exact structure (and nothing else
       "job_id": "j1",
       "job_statement": "When I need to..., I want to..., so I can...",
       "importance": "critical",
-      "our_score": 7,
       "competitor_score": 8,
       "score_rationale": "Explanation of what drives the score difference",
       "features": [
@@ -1150,7 +1154,15 @@ def generate_markdown_report(
             lines.extend([
                 f"### {ja.job_id}: {ja.job_statement}{importance_label}",
                 "",
-                f"**Our Score:** {ja.our_score}/10 | **Competitor Score:** {ja.competitor_score}/10",
+                (
+                    f"**Our Score:** {ja.our_score}/10 | "
+                    f"**Competitor Score:** {ja.competitor_score}/10"
+                    if getattr(ja, "our_score", None)
+                    # Position needs both sides; without a self-assessment we can report
+                    # what the competitor does but not how we compare.
+                    else f"**Competitor Score:** {ja.competitor_score}/10 "
+                         f"_(our score pending a self-assessment)_"
+                ),
                 "",
                 f"**Rationale:** {ja.score_rationale}",
                 "",

@@ -130,7 +130,6 @@ class JobAssessment(BaseModel):
         default="medium",
         description="How important this job is: critical, high, medium, or low"
     )
-    our_score: int = Field(ge=0, le=10, description="How well our product serves this job (1-10, 0 if unknown)")
     competitor_score: int = Field(ge=0, le=10, description="How well the competitor serves this job (1-10, 0 if unknown)")
     score_rationale: str = Field(
         description="Explanation of what drives the score difference"
@@ -155,9 +154,14 @@ class StoredJobAssessment(JobAssessment):
     `JobAssessment` is the contract the agent fills in. These extra fields are
     added after the agent returns and are never emitted by the model:
 
-    - `system_position` is derived from the two rubric scores (see
-      `app.utils.job_position`) and is the stable value change detection
-      compares. It is recomputed on every run.
+    - `our_score` is joined in from the product's self-assessment, with
+      `self_assessment_version` recording which one. An audit scores the competitor
+      only — it has no standing to score us, and letting each audit do so is what
+      allowed the same job to carry a different "our" score in every report.
+    - `system_position` is derived from our joined score and the audit's competitor
+      score (see `app.utils.job_position`) and is the stable value change detection
+      compares. It is recomputed on every run, and is `unknown` until a
+      self-assessment exists — position needs both sides.
     - `human_position` is a PM's override. It is authoritative for display and
       is carried forward across re-audits so a new run never silently reverts
       it. Change detection ignores it — a human disagreeing with the model is
@@ -167,6 +171,14 @@ class StoredJobAssessment(JobAssessment):
     `human_position` as None, which is a normal state: a PM may accept the
     system levels without reviewing them.
     """
+    our_score: Optional[int] = Field(
+        default=None,
+        description="Our score for this job, joined from the latest self-assessment"
+    )
+    self_assessment_version: Optional[int] = Field(
+        default=None,
+        description="Which self-assessment our_score came from"
+    )
     system_position: Optional[str] = Field(
         default=None,
         description="Derived from the score bands: advantage, gap, parity, or unknown"
@@ -392,6 +404,19 @@ class FunctionalAuditStage2Output(BaseModel):
 # =============================================================================
 # API Response Schemas
 # =============================================================================
+
+class StoredFunctionalAuditOutput(FunctionalAuditOutput):
+    """The audit as persisted, with our score joined in from the self-assessment.
+
+    The agent's own output carries competitor scores only. This is the shape after
+    enrichment, and it is what the markdown report is built from — otherwise the export
+    would always claim our score was pending, even where a self-assessment exists.
+    """
+    job_assessments: List[StoredJobAssessment] = Field(
+        default=[],
+        description="Per-job comparison after our score and review state are joined in"
+    )
+
 
 class FunctionalReportResponse(BaseModel):
     """API response schema for a competitor functional report."""
