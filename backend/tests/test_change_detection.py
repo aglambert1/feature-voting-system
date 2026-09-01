@@ -458,37 +458,49 @@ class TestOurScoreIsJoined:
         assert by_job["j2"]["system_position"] == "unknown"
 
 
-class TestFlipAttribution:
-    """A flip can be caused by them, by us, or by both — and they mean different things."""
+class TestOnlyCompetitorMovementCounts:
+    """A competitor report answers what the COMPETITOR did.
+
+    Position is a join of their score and ours, and our side is re-derived by a
+    self-assessment that has nothing to do with any particular competitor. Diffing
+    position would report our own progress as their movement — and because a
+    self-assessment refreshes stored positions on every report, that would fire routinely.
+    """
 
     def _pair(self, prev_ours, prev_theirs, curr_ours, curr_theirs):
         previous = _report([_assessment("j1", prev_ours, prev_theirs)])
         current = _report([_assessment("j1", curr_ours, curr_theirs)])
-        diff = ChangeDetectionService.compute_functional_report_diff(current, previous)
-        return diff
+        return ChangeDetectionService.compute_functional_report_diff(current, previous)
 
-    def test_competitor_moved(self):
+    def test_competitor_band_change_is_reported(self):
         diff = self._pair(5, 5, 5, 9)
-        assert diff["job_position_changes"][0]["attributed_to"] == "competitor"
-
-    def test_we_moved(self):
-        # We shipped something. Reporting this as competitor movement would be
-        # actively misleading — nothing changed on their side.
-        diff = self._pair(3, 7, 9, 7)
+        assert len(diff["job_position_changes"]) == 1
         change = diff["job_position_changes"][0]
-        assert change["attributed_to"] == "us"
-        assert "our side, not theirs" in diff["summary"]
+        assert change["old_position"] == "parity"
+        assert change["new_position"] == "gap"
 
-    def test_both_moved(self):
+    def test_our_score_moving_alone_is_not_a_competitor_change(self):
+        # We shipped something. Their capability is unchanged, so their report should
+        # say nothing — otherwise every self-assessment would spray false movement
+        # across every tracked competitor at once.
+        diff = self._pair(3, 7, 9, 7)
+        assert diff["job_position_changes"] == []
+
+    def test_competitor_change_reported_even_when_we_also_moved(self):
         diff = self._pair(3, 9, 9, 3)
-        assert diff["job_position_changes"][0]["attributed_to"] == "both"
+        assert len(diff["job_position_changes"]) == 1
 
-    def test_score_known_becoming_unknown_is_unclear(self):
-        # No band moved, yet position did — the inputs changed shape, not value.
-        previous = _report([_assessment("j1", 5, 9)])
-        current = _report([_assessment("j1", 0, 9)])
-        diff = ChangeDetectionService.compute_functional_report_diff(current, previous)
-        assert diff["job_position_changes"][0]["attributed_to"] == "unclear"
+    def test_within_band_competitor_jitter_is_not_a_change(self):
+        # Same reason position is banded: a 7 becoming an 8 for the same capability is
+        # model noise, not movement.
+        diff = self._pair(5, 7, 5, 8)
+        assert diff["job_position_changes"] == []
+
+    def test_competitor_score_becoming_unknown_is_reported(self):
+        # Losing the ability to judge them is a real change to what the report claims,
+        # even though it is not a change in their product.
+        diff = self._pair(5, 9, 5, 0)
+        assert len(diff["job_position_changes"]) == 1
 
 
     def test_a_plain_confirmation_also_goes_stale(self):
@@ -512,3 +524,33 @@ class TestFlipAttribution:
 
         assert enriched[0]["human_position"] is None
         assert enriched[0]["review_stale"] is True
+
+
+class TestReviewNoteSurvivesReaudit:
+    def test_note_is_carried_forward(self):
+        # "Why did you override this" is the question the review record exists to
+        # answer. Keeping the verdict and dropping its justification would leave a
+        # correction nobody can evaluate.
+        previous = [_assessment(
+            "j1", 5, 7,
+            human_position="parity",
+            reviewed_at="2026-09-01T00:00:00Z",
+            reviewed_job_statement="Statement for j1",
+            review_note="They deprecated it in the July release",
+        )]
+        fresh = [{
+            "job_id": "j1",
+            "job_statement": "Statement for j1",
+            "competitor_score": 9,
+            "features": [],
+        }]
+
+        enriched = enrich_assessments(fresh, previous, self_scores={"j1": 5})
+
+        assert enriched[0]["review_note"] == "They deprecated it in the July release"
+
+    def test_absent_note_stays_absent(self):
+        enriched = enrich_assessments(
+            [{"job_id": "j1", "competitor_score": 8}], self_scores={"j1": 4}
+        )
+        assert enriched[0]["review_note"] is None

@@ -203,6 +203,10 @@ class StoredJobAssessment(JobAssessment):
         default=False,
         description="True when the job has been restated since the override was made, so the override may no longer apply. Sticky until reviewed again."
     )
+    review_note: Optional[str] = Field(
+        default=None,
+        description="Why the reviewer agreed or overrode — the most informative part of a review"
+    )
 
 
 class UnmappedCapability(BaseModel):

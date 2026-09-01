@@ -33,6 +33,7 @@ from app.models.competitor_intelligence import (
 )
 from app.models.queue import JobType as QueueJobType
 from app.models.user import User
+from app.services.job_provenance import map_health
 from app.services.queue_service import QueueService
 from app.utils.celery_utils import send_celery_task as send_task
 from app.utils.security import get_current_active_user
@@ -208,6 +209,7 @@ def get_job_coverage(
                 # verdict is kept alongside rather than replaced.
                 "human_position": entry.get("human_position"),
                 "review_stale": entry.get("review_stale", False),
+                "review_note": entry.get("review_note"),
                 "confidence": entry.get("confidence"),
             })
 
@@ -228,6 +230,11 @@ def get_job_coverage(
         "product_name": product.product_name,
         "jobs": rows,
         "competitors": competitor_columns,
+        # How circular the map is. Belongs on this response specifically because this is
+        # where the misleading conclusion gets drawn: a reader seeing high scores across
+        # the board needs to know whether the jobs came from the product's own
+        # description, which would make those scores near-tautological.
+        "map_health": map_health(db, product_id),
         "self_assessment": {
             "exists": assessment is not None,
             "version": assessment.assessment_version if assessment else None,

@@ -175,6 +175,10 @@ def enrich_assessments(
         item["reviewed_at"] = prior.get("reviewed_at")
         item["reviewed_by"] = prior.get("reviewed_by")
         item["reviewed_job_statement"] = prior.get("reviewed_job_statement")
+        # The reason a PM gave is the most informative part of a review — "why did you
+        # override this" is the question the record exists to answer. Dropping it on the
+        # next audit would keep the verdict and lose its justification.
+        item["review_note"] = prior.get("review_note")
 
         # The wording the review was actually made against. Falls back to the
         # previous run's statement for reviews recorded before that snapshot was

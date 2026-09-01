@@ -43,6 +43,7 @@ _TASK_NAME_MAP = {
     "activity_insight_task": "app.queue.internal_tasks.activity_insight_task",
     # jtbd_tasks
     "extract_job_map_task": "app.queue.jtbd_tasks.extract_job_map_task",
+    "self_assessment_task": "app.queue.jtbd_tasks.self_assessment_task",
     # synthesis_tasks
     "unified_synthesis_task": "app.queue.synthesis_tasks.unified_synthesis_task",
     "resume_unified_synthesis_task": "app.queue.synthesis_tasks.resume_unified_synthesis_task",

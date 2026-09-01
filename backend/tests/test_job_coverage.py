@@ -83,6 +83,38 @@ class TestSelfAssessmentEndpoint:
         assert resp.status_code == 400
         assert "job map" in resp.json()["detail"].lower()
 
+    def test_queues_the_task_when_a_job_map_exists(
+        self, db_session, client, test_product, po_user, monkeypatch
+    ):
+        # The success path was previously untested, which let a missing entry in
+        # _TASK_NAME_MAP ship: create_job commits, then send_task raises, leaving a 500
+        # and an orphaned PENDING job. Since self-assessment is the only source of
+        # our_score, every competitor position would have stayed unknown forever.
+        sent = {}
+
+        def fake_send(task_name, *args, **kwargs):
+            sent["task_name"] = task_name
+            return type("R", (), {"id": "task-1"})()
+
+        monkeypatch.setattr("app.api.job_coverage.send_task", fake_send)
+        _job(db_session, test_product, "j1")
+
+        resp = client.post(
+            f"/product-intelligence/products/{test_product.id}/self-assessment",
+            headers=auth_headers(po_user),
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["job_id"]
+        assert sent["task_name"] == "self_assessment_task"
+
+    def test_the_queued_task_name_is_resolvable(self):
+        # send_task resolves short names through a map; an unregistered name raises at
+        # call time rather than import time, so nothing catches it until a PM clicks.
+        from app.utils.celery_utils import _TASK_NAME_MAP
+
+        assert "self_assessment_task" in _TASK_NAME_MAP
+
     def test_returns_null_when_none_has_run(self, client, test_product, po_user):
         resp = client.get(
             f"/product-intelligence/products/{test_product.id}/self-assessment",
@@ -504,3 +536,43 @@ class TestReviewEndpoint:
             headers=auth_headers(voter_user),
         )
         assert resp.status_code in (403, 404)
+
+
+class TestMapHealthOnCoverage:
+    """Map health belongs on this response because this is where the misleading
+    conclusion gets drawn — high scores across the board mean nothing if the jobs came
+    from the product's own description."""
+
+    def test_reports_the_share_with_a_non_product_source(
+        self, db_session, client, test_product, po_user
+    ):
+        from app.models.competitor_intelligence import (
+            JOB_PROVENANCE_COMPETITOR,
+            JOB_PROVENANCE_PRODUCT,
+        )
+
+        _job(db_session, test_product, "j1", provenance={"type": JOB_PROVENANCE_PRODUCT})
+        _job(db_session, test_product, "j2", provenance={"type": JOB_PROVENANCE_COMPETITOR})
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage",
+            headers=auth_headers(po_user),
+        )
+
+        health = resp.json()["map_health"]
+        assert health["total_jobs"] == 2
+        assert health["independent_source_pct"] == 50
+
+    def test_fully_product_derived_map_is_visible_as_zero(
+        self, db_session, client, test_product, po_user
+    ):
+        from app.models.competitor_intelligence import JOB_PROVENANCE_PRODUCT
+
+        _job(db_session, test_product, "j1", provenance={"type": JOB_PROVENANCE_PRODUCT})
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage",
+            headers=auth_headers(po_user),
+        )
+
+        assert resp.json()["map_health"]["independent_source_pct"] == 0

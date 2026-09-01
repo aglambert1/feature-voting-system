@@ -560,11 +560,16 @@ Respond with ONLY a valid JSON object matching the schema in the system prompt."
                     job_id = ja.get("job_id", "?")
                     job_stmt = ja.get("job_statement", "")
                     importance = ja.get("importance", "medium")
-                    our_score = ja.get("our_score", 0)
-                    comp_score = ja.get("competitor_score", 0)
+                    # our_score is joined from the self-assessment and is None until one
+                    # exists — which the audit flow treats as normal, so this is a common
+                    # state rather than an edge case. `.get(key, 0)` returns None when the
+                    # key is present-but-null, which would put "us=None/10" in the prompt.
+                    our_score = ja.get("our_score")
+                    comp_score = ja.get("competitor_score") or 0
                     rationale = ja.get("score_rationale", "")
+                    our_label = f"{our_score}/10" if our_score else "not assessed"
                     lines.append(
-                        f"- **{job_id}** [{importance}]: us={our_score}/10, them={comp_score}/10"
+                        f"- **{job_id}** [{importance}]: us={our_label}, them={comp_score}/10"
                     )
                     if job_stmt:
                         lines.append(f"  Statement: {job_stmt}")
