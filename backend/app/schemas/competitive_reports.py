@@ -193,6 +193,32 @@ class StoredJobAssessment(JobAssessment):
     )
 
 
+class UnmappedCapability(BaseModel):
+    """A competitor capability that fits no job in our map.
+
+    The job map is generated from our own product description, so it is blind by
+    construction to jobs we never addressed — which is exactly where opportunity lives.
+    A competitor serving a job our map doesn't contain is evidence the map is
+    incomplete, and it arrives free with an audit we were running anyway.
+
+    Recording these rather than discarding them turns every audit into a passive source
+    of job discovery, independent of our own product copy.
+    """
+    capability: str = Field(description="What the competitor does, in functional terms")
+    why_unmapped: str = Field(
+        default="",
+        description="Why no existing job covers it — the closest job and what it misses"
+    )
+    suggested_job_statement: str = Field(
+        default="",
+        description=(
+            "A candidate job statement in 'When [situation], I want to [action], so I can "
+            "[outcome]' form. A proposal for a human to accept, edit, or reject — never "
+            "added to the map automatically."
+        )
+    )
+
+
 class EvidenceCitation(BaseModel):
     """Tracks which evidence informed a specific finding."""
     evidence_id: int = Field(description="ID of the evidence record")
@@ -232,6 +258,10 @@ class FunctionalAuditOutput(BaseModel):
     evidence_citations: List[EvidenceCitation] = Field(
         default=[],
         description="Evidence records cited in the analysis"
+    )
+    unmapped_capabilities: List[UnmappedCapability] = Field(
+        default=[],
+        description="Competitor capabilities that fit no job in the map"
     )
 
 
@@ -285,6 +315,10 @@ class FunctionalAuditStage2Output(BaseModel):
         default=[],
         description="Deep-dive on gap features (populated when no job map)"
     )
+    unmapped_capabilities: List[UnmappedCapability] = Field(
+        default=[],
+        description="Competitor capabilities that fit no job in the map"
+    )
 
 
 # =============================================================================
@@ -305,5 +339,6 @@ class FunctionalReportResponse(BaseModel):
     technical_constraints: Optional[TechnicalConstraints] = None
     job_assessments: Optional[List[StoredJobAssessment]] = None
     evidence_citations: Optional[List[EvidenceCitation]] = None
+    unmapped_capabilities: Optional[List[UnmappedCapability]] = None
     generated_at: Optional[str] = None
     queue_job_id: Optional[int] = None

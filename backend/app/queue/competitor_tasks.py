@@ -508,6 +508,7 @@ def functional_audit_task(self, job_id: int):
             # Store JTBD fields (may be empty if no job map)
             existing_report.job_assessments = enriched_assessments
             existing_report.evidence_citations = result.get("evidence_citations")
+            existing_report.unmapped_capabilities = result.get("unmapped_capabilities")
             report = existing_report
         else:
             # Create new report
@@ -525,6 +526,7 @@ def functional_audit_task(self, job_id: int):
                 # JTBD fields (may be empty if no job map)
                 job_assessments=enriched_assessments,
                 evidence_citations=result.get("evidence_citations"),
+                unmapped_capabilities=result.get("unmapped_capabilities"),
             )
             db.add(report)
 

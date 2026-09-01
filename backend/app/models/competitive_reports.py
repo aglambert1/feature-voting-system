@@ -81,6 +81,16 @@ class CompetitorFunctionalReport(Base):
     # Evidence citation tracking: [{evidence_id, finding_type, finding_description}]
     evidence_citations = Column(JSON, nullable=True)
 
+    # Competitor capabilities that fit no job in our map:
+    # [{capability, why_unmapped, suggested_job_statement}]
+    #
+    # The job map is generated from our own product description, so it cannot contain
+    # jobs we never addressed — which is where opportunity hides. A competitor serving
+    # a job the map lacks is evidence the map is incomplete, and it arrives free with an
+    # audit already being run. Kept rather than discarded so audits become a passive
+    # source of job discovery independent of our own product copy.
+    unmapped_capabilities = Column(JSON, nullable=True)
+
     # Raw search results used (cleaned HTML, for reference)
     raw_search_results = Column(JSON, nullable=True)
 
@@ -114,6 +124,7 @@ class CompetitorFunctionalReport(Base):
             "technical_constraints": self.technical_constraints,
             "job_assessments": self.job_assessments,
             "evidence_citations": self.evidence_citations,
+            "unmapped_capabilities": self.unmapped_capabilities,
             "changes_from_previous": self.changes_from_previous,
             "generated_at": self.generated_at.isoformat() if self.generated_at else None,
             "queue_job_id": self.queue_job_id,
