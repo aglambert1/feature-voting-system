@@ -358,12 +358,22 @@ def self_assessment_task(self, job_id: int) -> Dict[str, Any]:
         db.commit()
         db.refresh(assessment)
 
+        queue_service.update_progress(job_id, 92.0, "Refreshing competitor positions...")
+
+        # Position is a join across this assessment and each competitor audit, so a new
+        # assessment changes every stored position. Refresh them here rather than
+        # requiring a re-audit: the join is free, and leaving it to a re-audit would mean
+        # positions silently lagged until someone remembered to re-run every competitor.
+        reports_refreshed = _refresh_competitor_positions(db, product_id, assessment)
+        db.commit()
+
         output_data = {
             "product_id": product_id,
             "assessment_id": assessment.id,
             "assessment_version": assessment.assessment_version,
             "jobs_assessed": len(result.get("job_assessments") or []),
             "evidence_based": had_evidence,
+            "competitor_reports_refreshed": reports_refreshed,
         }
         queue_service.mark_success(job_id, output_data=output_data)
 
@@ -379,3 +389,43 @@ def self_assessment_task(self, job_id: int) -> Dict[str, Any]:
     finally:
         if db:
             db.close()
+
+
+def _refresh_competitor_positions(db, product_id: int, assessment) -> int:
+    """Re-derive stored positions on every competitor report for a product.
+
+    Position needs our score and theirs. Our side now comes from a self-assessment that
+    re-runs independently of any audit, so a new assessment invalidates every stored
+    position — without this, they would stay stale until each competitor was re-audited,
+    which costs an LLM run per competitor and is easy to forget.
+
+    Only the derived fields move. Competitor scores are facts from the audit and are left
+    alone, and human review state is carried through by passing each report's current
+    assessments as their own previous — a refresh must never discard a PM's override.
+    """
+    from app.models.competitive_reports import CompetitorFunctionalReport
+    from app.utils.job_position import enrich_assessments
+
+    self_scores = {
+        entry.get("job_id"): entry.get("score")
+        for entry in (assessment.job_assessments or [])
+        if isinstance(entry, dict) and entry.get("job_id")
+    }
+
+    reports = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_id == product_id
+    ).all()
+
+    refreshed = 0
+    for report in reports:
+        if not report.job_assessments:
+            continue
+        report.job_assessments = enrich_assessments(
+            report.job_assessments,
+            previous_assessments=report.job_assessments,
+            self_scores=self_scores,
+            self_assessment_version=assessment.assessment_version,
+        )
+        refreshed += 1
+
+    return refreshed

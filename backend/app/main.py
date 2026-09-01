@@ -21,7 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import settings
 from app.logging_config import setup_logging
 from app.database import init_db, create_initial_admin
-from app.api import auth, ideas, votes, submissions, products, pm_review, monitoring, competitive_agents, internal_feedback, admin, invites, evidence, api_keys, job_map, unified_synthesis
+from app.api import auth, ideas, votes, submissions, products, pm_review, monitoring, competitive_agents, internal_feedback, admin, invites, evidence, api_keys, job_map, job_coverage, unified_synthesis
 from app.utils.security import create_access_token
 
 setup_logging(debug=settings.debug)
@@ -210,6 +210,7 @@ app.include_router(invites.router)  # Product invite codes and redemption
 app.include_router(evidence.router)  # Evidence factbase CRUD
 app.include_router(api_keys.router)  # MCP API key management
 app.include_router(job_map.router)  # JTBD job map CRUD
+app.include_router(job_coverage.router)  # Self-assessment + job coverage across competitors
 
 
 @app.get("/")

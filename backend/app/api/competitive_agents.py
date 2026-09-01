@@ -242,6 +242,12 @@ class JobResponse(BaseModel):
     job_type: str
     status: str
     message: str
+    warnings: List[str] = []
+    """Conditions that will degrade the result, known before the work runs.
+
+    An audit takes minutes, so a caller that only learns about a degraded outcome from
+    the finished report has already paid for it. Anything the caller could act on now
+    belongs here."""
 
 
 # ============================================================================
@@ -1207,12 +1213,31 @@ def trigger_functional_audit(
             detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
         )
 
+    # Position is a join across this audit and the product's self-assessment. Without
+    # one, the audit still reports what the competitor does, but every position comes
+    # back unknown — and the caller would otherwise not find that out until the report
+    # lands, minutes later.
+    from app.models.competitive_reports import ProductSelfAssessment
+
+    warnings: List[str] = []
+    has_self_assessment = db.query(ProductSelfAssessment).filter(
+        ProductSelfAssessment.product_id == product_id
+    ).first() is not None
+    if not has_self_assessment:
+        warnings.append(
+            "No self-assessment exists for this product, so competitor positions "
+            "(advantage/gap/parity) cannot be derived and will show as unknown. "
+            "Run a self-assessment to fill them in — existing audits are refreshed "
+            "automatically, so this audit does not need to be re-run."
+        )
+
     return JobResponse(
         job_id=job.id,
         job_uuid=job.job_uuid,
         job_type=job.job_type.value,
         status=job.status.value,
-        message=f"Functional audit queued for competitor {competitor_id}"
+        message=f"Functional audit queued for competitor {competitor_id}",
+        warnings=warnings,
     )
 
 
