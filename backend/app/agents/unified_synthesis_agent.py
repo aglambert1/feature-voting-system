@@ -110,15 +110,22 @@ Only the sources listed in `included_source_types` are in scope — ignore any s
 Produce one unified output that covers:
 
 1. **Job scorecard** — for each job in the job map:
-   - Aggregate scores for us and each competitor (1-10) based on their job_assessments.
-   - Rank all products (us + competitors) by their job score.
-   - Set `best_in_class` to the highest scorer (use 'us' if we lead).
-   - Recommend an investment level:
-     * `invest_heavily` when we lag on a critical or high-importance job
-     * `invest` when we lag on a medium-importance job, or when multiple voice sources corroborate customer demand
-     * `defend` when we lead a critical/high job (protect the moat)
-     * `maintain` when we are at parity and the job is not differentiating
-     * `deprioritize` when the job is low-importance and we are not lagging
+   - Score how well WE serve the job (1-10), judged against the job itself — how completely
+     it gets done for the customer — not against where competitors happen to sit. An
+     important job we serve poorly is a problem whether or not anyone else serves it well.
+   - Record each competitor's score (1-10) from their job_assessments as supporting context.
+     Do not rank the field or name a winner: the customer's alternative is often a
+     spreadsheet, a manual process, or doing nothing at all, so a leaderboard of the
+     vendors we happen to track is a narrower question than the one that matters.
+   - Recommend an investment level, driven by job importance and how well we serve it:
+     * `invest_heavily` when we serve a critical or high-importance job poorly
+     * `invest` when we serve a medium-importance job poorly, or when multiple voice
+       sources corroborate customer demand
+     * `defend` when we serve a critical/high job well and it differentiates us
+     * `maintain` when we serve the job adequately and it is not differentiating
+     * `deprioritize` when the job is low-importance and adequately served
+     Competitive scores are evidence for these calls — a gap the whole market shares reads
+     differently from one only we have — but they are not the trigger.
    - Include evidence_ids from competitor reports and/or evidence items that informed the call.
 
    If a job map is NOT provided, return an empty job_scorecard.
@@ -202,11 +209,8 @@ You MUST respond with ONLY a valid JSON object matching this exact structure:
       "importance": "high",
       "our_score": 5,
       "competitor_scores": {"Competitor A": 8, "Competitor B": 7},
-      "best_in_class": "Competitor A",
-      "our_rank": 3,
-      "total_ranked": 3,
       "investment_recommendation": "invest_heavily",
-      "rationale": "We lag the market leader by 3 points on a high-importance job.",
+      "rationale": "A high-importance job we serve incompletely; two tracked competitors serve it more fully.",
       "evidence_ids": [12, 18]
     }
   ],
@@ -419,7 +423,7 @@ Signal volume: {scope_summary}
 
 ## Your Task
 
-1. Build the job_scorecard (if a job map exists) — one entry per job, with our score and each competitor's score, a rank, a best_in_class label, and an investment recommendation.
+1. Build the job_scorecard (if a job map exists) — one entry per job, with how well we serve it, each competitor's score as context, and an investment recommendation.
 2. Build the feature_cluster_matrix grouped by job (if competitors and a job map are in scope).
 3. Merge semantically equivalent signals into unified opportunities. Use job_id_key first, then JTBD similarity, then feature keywords.
 4. Score each opportunity per the scoring guidelines (include the job-importance multiplier where applicable, cap at 100).
@@ -556,11 +560,16 @@ Respond with ONLY a valid JSON object matching the schema in the system prompt."
                     job_id = ja.get("job_id", "?")
                     job_stmt = ja.get("job_statement", "")
                     importance = ja.get("importance", "medium")
-                    our_score = ja.get("our_score", 0)
-                    comp_score = ja.get("competitor_score", 0)
+                    # our_score is joined from the self-assessment and is None until one
+                    # exists — which the audit flow treats as normal, so this is a common
+                    # state rather than an edge case. `.get(key, 0)` returns None when the
+                    # key is present-but-null, which would put "us=None/10" in the prompt.
+                    our_score = ja.get("our_score")
+                    comp_score = ja.get("competitor_score") or 0
                     rationale = ja.get("score_rationale", "")
+                    our_label = f"{our_score}/10" if our_score else "not assessed"
                     lines.append(
-                        f"- **{job_id}** [{importance}]: us={our_score}/10, them={comp_score}/10"
+                        f"- **{job_id}** [{importance}]: us={our_label}, them={comp_score}/10"
                     )
                     if job_stmt:
                         lines.append(f"  Statement: {job_stmt}")

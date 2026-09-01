@@ -907,13 +907,6 @@ export interface AgentJobResponse {
   message: string;
 }
 
-/**
- * Request to create ideas from features.
- */
-export interface CreateIdeasRequest {
-  feature_ids: number[];
-}
-
 // ============================================================================
 // FEATURE QUERY TYPES (Chat Interface)
 // ============================================================================

@@ -879,21 +879,6 @@ export const getGapIdeaStatuses = async (
 };
 
 /**
- * Create ideas from selected gaps
- */
-export const createIdeasFromGaps = async (
-  productId: number,
-  competitorId: number,
-  gapIndices: number[]
-): Promise<AgentJobResponse[]> => {
-  const response = await api.post<AgentJobResponse[]>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/gaps/create-ideas`,
-    { gap_indices: gapIndices }
-  );
-  return response.data;
-};
-
-/**
  * Export selected gaps as JSON
  */
 export const exportGapsJson = async (

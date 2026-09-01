@@ -19,6 +19,7 @@ from sqlalchemy import func as sa_func, delete as sa_delete
 from app.models.competitor_intelligence import (
     CIProduct, ProductJob, JobType, JobImportance,
     ProductPermissionLevel,
+    JOB_PROVENANCE_PM, JOB_PROVENANCE_PRODUCT, JOB_PROVENANCE_SIGNAL, JOB_EDITED,
 )
 from app.models.idea import Idea
 from app.models.evidence import Evidence
@@ -32,7 +33,13 @@ from app.schemas.job_map import (
 )
 from app.api.deps import verify_product_access as _verify_product_access
 from app.services.queue_service import QueueService
+from app.services.job_provenance import signal_counts
 from app.utils.security import get_current_active_user
+
+
+def _now_iso() -> str:
+    """Timestamp for provenance records, which store ISO strings inside JSON."""
+    return datetime.now(timezone.utc).isoformat()
 
 router = APIRouter(
     prefix="/product-intelligence/products",
@@ -82,37 +89,18 @@ def _rebuild_job_map_json(db: Session, product: CIProduct):
 # ============================================================================
 
 def _get_signal_counts(db: Session, product_id: int) -> dict[str, int]:
-    """Count active signals per job_id_key from all four signal sources."""
-    counts: dict[str, int] = {}
+    """Total signals linked to each job, for display alongside the job list.
 
-    # Ideas: only count active rows (inactive = soft-deleted)
-    idea_rows = (
-        db.query(Idea.job_id_key, sa_func.count(Idea.id))
-        .filter(
-            Idea.product_id == product_id,
-            Idea.job_id_key.isnot(None),
-            Idea.is_active == True,
-        )
-        .group_by(Idea.job_id_key)
-        .all()
-    )
-    for key, cnt in idea_rows:
-        counts[key] = counts.get(key, 0) + cnt
-
-    for model in (Evidence, WinLossTheme, SupportTheme, SynthesizedOpportunity):
-        rows = (
-            db.query(model.job_id_key, sa_func.count(model.id))
-            .filter(
-                model.product_id == product_id,
-                model.job_id_key.isnot(None),
-            )
-            .group_by(model.job_id_key)
-            .all()
-        )
-        for key, cnt in rows:
-            counts[key] = counts.get(key, 0) + cnt
-
-    return counts
+    Includes synthesis opportunities — this is "how much is attached to this job", not
+    "is this job independently supported". See app.services.job_provenance for the
+    distinction and for the corroboration measure that excludes derived output.
+    """
+    return {
+        job_id_key: entry.get("total", 0)
+        for job_id_key, entry in signal_counts(
+            db, product_id, include_derived=True
+        ).items()
+    }
 
 
 @router.get("/{product_id}/job-map")
@@ -129,7 +117,7 @@ def get_job_map(
         ProductJob.status == "active",
     ).all()
 
-    signal_counts = _get_signal_counts(db, product_id)
+    counts_by_job = _get_signal_counts(db, product_id)
 
     return {
         "product_id": product_id,
@@ -148,7 +136,13 @@ def get_job_map(
                 "desired_outcomes": j.desired_outcomes or [],
                 "importance": j.importance.value,
                 "has_embedding": j.statement_embedding is not None,
-                "signal_count": signal_counts.get(j.job_id_key, 0),
+                "signal_count": counts_by_job.get(j.job_id_key, 0),
+                "provenance": j.provenance,
+                "validation_state": j.validation_state,
+                "serve_intent": j.serve_intent,
+                "statement_updated_at": (
+                    j.statement_updated_at.isoformat() if j.statement_updated_at else None
+                ),
                 "updated_at": j.updated_at.isoformat() if j.updated_at else None,
             }
             for j in jobs
@@ -198,6 +192,14 @@ def set_job_map(
             desired_outcomes=entry.get("desired_outcomes", []),
             importance=JobImportance(entry.get("importance", "medium")),
             statement_embedding=embeddings[i] if i < len(embeddings) else None,
+            # Extracted from the product's own description — the circular case the
+            # map-health metric exists to surface.
+            provenance={
+                "type": JOB_PROVENANCE_PRODUCT,
+                "source_ref": f"product:{product_id}",
+                "added_at": _now_iso(),
+            },
+            statement_updated_at=datetime.now(timezone.utc),
         )
         db.add(pj)
         created_count += 1
@@ -298,6 +300,7 @@ def add_job(
     from app.services.embedding_service import generate_embedding
     embedding = generate_embedding(body.statement, input_type="document")
 
+    now = datetime.now(timezone.utc)
     pj = ProductJob(
         product_id=product_id,
         job_id_key=body.job_id,
@@ -306,6 +309,14 @@ def add_job(
         desired_outcomes=body.desired_outcomes,
         importance=JobImportance(body.importance),
         statement_embedding=embedding,
+        # Added by hand through this endpoint — the one provenance we can state without
+        # inferring it. Agent-created jobs record their own type at the point of creation.
+        provenance={
+            "type": JOB_PROVENANCE_PM,
+            "source_ref": f"user:{current_user.id}",
+            "added_at": now.isoformat(),
+        },
+        statement_updated_at=now,
     )
     db.add(pj)
     db.flush()
@@ -347,10 +358,15 @@ def edit_job(
             detail=f"Job '{job_id}' not found for product {product_id}.",
         )
 
-    if body.statement is not None:
+    if body.statement is not None and body.statement != pj.statement:
         pj.statement = body.statement
         from app.services.embedding_service import generate_embedding
         pj.statement_embedding = generate_embedding(body.statement, input_type="document")
+        # Only a real change counts. A restatement invalidates prior reviews of this job
+        # and makes its positions incomparable across report versions, so re-submitting
+        # identical text must not trip either.
+        pj.statement_updated_at = datetime.now(timezone.utc)
+        pj.validation_state = JOB_EDITED
 
     if body.desired_outcomes is not None:
         pj.desired_outcomes = body.desired_outcomes
@@ -547,6 +563,7 @@ def approve_need_suggestion(
     from app.services.embedding_service import generate_embedding
     embedding = generate_embedding(statement, input_type="document")
 
+    suggestion_meta = item.item_metadata or {}
     pj = ProductJob(
         product_id=product_id,
         job_id_key=new_key,
@@ -555,6 +572,17 @@ def approve_need_suggestion(
         desired_outcomes=desired_outcomes,
         importance=importance,
         statement_embedding=embedding,
+        # Proposed by a signal that matched no existing job — independent of the
+        # product's own description, which is what makes it worth recording.
+        provenance={
+            "type": JOB_PROVENANCE_SIGNAL,
+            "source_ref": (
+                f"{suggestion_meta.get('signal_type')}:{suggestion_meta.get('signal_id')}"
+                if suggestion_meta.get("signal_type") else None
+            ),
+            "added_at": _now_iso(),
+        },
+        statement_updated_at=datetime.now(timezone.utc),
     )
     db.add(pj)
     db.flush()
@@ -961,6 +989,12 @@ def apply_pending_job_map(
                 desired_outcomes=desired_outcomes,
                 importance=importance_map.get(importance_str, JobImportance.MEDIUM),
                 statement_embedding=emb,
+                provenance={
+                    "type": JOB_PROVENANCE_PRODUCT,
+                    "source_ref": f"product:{product_id}",
+                    "added_at": _now_iso(),
+                },
+                statement_updated_at=datetime.now(timezone.utc),
             )
             db.add(pj)
         if new_rows:

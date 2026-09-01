@@ -121,11 +121,6 @@ class FeatureResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class CreateIdeasRequest(BaseModel):
-    """Request to create ideas from selected features."""
-    feature_ids: List[int] = Field(..., min_length=1, max_length=20)
-
-
 class AddCompetitorRequest(BaseModel):
     """Request to manually add a competitor."""
     competitor_name: str = Field(..., min_length=2, max_length=255)
@@ -242,6 +237,12 @@ class JobResponse(BaseModel):
     job_type: str
     status: str
     message: str
+    warnings: List[str] = []
+    """Conditions that will degrade the result, known before the work runs.
+
+    An audit takes minutes, so a caller that only learns about a degraded outcome from
+    the finished report has already paid for it. Anything the caller could act on now
+    belongs here."""
 
 
 # ============================================================================
@@ -943,104 +944,6 @@ def create_idea_from_feature(
     )
 
 
-@router.post("/{product_id}/competitors/{competitor_id}/features/create-ideas", response_model=List[JobResponse])
-def create_ideas_from_features(
-    product_id: int,
-    competitor_id: int,
-    request: CreateIdeasRequest,
-    current_user: User = Depends(get_product_owner_or_admin),
-    db: Session = Depends(get_db)
-):
-    """
-    Create ideas from selected competitor features (V2).
-
-    V2 Architecture: Uses feature_ids as indices into functional_comparison array.
-    """
-    from app.models.competitive_reports import CompetitorFunctionalReport
-
-    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
-    get_competitor_or_404(db, product_id, competitor_id)
-
-    competitor = db.query(ProductCompetitor).filter(
-        ProductCompetitor.id == competitor_id
-    ).first()
-
-    # Get the latest functional report
-    report = db.query(CompetitorFunctionalReport).filter(
-        CompetitorFunctionalReport.product_competitor_id == competitor_id
-    ).order_by(CompetitorFunctionalReport.report_version.desc()).first()
-
-    if not report or not report.functional_comparison:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No functional report found for this competitor"
-        )
-
-    results = []
-    for feature_index in request.feature_ids:  # Now treated as indices
-        # Convert 1-based index to 0-based
-        feature_idx = feature_index - 1
-        if feature_idx < 0 or feature_idx >= len(report.functional_comparison):
-            continue
-
-        feature_data = report.functional_comparison[feature_idx]
-        feature_name = feature_data.get('competitor_feature_name', '')
-        feature_description = feature_data.get('functional_description', '')
-
-        if not feature_name:
-            continue
-
-        # Create idea
-        idea = Idea(
-            product_id=product_id,
-            title=f"Add: {feature_name}",
-            what_description=feature_description or f"Implement {feature_name} feature",
-            why_description=f"Competitor '{competitor.competitor_name}' has this feature",
-            use_case_description=f"Users would benefit from {feature_name}",
-            status=IdeaStatus.PENDING,
-            source_type=SourceType.COMPETITOR_AUTOMATED,
-            source_metadata={
-                'competitor_id': competitor_id,
-                'competitor_name': competitor.competitor_name,
-                'feature_index': feature_index,
-                'feature_name': feature_name,
-                'mapping_status': feature_data.get('mapping_status', '')
-            },
-            submitter_id=current_user.id
-        )
-        db.add(idea)
-        db.flush()
-
-        # Queue triage
-        queue_service = QueueService(db)
-        job = queue_service.create_job(
-            job_type=JobType.IDEA_TRIAGE,
-            input_data={'idea_id': idea.id},
-            product_id=product_id,
-            user_id=current_user.id
-        )
-
-        results.append(JobResponse(
-            job_id=job.id,
-            job_uuid=job.job_uuid,
-            job_type=job.job_type.value,
-            status=job.status.value,
-            message=f"Idea created for feature {feature_name}"
-        ))
-
-    db.commit()
-
-    # Queue triage tasks
-    for resp in results:
-        send_task('triage_idea_task', resp.job_id)
-
-    return results
-
-
-# ============================================================================
-# V2 Competitive Analysis Endpoints (Functional Audit + Landscape Synthesis)
-# ============================================================================
-
 @router.post("/{product_id}/run-competitive-analysis-v2", response_model=JobResponse)
 async def trigger_competitive_analysis_v2(
     product_id: int,
@@ -1207,12 +1110,31 @@ def trigger_functional_audit(
             detail=f"Failed to queue task: {str(e)}. Please ensure Celery is running."
         )
 
+    # Position is a join across this audit and the product's self-assessment. Without
+    # one, the audit still reports what the competitor does, but every position comes
+    # back unknown — and the caller would otherwise not find that out until the report
+    # lands, minutes later.
+    from app.models.competitive_reports import ProductSelfAssessment
+
+    warnings: List[str] = []
+    has_self_assessment = db.query(ProductSelfAssessment).filter(
+        ProductSelfAssessment.product_id == product_id
+    ).first() is not None
+    if not has_self_assessment:
+        warnings.append(
+            "No self-assessment exists for this product, so competitor positions "
+            "(advantage/gap/parity) cannot be derived and will show as unknown. "
+            "Run a self-assessment to fill them in — existing audits are refreshed "
+            "automatically, so this audit does not need to be re-run."
+        )
+
     return JobResponse(
         job_id=job.id,
         job_uuid=job.job_uuid,
         job_type=job.job_type.value,
         status=job.status.value,
-        message=f"Functional audit queued for competitor {competitor_id}"
+        message=f"Functional audit queued for competitor {competitor_id}",
+        warnings=warnings,
     )
 
 
@@ -1362,152 +1284,6 @@ def list_functional_reports(
         ))
 
     return result
-
-
-class CreateGapIdeasRequest(BaseModel):
-    """Request to create ideas from selected competitor gaps."""
-    gap_indices: List[int] = Field(
-        ...,
-        min_length=1,
-        max_length=20,
-        description="Indices of gaps to create ideas from (0-indexed)"
-    )
-
-
-@router.post("/{product_id}/competitors/{competitor_id}/gaps/create-ideas", response_model=List[JobResponse])
-def create_ideas_from_gaps(
-    product_id: int,
-    competitor_id: int,
-    request: CreateGapIdeasRequest,
-    current_user: User = Depends(get_product_owner_or_admin),
-    db: Session = Depends(get_db)
-):
-    """
-    Create ideas from selected competitor gaps.
-
-    Creates ideas in the idea queue and triggers triage for each.
-    Gaps that already have ideas created will be skipped.
-    """
-    verify_product_access(db, product_id, current_user, required_level=ProductPermissionLevel.EDIT)
-
-    # Get the functional report
-    report = db.query(CompetitorFunctionalReport).filter(
-        CompetitorFunctionalReport.product_competitor_id == competitor_id,
-        CompetitorFunctionalReport.product_id == product_id
-    ).first()
-
-    if not report:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No functional report found for this competitor. Run functional audit first."
-        )
-
-    if not report.gaps_deep_dive:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No gaps in the functional report."
-        )
-
-    # Get competitor name
-    competitor = db.query(ProductCompetitor).filter(
-        ProductCompetitor.id == competitor_id
-    ).first()
-    competitor_name = competitor.competitor_name if competitor else 'Unknown Competitor'
-
-    # Validate indices
-    max_index = len(report.gaps_deep_dive) - 1
-    invalid_indices = [i for i in request.gap_indices if i < 0 or i > max_index]
-    if invalid_indices:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid gap indices: {invalid_indices}. Valid range: 0-{max_index}"
-        )
-
-    # Check which gaps already have ideas (via source_metadata lookup)
-    # Filter in Python since SQLite doesn't support JSON path operators
-    all_ideas = db.query(Idea).filter(
-        Idea.product_id == product_id,
-        Idea.source_type == SourceType.COMPETITOR_AUTOMATED
-    ).all()
-
-    existing_gap_indices = set()
-    for idea in all_ideas:
-        metadata = idea.source_metadata or {}
-        if (metadata.get('source') == 'competitor_gap' and
-            str(metadata.get('competitor_id')) == str(competitor_id)):
-            gap_idx = metadata.get('gap_index')
-            if gap_idx is not None:
-                existing_gap_indices.add(gap_idx)
-
-    # Create ideas from selected gaps (skipping already-created ones)
-    results = []
-    skipped = []
-    queue_service = QueueService(db)
-
-    for idx in request.gap_indices:
-        if idx in existing_gap_indices:
-            skipped.append(idx)
-            continue
-
-        gap = report.gaps_deep_dive[idx]
-        feature_name = gap.get('feature_name', 'Unknown Feature')
-        user_problem = gap.get('user_problem', '')
-        evidence = gap.get('evidence', '')
-
-        # Create idea
-        idea = Idea(
-            product_id=product_id,
-            title=f"Add: {feature_name}",
-            what_description=f"Implement {feature_name} similar to {competitor_name}'s offering.",
-            why_description=user_problem,
-            use_case_description=f"Based on competitive analysis of {competitor_name}: {evidence}",
-            status=IdeaStatus.PENDING,
-            source_type=SourceType.COMPETITOR_AUTOMATED,
-            source_metadata={
-                'source': 'competitor_gap',
-                'competitor_id': competitor_id,
-                'competitor_name': competitor_name,
-                'gap_index': idx,
-                'feature_name': feature_name,
-                'functional_report_id': report.id
-            },
-            submitter_id=current_user.id
-        )
-        db.add(idea)
-        db.flush()
-
-        # Create triage job
-        job = queue_service.create_job(
-            job_type=JobType.IDEA_TRIAGE,
-            input_data={'idea_id': idea.id},
-            product_id=product_id,
-            user_id=current_user.id
-        )
-
-        results.append(JobResponse(
-            job_id=job.id,
-            job_uuid=job.job_uuid,
-            job_type=job.job_type.value,
-            status=job.status.value,
-            message=f"Idea created for gap: {feature_name}"
-        ))
-
-    db.commit()
-
-    # Queue triage tasks
-    for resp in results:
-        send_task('triage_idea_task', resp.job_id)
-
-    # Add note about skipped gaps to last result
-    if skipped and results:
-        results[-1].message += f" (Skipped {len(skipped)} gap(s) with existing ideas)"
-    elif skipped and not results:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"All selected gaps already have ideas created. Skipped indices: {skipped}"
-        )
-
-    return results
 
 
 @router.get("/{product_id}/competitors/{competitor_id}/gaps/{gap_index}/idea-status")

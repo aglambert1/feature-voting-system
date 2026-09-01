@@ -39,23 +39,19 @@ class JobScorecardEntry(BaseModel):
     )
     our_score: int = Field(
         ge=0, le=10,
-        description="How well our product serves this job (1-10, 0 if unknown)"
+        description=(
+            "How well our product serves this job, judged against the job itself "
+            "rather than against competitors (1-10, 0 if unknown)"
+        )
     )
     competitor_scores: Dict[str, int] = Field(
         default_factory=dict,
-        description="Map of competitor name -> score (1-10)"
-    )
-    best_in_class: Optional[str] = Field(
-        default=None,
-        description="Name of the highest-scoring competitor, or 'us' if we lead"
-    )
-    our_rank: Optional[int] = Field(
-        default=None,
-        description="1-based rank of our product among all products scored on this job"
-    )
-    total_ranked: int = Field(
-        default=1,
-        description="Total number of products (us + competitors) ranked on this job"
+        description=(
+            "Map of competitor name -> score (1-10), as supporting context. Deliberately "
+            "not reduced to a rank or a winner: the customer's real alternative is often a "
+            "manual process or doing nothing, so a leaderboard of tracked vendors answers "
+            "a narrower question than whether the job gets done."
+        )
     )
     investment_recommendation: str = Field(
         description=(

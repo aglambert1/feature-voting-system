@@ -19,7 +19,6 @@ from app.models.competitor_intelligence import (
     SessionCompetitor,
     ProductCompetitorFeature,
     CompetitorFeature,
-    CompetitorGeneratedIdea,
     AgentExecutionLog,
     ProductPermission,
     ProductPermissionLevel,
@@ -44,6 +43,7 @@ from app.models.competitive_agent import (
 )
 from app.models.competitive_reports import (
     CompetitorFunctionalReport,
+    ProductSelfAssessment,
 )
 from app.models.internal_feedback import (
     InternalFeedbackImport,
@@ -79,14 +79,14 @@ __all__ = [
     "Idea", "SourceType", "IdeaStatus", "IdeaLifecycleStatus", "IdeaComment", "IdeaStatusHistory",
     "Vote", "Submission", "PasswordResetToken",
     "CIProduct", "CompetitorAnalysisSession", "ProductCompetitor", "SessionCompetitor",
-    "ProductCompetitorFeature", "CompetitorFeature", "CompetitorGeneratedIdea", "AgentExecutionLog",
+    "ProductCompetitorFeature", "CompetitorFeature", "AgentExecutionLog",
     "ProductPermission", "ProductPermissionLevel", "ProductAnalysisHistory",
     "ProductJob", "JTBDJobType", "JobImportance",
     "QueueJob", "JobType", "JobStatus", "JobPriority",
     "PMReviewQueue", "CompetitorSnapshot", "MonitoringConfig",
     "ReviewQueueType", "ReviewQueueStatus", "ReviewQueuePriority", "AlertType",
     "AgentMode", "CompetitiveAgentConfig",
-    "CompetitorFunctionalReport",
+    "CompetitorFunctionalReport", "ProductSelfAssessment",
     "InternalFeedbackImport", "WinLossTheme", "SupportTheme", "ImportStatus",
     "ActivityImport", "DealActivityInsight", "SupportActivityInsight",
     "SynthesisRun", "SynthesizedOpportunity", "SynthesisStatus", "SynthesisSourceType",

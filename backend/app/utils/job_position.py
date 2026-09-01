@@ -109,8 +109,20 @@ def evidence_ids_for_assessment(assessment: Dict[str, Any]) -> set:
 def enrich_assessments(
     assessments: Optional[List[Dict[str, Any]]],
     previous_assessments: Optional[List[Dict[str, Any]]] = None,
+    self_scores: Optional[Dict[str, int]] = None,
+    self_assessment_version: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Add the derived system_position and carry forward human review state.
+    """Join our score in, derive system_position, and carry forward human review state.
+
+    An audit scores the competitor only. Our score comes from the product's own
+    self-assessment, joined here by job_id — so it is one number per job rather than a
+    different one in every competitor's report. `our_score` is still written onto the
+    stored assessment, but as a joined value rather than something the agent authored;
+    `self_assessment_version` records which assessment it came from.
+
+    Position needs both sides, so a job with no self-assessment score is `unknown`
+    rather than guessed. Audits still produce competitor scores without one — the
+    comparison simply cannot be stated until our side is assessed.
 
     The system position is recomputed on every run. Human review state
     (human_position, reviewed_at, reviewed_by) is carried forward from the
@@ -121,11 +133,15 @@ def enrich_assessments(
     as None, which is a normal state and not a deficiency.
 
     A review is made against a job as it was worded at the time. Because job
-    keys are stable but statements are editable, an override can outlive the
-    statement that justified it. When that happens the override is kept but
-    marked `review_stale`, rather than silently dropped (destroying a PM's work
+    keys are stable but statements are editable, a review can outlive the
+    statement that justified it. When that happens it is kept but marked
+    `review_stale`, rather than silently dropped (destroying a PM's work
     without asking) or silently kept (presenting a judgement about one job as
     though it were about another). Staleness sticks until someone reviews again.
+
+    This applies to a plain confirmation as much as to an override: agreeing
+    with a verdict is still a judgement about the job as it was worded, and a
+    restatement invalidates it just the same.
     """
     if not assessments:
         return []
@@ -141,8 +157,17 @@ def enrich_assessments(
         if not isinstance(assessment, dict):
             continue
         item = dict(assessment)
+
+        # Our score is joined from the self-assessment, not taken from the audit. If the
+        # agent emitted one anyway it is discarded: an audit has no standing to score us,
+        # and letting it through would reintroduce the per-competitor divergence this
+        # exists to remove.
+        our_score = (self_scores or {}).get(item.get("job_id"))
+        item["our_score"] = our_score
+        item["self_assessment_version"] = self_assessment_version
+
         item["system_position"] = derive_system_position(
-            item.get("our_score"), item.get("competitor_score")
+            our_score, item.get("competitor_score")
         )
 
         prior = prior_by_job.get(item.get("job_id")) or {}
@@ -150,6 +175,10 @@ def enrich_assessments(
         item["reviewed_at"] = prior.get("reviewed_at")
         item["reviewed_by"] = prior.get("reviewed_by")
         item["reviewed_job_statement"] = prior.get("reviewed_job_statement")
+        # The reason a PM gave is the most informative part of a review — "why did you
+        # override this" is the question the record exists to answer. Dropping it on the
+        # next audit would keep the verdict and lose its justification.
+        item["review_note"] = prior.get("review_note")
 
         # The wording the review was actually made against. Falls back to the
         # previous run's statement for reviews recorded before that snapshot was
@@ -160,16 +189,18 @@ def enrich_assessments(
             or prior.get("job_statement")
         )
 
+        # Staleness attaches to any review, not just an override. Agreeing with a
+        # verdict is still a judgement about the job as it was worded at the time, so a
+        # restatement invalidates a confirmation exactly as much as a correction.
+        reviewed = bool(item.get("reviewed_at"))
         already_stale = bool(prior.get("review_stale"))
         drifted = bool(
-            item.get("human_position")
+            reviewed
             and review_basis
             and normalize_statement(review_basis)
             != normalize_statement(item.get("job_statement"))
         )
-        item["review_stale"] = bool(item.get("human_position")) and (
-            already_stale or drifted
-        )
+        item["review_stale"] = reviewed and (already_stale or drifted)
 
         enriched.append(item)
 

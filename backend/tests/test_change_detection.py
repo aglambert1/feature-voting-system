@@ -248,7 +248,9 @@ class TestHumanVerdictsSurviveReaudit:
             "features": [],
         }]
 
-        enriched = enrich_assessments(fresh_from_agent, previous)
+        enriched = enrich_assessments(
+            fresh_from_agent, previous, self_scores={"j1": 4}, self_assessment_version=2
+        )
 
         assert enriched[0]["human_position"] == "parity"
         assert enriched[0]["reviewed_by"] == 3
@@ -257,9 +259,11 @@ class TestHumanVerdictsSurviveReaudit:
 
     def test_unreviewed_assessments_stay_unreviewed(self):
         # Review is optional — a PM may accept system levels without looking.
-        enriched = enrich_assessments([
-            {"job_id": "j1", "our_score": 5, "competitor_score": 5, "features": []}
-        ], previous_assessments=None)
+        enriched = enrich_assessments(
+            [{"job_id": "j1", "competitor_score": 5, "features": []}],
+            previous_assessments=None,
+            self_scores={"j1": 5},
+        )
 
         assert enriched[0]["human_position"] is None
         assert enriched[0]["reviewed_at"] is None
@@ -340,6 +344,7 @@ class TestOverrideStaleness:
         previous = [_assessment(
             "j1", 5, 7,
             human_position="parity",
+            reviewed_at="2026-08-01T00:00:00Z",
             reviewed_job_statement="Statement for j1",
         )]
         fresh = [{
@@ -361,6 +366,7 @@ class TestOverrideStaleness:
             "j1", 5, 7,
             job_statement="A materially rewritten job",
             human_position="parity",
+            reviewed_at="2026-08-01T00:00:00Z",
             reviewed_job_statement="Statement for j1",
             review_stale=True,
         )]
@@ -394,7 +400,11 @@ class TestOverrideStaleness:
     def test_restatement_detected_without_a_recorded_review_basis(self):
         # Reviews recorded before reviewed_job_statement existed fall back to
         # the previous run's wording.
-        previous = [_assessment("j1", 5, 7, human_position="parity")]
+        previous = [_assessment(
+            "j1", 5, 7,
+            human_position="parity",
+            reviewed_at="2026-08-01T00:00:00Z",
+        )]
         fresh = [{
             "job_id": "j1",
             "job_statement": "A materially rewritten job",
@@ -406,3 +416,141 @@ class TestOverrideStaleness:
         enriched = enrich_assessments(fresh, previous)
 
         assert enriched[0]["review_stale"] is True
+
+
+
+# ---------------------------------------------------------------------------
+# Our score is joined, not authored by the audit
+# ---------------------------------------------------------------------------
+
+class TestOurScoreIsJoined:
+    def test_audit_supplied_our_score_is_discarded(self):
+        # An audit has no standing to score us. Letting one through would reintroduce
+        # the per-competitor divergence the self-assessment exists to remove.
+        enriched = enrich_assessments(
+            [{"job_id": "j1", "competitor_score": 8, "our_score": 10}],
+            self_scores={"j1": 3},
+        )
+        assert enriched[0]["our_score"] == 3
+        assert enriched[0]["system_position"] == "gap"
+
+    def test_position_is_unknown_without_a_self_assessment(self):
+        # Position needs both sides. Guessing one would assert a comparison we cannot make.
+        enriched = enrich_assessments([{"job_id": "j1", "competitor_score": 8}])
+        assert enriched[0]["system_position"] == "unknown"
+        assert enriched[0]["our_score"] is None
+
+    def test_records_which_self_assessment_was_used(self):
+        enriched = enrich_assessments(
+            [{"job_id": "j1", "competitor_score": 8}],
+            self_scores={"j1": 4},
+            self_assessment_version=7,
+        )
+        assert enriched[0]["self_assessment_version"] == 7
+
+    def test_jobs_missing_from_the_self_assessment_are_unknown(self):
+        enriched = enrich_assessments(
+            [{"job_id": "j1", "competitor_score": 8}, {"job_id": "j2", "competitor_score": 5}],
+            self_scores={"j1": 4},
+        )
+        by_job = {a["job_id"]: a for a in enriched}
+        assert by_job["j1"]["system_position"] == "gap"
+        assert by_job["j2"]["system_position"] == "unknown"
+
+
+class TestOnlyCompetitorMovementCounts:
+    """A competitor report answers what the COMPETITOR did.
+
+    Position is a join of their score and ours, and our side is re-derived by a
+    self-assessment that has nothing to do with any particular competitor. Diffing
+    position would report our own progress as their movement — and because a
+    self-assessment refreshes stored positions on every report, that would fire routinely.
+    """
+
+    def _pair(self, prev_ours, prev_theirs, curr_ours, curr_theirs):
+        previous = _report([_assessment("j1", prev_ours, prev_theirs)])
+        current = _report([_assessment("j1", curr_ours, curr_theirs)])
+        return ChangeDetectionService.compute_functional_report_diff(current, previous)
+
+    def test_competitor_band_change_is_reported(self):
+        diff = self._pair(5, 5, 5, 9)
+        assert len(diff["job_position_changes"]) == 1
+        change = diff["job_position_changes"][0]
+        assert change["old_position"] == "parity"
+        assert change["new_position"] == "gap"
+
+    def test_our_score_moving_alone_is_not_a_competitor_change(self):
+        # We shipped something. Their capability is unchanged, so their report should
+        # say nothing — otherwise every self-assessment would spray false movement
+        # across every tracked competitor at once.
+        diff = self._pair(3, 7, 9, 7)
+        assert diff["job_position_changes"] == []
+
+    def test_competitor_change_reported_even_when_we_also_moved(self):
+        diff = self._pair(3, 9, 9, 3)
+        assert len(diff["job_position_changes"]) == 1
+
+    def test_within_band_competitor_jitter_is_not_a_change(self):
+        # Same reason position is banded: a 7 becoming an 8 for the same capability is
+        # model noise, not movement.
+        diff = self._pair(5, 7, 5, 8)
+        assert diff["job_position_changes"] == []
+
+    def test_competitor_score_becoming_unknown_is_reported(self):
+        # Losing the ability to judge them is a real change to what the report claims,
+        # even though it is not a change in their product.
+        diff = self._pair(5, 9, 5, 0)
+        assert len(diff["job_position_changes"]) == 1
+
+
+    def test_a_plain_confirmation_also_goes_stale(self):
+        # Agreeing with a verdict is a judgement about the job as it was worded. A
+        # restatement invalidates that as much as it invalidates a correction — and a
+        # confirmation records no human_position, so keying staleness on that alone
+        # would have let confirmations silently outlive their basis.
+        previous = [_assessment(
+            "j1", 5, 7,
+            reviewed_at="2026-08-01T00:00:00Z",
+            reviewed_job_statement="Statement for j1",
+        )]
+        fresh = [{
+            "job_id": "j1",
+            "job_statement": "A materially rewritten job",
+            "competitor_score": 7,
+            "features": [],
+        }]
+
+        enriched = enrich_assessments(fresh, previous, self_scores={"j1": 5})
+
+        assert enriched[0]["human_position"] is None
+        assert enriched[0]["review_stale"] is True
+
+
+class TestReviewNoteSurvivesReaudit:
+    def test_note_is_carried_forward(self):
+        # "Why did you override this" is the question the review record exists to
+        # answer. Keeping the verdict and dropping its justification would leave a
+        # correction nobody can evaluate.
+        previous = [_assessment(
+            "j1", 5, 7,
+            human_position="parity",
+            reviewed_at="2026-09-01T00:00:00Z",
+            reviewed_job_statement="Statement for j1",
+            review_note="They deprecated it in the July release",
+        )]
+        fresh = [{
+            "job_id": "j1",
+            "job_statement": "Statement for j1",
+            "competitor_score": 9,
+            "features": [],
+        }]
+
+        enriched = enrich_assessments(fresh, previous, self_scores={"j1": 5})
+
+        assert enriched[0]["review_note"] == "They deprecated it in the July release"
+
+    def test_absent_note_stays_absent(self):
+        enriched = enrich_assessments(
+            [{"job_id": "j1", "competitor_score": 8}], self_scores={"j1": 4}
+        )
+        assert enriched[0]["review_note"] is None

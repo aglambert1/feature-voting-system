@@ -106,7 +106,6 @@ class CIProduct(Base):
     # Relationships
     sessions = relationship("CompetitorAnalysisSession", back_populates="product", cascade="all, delete-orphan")
     competitors = relationship("ProductCompetitor", back_populates="product", cascade="all, delete-orphan")
-    generated_ideas = relationship("CompetitorGeneratedIdea", back_populates="product", cascade="all, delete-orphan")
     agent_logs = relationship("AgentExecutionLog", back_populates="product")
     permissions = relationship("ProductPermission", back_populates="product", cascade="all, delete-orphan")
     analysis_history = relationship("ProductAnalysisHistory", back_populates="product", cascade="all, delete-orphan")
@@ -156,6 +155,41 @@ class JobImportance(str, enum.Enum):
     LOW = "low"
 
 
+# How a job entered the map. Plain strings rather than a SQLAlchemy Enum, matching
+# ProductJob.status alongside them — and avoiding the PG-stores-the-uppercase-NAME
+# trap that has bitten enum migrations in this codebase before.
+JOB_PROVENANCE_PRODUCT = "product_derived"      # extracted from the product description
+JOB_PROVENANCE_SIGNAL = "signal_derived"        # from an idea/evidence/theme matching no job
+JOB_PROVENANCE_COMPETITOR = "competitor_derived"  # from a competitor capability fitting no job
+JOB_PROVENANCE_PM = "pm_authored"               # written by hand
+
+JOB_PROVENANCE_TYPES = {
+    JOB_PROVENANCE_PRODUCT,
+    JOB_PROVENANCE_SIGNAL,
+    JOB_PROVENANCE_COMPETITOR,
+    JOB_PROVENANCE_PM,
+}
+
+# Provenance types that are independent of the product's own description. A map built
+# only from JOB_PROVENANCE_PRODUCT entries, with nothing else supporting it, is circular:
+# the jobs were derived from what the product already does, which makes high coverage
+# scores near-tautological and renders unserved jobs invisible.
+JOB_PROVENANCE_INDEPENDENT = {
+    JOB_PROVENANCE_SIGNAL,
+    JOB_PROVENANCE_COMPETITOR,
+    JOB_PROVENANCE_PM,
+}
+
+# Whether a PM has reviewed the job's wording.
+JOB_UNVALIDATED = "unvalidated"
+JOB_VALIDATED = "validated"
+JOB_EDITED = "edited"
+
+# Whether we intend to serve the job. Out-of-target jobs stay in the map.
+JOB_IN_TARGET = "in_target"
+JOB_OUT_OF_TARGET = "out_of_target"
+
+
 class ProductJob(Base):
     """
     Individual job from a product's JTBD job map.
@@ -173,6 +207,35 @@ class ProductJob(Base):
     desired_outcomes = Column(JSON, nullable=True)  # List of outcome statements
     importance = Column(Enum(JobImportance), nullable=False, default=JobImportance.MEDIUM)
     statement_embedding = Column(JSON, nullable=True)  # 1024-dim Voyage AI embedding
+
+    # How this job entered the map: {"type": ..., "source_ref": ..., "added_at": ...}
+    # Type is one of JOB_PROVENANCE_TYPES. Null means unknown (predates tracking).
+    #
+    # This records ENTRY only, and is deliberately not a growing list. The sources
+    # that establish a job is *real* are derivable — Evidence, Idea, WinLossTheme and
+    # SupportTheme all carry job_id_key, so corroboration is a query that self-updates
+    # as signals arrive (see app.services.job_provenance). Entry earns its own column
+    # because it is the only thing that measures circularity: a job extracted from the
+    # product's own description, with nothing independent supporting it, is the case
+    # worth flagging — and linkage cannot tell you that, because linkage does not know
+    # where a job came from.
+    provenance = Column(JSON, nullable=True)
+
+    # Whether a PM has reviewed the wording. Corroboration shows a job is real; it says
+    # nothing about whether the statement is worded correctly, which is what this tracks.
+    # Optional by design — a PM may accept the map without ever reviewing it.
+    validation_state = Column(String(50), nullable=False, default=JOB_UNVALIDATED, server_default=JOB_UNVALIDATED)
+
+    # Whether the job is one we intend to serve. Jobs we deliberately don't serve still
+    # belong in the map — it models the customer's jobs, not our coverage — but without
+    # somewhere to say so they read as glaring gaps, and a PM would reject exactly the
+    # competitor- and signal-derived suggestions that make the map less circular.
+    serve_intent = Column(String(50), nullable=False, default=JOB_IN_TARGET, server_default=JOB_IN_TARGET)
+
+    # When the statement itself last changed. Distinct from updated_at, which moves on
+    # any field: a restatement invalidates prior reviews and makes positions
+    # incomparable across report versions, so it needs its own timestamp.
+    statement_updated_at = Column(DateTime(timezone=True), nullable=True)
 
     status = Column(String(50), default="active", index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -226,7 +289,6 @@ class CompetitorAnalysisSession(Base):
     # Relationships
     product = relationship("CIProduct", back_populates="sessions")
     session_competitors = relationship("SessionCompetitor", back_populates="session", cascade="all, delete-orphan")
-    generated_ideas = relationship("CompetitorGeneratedIdea", back_populates="session")
     agent_logs = relationship("AgentExecutionLog", back_populates="session")
 
     def __repr__(self):
@@ -379,44 +441,9 @@ class CompetitorFeature(Base):
     # Relationships
     session_competitor = relationship("SessionCompetitor", back_populates="features")
     product_feature = relationship("ProductCompetitorFeature", back_populates="session_instances")
-    generated_idea = relationship("CompetitorGeneratedIdea", back_populates="feature", uselist=False)
 
     def __repr__(self):
         return f"<CompetitorFeature(id={self.id}, name='{self.feature_name}', session_competitor_id={self.session_competitor_id})>"
-
-
-class CompetitorGeneratedIdea(Base):
-    """
-    DEPRECATED: This model is part of the legacy session-based workflow.
-
-    In V2, ideas are generated from SynthesisReport.opportunities
-    via the idea normalization pipeline (IdeaNormalizerService).
-    The database should be reinitialized to drop this table.
-    """
-    __tablename__ = "competitor_generated_ideas"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    feature_id = Column(Integer, ForeignKey("competitor_features.id", ondelete="CASCADE"), nullable=False, index=True)
-    session_id = Column(Integer, ForeignKey("competitor_analysis_sessions.id"), nullable=False, index=True)
-    product_id = Column(Integer, ForeignKey("ci_products.id", ondelete="CASCADE"), nullable=False, index=True)
-    idea_what = Column(Text, nullable=False)
-    idea_why = Column(Text, nullable=False)
-    idea_use_case = Column(Text, nullable=False)
-    is_differential = Column(Boolean, default=False)
-    user_edited = Column(Boolean, default=False)
-    user_approved = Column(Boolean, default=False)
-    submitted_to_ideas = Column(Boolean, default=False, index=True)
-    final_idea_id = Column(Integer, ForeignKey("ideas.id"))
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    edited_at = Column(DateTime(timezone=True))
-
-    # Relationships
-    feature = relationship("CompetitorFeature", back_populates="generated_idea")
-    session = relationship("CompetitorAnalysisSession", back_populates="generated_ideas")
-    product = relationship("CIProduct", back_populates="generated_ideas")
-
-    def __repr__(self):
-        return f"<CompetitorGeneratedIdea(id={self.id}, feature_id={self.feature_id}, submitted={self.submitted_to_ideas})>"
 
 
 class AgentExecutionLog(Base):

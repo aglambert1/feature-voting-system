@@ -199,11 +199,15 @@ Products compete on how well they help customers make progress on specific jobs.
 
 ## When a Job Map is provided
 For each job in the map:
-1. Score our product 1-10 on how well it serves this job
-2. Score the competitor 1-10 on how well they serve this job
-3. Explain what drives the score difference
-4. List features from BOTH products that contribute (advantages AND gaps in one view)
-5. Assess coverage of each desired outcome
+1. Score the competitor 1-10 on how well they serve this job
+2. Explain what drives that score — which capabilities carry the job and where it falls short
+3. List features from BOTH products that contribute (advantages AND gaps in one view)
+4. Assess coverage of each desired outcome
+
+Do NOT score our product. Our score comes from a separate self-assessment made once
+against the job map, so that it is one number per job rather than a different one in
+every competitor's report. Judging it here, from material gathered to research someone
+else, is how that divergence happened.
 
 ## When no Job Map is provided
 Fall back to feature-centric analysis: identify features, categorize as Parity/Advantage/Gap/Differentiator.
@@ -211,7 +215,7 @@ Fall back to feature-centric analysis: identify features, categorize as Parity/A
 ## Evidence Integration
 When evidence is provided, use it to INFORM your assessments. Cite evidence by ID when it influences a finding. Evidence from the product team is curated and high-confidence.
 
-## Scoring Principles (1-10 scale)
+## Scoring Principles (1-10 scale) — applied to the COMPETITOR
 - 9-10: Best-in-class, fully addresses the job with excellent UX
 - 7-8: Strong coverage, minor gaps in desired outcomes
 - 5-6: Adequate but notable missing capabilities
@@ -244,7 +248,6 @@ You MUST respond with a valid JSON object matching this exact structure:
       "job_id": "j1",
       "job_statement": "When I need to..., I want to..., so I can...",
       "importance": "critical",
-      "our_score": 7,
       "competitor_score": 8,
       "score_rationale": "Explanation of what drives the score difference",
       "features": [
@@ -401,13 +404,16 @@ Respond with a valid JSON object matching this exact structure (and nothing else
 This is STAGE 2 of a two-stage audit. Stage 1 (competitor_context + functional_comparison +
 technical_constraints) is already complete and will be provided in the user prompt as
 conditioning context. In this stage you produce ONLY these sections:
-- job_assessments (one per job in the job map; features[] with position=advantage/gap/parity/differentiator)
+- job_assessments (one per job in the job map; competitor_score only — do NOT score our
+  product, that comes from a separate self-assessment; features[] with
+  position=advantage/gap/parity/differentiator)
 - evidence_citations (link evidence IDs to specific findings)
+- unmapped_capabilities (competitor capabilities that fit no job in the map)
 - gaps_deep_dive (ONLY if no job map is provided)
 
 Do NOT restate or modify Stage 1 output — use it as given.
 
-## Scoring Principles (1-10 scale)
+## Scoring Principles (1-10 scale) — applied to the COMPETITOR
 - 9-10: Best-in-class, fully addresses the job with excellent UX
 - 7-8: Strong coverage, minor gaps in desired outcomes
 - 5-6: Adequate but notable missing capabilities
@@ -429,7 +435,6 @@ Respond with a valid JSON object matching this exact structure (and nothing else
       "job_id": "j1",
       "job_statement": "When I need to..., I want to..., so I can...",
       "importance": "critical",
-      "our_score": 7,
       "competitor_score": 8,
       "score_rationale": "Explanation of what drives the score difference",
       "features": [
@@ -449,6 +454,13 @@ Respond with a valid JSON object matching this exact structure (and nothing else
   "evidence_citations": [
     {{"evidence_id": 5, "finding_type": "job_score", "finding_description": "How this evidence informed the assessment"}}
   ],
+  "unmapped_capabilities": [
+    {{
+      "capability": "What the competitor does, functionally",
+      "why_unmapped": "Closest job is j3, but that covers X and this addresses Y",
+      "suggested_job_statement": "When [situation], I want to [action], so I can [outcome]"
+    }}
+  ],
   "gaps_deep_dive": [
     {{"feature_name": "Feature name", "user_problem": "Pain point", "evidence": "Quote from documentation"}}
   ]
@@ -460,6 +472,24 @@ Respond with a valid JSON object matching this exact structure (and nothing else
 - `features[]` draws from Stage 1's functional_comparison — tag each with position
 - `outcome_coverage` assesses each desired_outcome
 - `gaps_deep_dive` MAY be empty
+
+## Unmapped Capabilities
+
+Some of Stage 1's features will not belong to any job in the map. Do not force them into
+the nearest job, and do not drop them — report them in `unmapped_capabilities`.
+
+This matters more than it looks. The job map is usually generated from our own product
+description, so it is blind by construction to jobs we never addressed — which is exactly
+where opportunity hides. A competitor serving a job the map doesn't contain is evidence
+the map is incomplete, not evidence the capability is irrelevant.
+
+For each one give the capability in functional terms, why no existing job covers it
+(name the closest job and what it misses), and a candidate job statement in the map's
+own "When [situation], I want to [action], so I can [outcome]" form.
+
+A capability is unmapped only if no job genuinely covers it. A feature that serves an
+existing job in an unusual way belongs in that job's `features[]` with an appropriate
+position — not here.
 
 ## When NO Job Map is provided
 - `job_assessments` and `evidence_citations` MAY be empty
@@ -1124,7 +1154,15 @@ def generate_markdown_report(
             lines.extend([
                 f"### {ja.job_id}: {ja.job_statement}{importance_label}",
                 "",
-                f"**Our Score:** {ja.our_score}/10 | **Competitor Score:** {ja.competitor_score}/10",
+                (
+                    f"**Our Score:** {ja.our_score}/10 | "
+                    f"**Competitor Score:** {ja.competitor_score}/10"
+                    if getattr(ja, "our_score", None)
+                    # Position needs both sides; without a self-assessment we can report
+                    # what the competitor does but not how we compare.
+                    else f"**Competitor Score:** {ja.competitor_score}/10 "
+                         f"_(our score pending a self-assessment)_"
+                ),
                 "",
                 f"**Rationale:** {ja.score_rationale}",
                 "",
@@ -1194,5 +1232,26 @@ def generate_markdown_report(
     if tc.additional_notes:
         lines.append(f"**Additional Notes:** {tc.additional_notes}")
         lines.append("")
+
+    # Capabilities that fit no job in the map. Reported rather than dropped: the map is
+    # generated from our own product description, so a competitor serving a job it does
+    # not contain is evidence the map is incomplete.
+    if getattr(output, "unmapped_capabilities", None):
+        lines.extend([
+            "## 4. Capabilities Outside the Job Map",
+            "",
+            "Things this competitor does that no job in the map covers. Each is a "
+            "candidate for extending the map, not an automatic addition.",
+            "",
+        ])
+        for cap in output.unmapped_capabilities:
+            lines.append(f"### {cap.capability}")
+            lines.append("")
+            if cap.why_unmapped:
+                lines.append(f"**Why unmapped:** {cap.why_unmapped}")
+                lines.append("")
+            if cap.suggested_job_statement:
+                lines.append(f"**Candidate job:** {cap.suggested_job_statement}")
+                lines.append("")
 
     return "\n".join(lines)

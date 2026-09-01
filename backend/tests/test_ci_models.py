@@ -19,7 +19,6 @@ from app.models.competitor_intelligence import (
     SessionCompetitor,
     ProductCompetitorFeature,
     CompetitorFeature,
-    CompetitorGeneratedIdea,
     AgentExecutionLog,
     ProductPermission,
     ProductPermissionLevel,
@@ -269,73 +268,6 @@ def test_feature_extraction_flow(db_session, test_user):
     # Verify
     assert len(session_competitor.features) == 1
     assert competitor_feature.feature_name == "Advanced Analytics"
-
-
-def test_idea_generation_flow(db_session, test_user):
-    """Test the idea generation from features."""
-    # Setup complete flow
-    product = CIProduct(
-        created_by_user_id=test_user.id,
-        product_name="My Product 3",
-        product_description="Description"
-    )
-    db_session.add(product)
-    db_session.commit()
-
-    session = CompetitorAnalysisSession(
-        product_id=product.id,
-        user_id=test_user.id,
-        session_number=1,
-        product_source_type="text",
-        status="active"
-    )
-    db_session.add(session)
-    db_session.commit()
-
-    product_competitor = ProductCompetitor(
-        product_id=product.id,
-        competitor_name="Competitor A",
-        first_discovered_session_id=session.id,
-        status="active"
-    )
-    db_session.add(product_competitor)
-    db_session.commit()
-
-    session_competitor = SessionCompetitor(
-        session_id=session.id,
-        product_competitor_id=product_competitor.id,
-        competitor_name="Competitor A",
-        discovery_source="ai_search"
-    )
-    db_session.add(session_competitor)
-    db_session.commit()
-
-    competitor_feature = CompetitorFeature(
-        session_competitor_id=session_competitor.id,
-        feature_name="Analytics",
-        selected_by_user=True
-    )
-    db_session.add(competitor_feature)
-    db_session.commit()
-
-    # Generate idea
-    generated_idea = CompetitorGeneratedIdea(
-        feature_id=competitor_feature.id,
-        session_id=session.id,
-        product_id=product.id,
-        idea_what="Add advanced analytics",
-        idea_why="To help users make data-driven decisions",
-        idea_use_case="Users can view detailed metrics",
-        is_differential=False,
-        user_approved=True
-    )
-    db_session.add(generated_idea)
-    db_session.commit()
-
-    # Verify
-    assert generated_idea.id is not None
-    assert generated_idea.user_approved is True
-    assert generated_idea.submitted_to_ideas is False
 
 
 def test_agent_execution_logging(db_session, test_user):

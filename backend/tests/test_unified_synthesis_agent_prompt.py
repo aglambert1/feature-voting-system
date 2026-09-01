@@ -102,3 +102,38 @@ class TestSystemPromptAntiDuplicationRule:
         prompt = agent.get_system_prompt()
         assert "EXTENSION" in prompt or "extension" in prompt
         assert "explicitly name" in prompt or "must explicitly" in prompt
+
+
+class TestSystemPromptScoresAbsolutely:
+    """Synthesis scores how well a job is served, not where we place in a field.
+
+    Ranking left synthesis for two reasons. It is incoherent under a configurable-source
+    run — a synthesis without the competitive source would rank against nothing — and it
+    narrows the JTBD frame to discovered vendors, when the customer's real alternative is
+    often a spreadsheet or doing nothing. Deleting the fields is not enough on its own:
+    if the prompt still instructs the model to rank, it keeps reasoning by rank and simply
+    stops reporting it.
+    """
+
+    def test_prompt_does_not_ask_for_a_rank_or_a_winner(self, agent):
+        prompt = agent.get_system_prompt()
+        assert "best_in_class" not in prompt
+        assert "our_rank" not in prompt
+        assert "total_ranked" not in prompt
+
+    def test_prompt_frames_our_score_against_the_job(self, agent):
+        prompt = agent.get_system_prompt()
+        assert "against the job itself" in prompt
+
+    def test_prompt_says_an_important_job_served_poorly_is_a_problem_regardless(self, agent):
+        # The substantive half of the change: importance and coverage drive the call,
+        # competitive position is evidence for it.
+        prompt = agent.get_system_prompt()
+        assert "whether or not anyone else serves it well" in prompt
+
+    def test_prompt_keeps_competitor_scores_as_context(self, agent):
+        # Competitive signal is still an input to synthesis — it just stops being a
+        # leaderboard.
+        prompt = agent.get_system_prompt()
+        assert "competitor_scores" in prompt
+        assert "supporting context" in prompt

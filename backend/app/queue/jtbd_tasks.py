@@ -36,7 +36,10 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
     Returns:
         Dictionary with extraction results
     """
-    from app.models.competitor_intelligence import CIProduct, ProductJob, JobType as JTBDJobType, JobImportance
+    from app.models.competitor_intelligence import (
+        CIProduct, ProductJob, JobType as JTBDJobType, JobImportance,
+        JOB_PROVENANCE_PRODUCT,
+    )
     from app.models.evidence import Evidence
     from app.agents.job_map_extractor import JobMapExtractorAgent
     from app.services.embedding_service import generate_embeddings_batch
@@ -144,6 +147,16 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
                             job_data.get("importance", "medium"),
                             JobImportance.MEDIUM,
                         ),
+                        # Inferred from the product's own description. Recording it is
+                        # what lets the map-health metric show how much of the map is
+                        # self-referential — jobs derived from what the product already
+                        # does, which make coverage scores near-tautological.
+                        provenance={
+                            "type": JOB_PROVENANCE_PRODUCT,
+                            "source_ref": f"product:{product_id}",
+                            "added_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                        statement_updated_at=datetime.now(timezone.utc),
                     )
                     db.add(product_job)
                     all_jobs.append(product_job)
@@ -203,3 +216,216 @@ def extract_job_map_task(self, job_id: int) -> Dict[str, Any]:
     finally:
         if db:
             db.close()
+
+
+# ---------------------------------------------------------------------------
+# Self-Assessment
+# ---------------------------------------------------------------------------
+
+@shared_task(bind=True, name='app.queue.jtbd_tasks.self_assessment_task', max_retries=2, time_limit=600)
+def self_assessment_task(self, job_id: int) -> Dict[str, Any]:
+    """Score our own product against each job in its map.
+
+    Runs once per product rather than inside every competitor audit, where the same job
+    could otherwise carry a different "our" score in each report.
+
+    Pulls in whatever independent evidence exists — evidence records, support themes,
+    win/loss themes — because the job map is generated from the product description, so an
+    assessment using only that description is checking whether the product does what it
+    says it does. The result records whether any independent evidence was available, since
+    that governs how much weight the scores can carry.
+
+    Args:
+        job_id: QueueJob ID to process
+
+    Returns:
+        Dictionary with assessment results
+    """
+    from app.models.competitor_intelligence import CIProduct, ProductJob
+    from app.models.competitive_reports import ProductSelfAssessment
+    from app.models.evidence import Evidence
+    from app.models.internal_feedback import SupportTheme, WinLossTheme
+    from app.agents.self_assessment_agent import SelfAssessmentAgent
+
+    db = None
+    try:
+        db = get_db()
+        queue_service = QueueService(db)
+
+        job = queue_service.mark_running(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+
+        product_id = job.product_id
+        if not product_id:
+            raise ValueError("Product ID is required")
+
+        queue_service.update_progress(job_id, 10.0, "Loading product and job map...")
+
+        product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
+        if not product:
+            raise ValueError(f"Product {product_id} not found")
+
+        jobs = db.query(ProductJob).filter(
+            ProductJob.product_id == product_id,
+            ProductJob.status == "active",
+        ).all()
+        if not jobs:
+            raise ValueError(
+                "No job map to assess against. Generate or author a job map first."
+            )
+
+        queue_service.update_progress(job_id, 25.0, "Gathering evidence...")
+
+        evidence = db.query(Evidence).filter(
+            Evidence.product_id == product_id
+        ).order_by(Evidence.created_at.desc()).limit(50).all()
+        support_themes = db.query(SupportTheme).filter(
+            SupportTheme.product_id == product_id
+        ).all()
+        win_loss_themes = db.query(WinLossTheme).filter(
+            WinLossTheme.product_id == product_id
+        ).all()
+
+        agent_input = {
+            "product_name": product.product_name,
+            "product_description": product.product_description,
+            "job_map": [
+                {
+                    "job_id": j.job_id_key,
+                    "statement": j.statement,
+                    "importance": j.importance.value if j.importance else "medium",
+                    "desired_outcomes": j.desired_outcomes or [],
+                }
+                for j in jobs
+            ],
+            "evidence": [
+                {"id": e.id, "title": e.title, "content": e.content} for e in evidence
+            ],
+            # jtbd_statement rather than a description field — the themes carry an
+            # extracted job statement, which is the form this assessment reasons in.
+            # job_id_key is already set by import-time linkage, so the agent is told
+            # which job each theme bears on rather than having to infer it.
+            "support_themes": [
+                {
+                    "theme_name": t.theme_name,
+                    "jtbd_statement": t.jtbd_statement,
+                    "category": t.category,
+                    "ticket_count": t.ticket_count,
+                    "urgency": t.urgency_indicator,
+                    "job_id_key": t.job_id_key,
+                }
+                for t in support_themes
+            ],
+            "win_loss_themes": [
+                {
+                    "theme_name": t.theme_name,
+                    "jtbd_statement": t.jtbd_statement,
+                    "outcome": t.outcome,
+                    "deal_count": t.deal_count,
+                    "job_id_key": t.job_id_key,
+                }
+                for t in win_loss_themes
+            ],
+        }
+
+        queue_service.update_progress(job_id, 40.0, "Assessing coverage per job...")
+
+        agent = SelfAssessmentAgent(db=db, llm_service=LLMService(db=db))
+        result = agent.execute(agent_input, product_id=product_id, user_id=job.user_id)
+
+        queue_service.update_progress(job_id, 85.0, "Storing assessment...")
+
+        # The agent is told to report evidence_based itself, but whether independent
+        # evidence was actually supplied is a fact we already know — so it is recorded
+        # here rather than trusted from the model.
+        had_evidence = bool(evidence or support_themes or win_loss_themes)
+
+        previous = db.query(ProductSelfAssessment).filter(
+            ProductSelfAssessment.product_id == product_id
+        ).order_by(ProductSelfAssessment.assessment_version.desc()).first()
+
+        assessment = ProductSelfAssessment(
+            product_id=product_id,
+            assessment_version=(previous.assessment_version + 1) if previous else 1,
+            job_map_version=product.job_map_version,
+            job_assessments=result.get("job_assessments"),
+            evidence_based=had_evidence,
+            assessment_summary=result.get("assessment_summary"),
+            queue_job_id=job_id,
+        )
+        db.add(assessment)
+        db.commit()
+        db.refresh(assessment)
+
+        queue_service.update_progress(job_id, 92.0, "Refreshing competitor positions...")
+
+        # Position is a join across this assessment and each competitor audit, so a new
+        # assessment changes every stored position. Refresh them here rather than
+        # requiring a re-audit: the join is free, and leaving it to a re-audit would mean
+        # positions silently lagged until someone remembered to re-run every competitor.
+        reports_refreshed = _refresh_competitor_positions(db, product_id, assessment)
+        db.commit()
+
+        output_data = {
+            "product_id": product_id,
+            "assessment_id": assessment.id,
+            "assessment_version": assessment.assessment_version,
+            "jobs_assessed": len(result.get("job_assessments") or []),
+            "evidence_based": had_evidence,
+            "competitor_reports_refreshed": reports_refreshed,
+        }
+        queue_service.mark_success(job_id, output_data=output_data)
+
+        return output_data
+
+    except Exception:
+        error_msg = traceback.format_exc()
+        if db:
+            db.rollback()
+        fail_job(db, job_id, error_msg, task_name="self_assessment_task")
+        raise
+
+    finally:
+        if db:
+            db.close()
+
+
+def _refresh_competitor_positions(db, product_id: int, assessment) -> int:
+    """Re-derive stored positions on every competitor report for a product.
+
+    Position needs our score and theirs. Our side now comes from a self-assessment that
+    re-runs independently of any audit, so a new assessment invalidates every stored
+    position — without this, they would stay stale until each competitor was re-audited,
+    which costs an LLM run per competitor and is easy to forget.
+
+    Only the derived fields move. Competitor scores are facts from the audit and are left
+    alone, and human review state is carried through by passing each report's current
+    assessments as their own previous — a refresh must never discard a PM's override.
+    """
+    from app.models.competitive_reports import CompetitorFunctionalReport
+    from app.utils.job_position import enrich_assessments
+
+    self_scores = {
+        entry.get("job_id"): entry.get("score")
+        for entry in (assessment.job_assessments or [])
+        if isinstance(entry, dict) and entry.get("job_id")
+    }
+
+    reports = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_id == product_id
+    ).all()
+
+    refreshed = 0
+    for report in reports:
+        if not report.job_assessments:
+            continue
+        report.job_assessments = enrich_assessments(
+            report.job_assessments,
+            previous_assessments=report.job_assessments,
+            self_scores=self_scores,
+            self_assessment_version=assessment.assessment_version,
+        )
+        refreshed += 1
+
+    return refreshed

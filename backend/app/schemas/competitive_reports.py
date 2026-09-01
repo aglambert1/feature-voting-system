@@ -130,7 +130,6 @@ class JobAssessment(BaseModel):
         default="medium",
         description="How important this job is: critical, high, medium, or low"
     )
-    our_score: int = Field(ge=0, le=10, description="How well our product serves this job (1-10, 0 if unknown)")
     competitor_score: int = Field(ge=0, le=10, description="How well the competitor serves this job (1-10, 0 if unknown)")
     score_rationale: str = Field(
         description="Explanation of what drives the score difference"
@@ -155,9 +154,14 @@ class StoredJobAssessment(JobAssessment):
     `JobAssessment` is the contract the agent fills in. These extra fields are
     added after the agent returns and are never emitted by the model:
 
-    - `system_position` is derived from the two rubric scores (see
-      `app.utils.job_position`) and is the stable value change detection
-      compares. It is recomputed on every run.
+    - `our_score` is joined in from the product's self-assessment, with
+      `self_assessment_version` recording which one. An audit scores the competitor
+      only — it has no standing to score us, and letting each audit do so is what
+      allowed the same job to carry a different "our" score in every report.
+    - `system_position` is derived from our joined score and the audit's competitor
+      score (see `app.utils.job_position`) and is the stable value change detection
+      compares. It is recomputed on every run, and is `unknown` until a
+      self-assessment exists — position needs both sides.
     - `human_position` is a PM's override. It is authoritative for display and
       is carried forward across re-audits so a new run never silently reverts
       it. Change detection ignores it — a human disagreeing with the model is
@@ -167,6 +171,14 @@ class StoredJobAssessment(JobAssessment):
     `human_position` as None, which is a normal state: a PM may accept the
     system levels without reviewing them.
     """
+    our_score: Optional[int] = Field(
+        default=None,
+        description="Our score for this job, joined from the latest self-assessment"
+    )
+    self_assessment_version: Optional[int] = Field(
+        default=None,
+        description="Which self-assessment our_score came from"
+    )
     system_position: Optional[str] = Field(
         default=None,
         description="Derived from the score bands: advantage, gap, parity, or unknown"
@@ -190,6 +202,104 @@ class StoredJobAssessment(JobAssessment):
     review_stale: bool = Field(
         default=False,
         description="True when the job has been restated since the override was made, so the override may no longer apply. Sticky until reviewed again."
+    )
+    review_note: Optional[str] = Field(
+        default=None,
+        description="Why the reviewer agreed or overrode — the most informative part of a review"
+    )
+
+
+class UnmappedCapability(BaseModel):
+    """A competitor capability that fits no job in our map.
+
+    The job map is generated from our own product description, so it is blind by
+    construction to jobs we never addressed — which is exactly where opportunity lives.
+    A competitor serving a job our map doesn't contain is evidence the map is
+    incomplete, and it arrives free with an audit we were running anyway.
+
+    Recording these rather than discarding them turns every audit into a passive source
+    of job discovery, independent of our own product copy.
+    """
+    capability: str = Field(description="What the competitor does, in functional terms")
+    why_unmapped: str = Field(
+        default="",
+        description="Why no existing job covers it — the closest job and what it misses"
+    )
+    suggested_job_statement: str = Field(
+        default="",
+        description=(
+            "A candidate job statement in 'When [situation], I want to [action], so I can "
+            "[outcome]' form. A proposal for a human to accept, edit, or reject — never "
+            "added to the map automatically."
+        )
+    )
+
+
+class SelfJobAssessment(BaseModel):
+    """How well OUR product serves one job.
+
+    Structurally a competitor audit's assessment with the other side removed. It carries
+    no competitor score because there is no competitor here — a self-assessment is an
+    audit whose subject is us, and reusing the two-sided shape with a dummy value would
+    invite readers to compare against nothing.
+
+    Assessed ONCE per job rather than re-derived inside each competitor audit, where the
+    same job could otherwise carry a different "our" score in every report.
+    """
+    job_id: str = Field(description="Job ID from the product's job map (e.g., 'j1')")
+    job_statement: str = Field(description="The full job statement")
+    importance: str = Field(
+        default="medium",
+        description="How important this job is: critical, high, medium, or low"
+    )
+    score: int = Field(
+        ge=0, le=10,
+        description=(
+            "How well our product serves this job (1-10, 0 if unknown), judged against "
+            "the job itself — how completely it gets done for the customer"
+        )
+    )
+    confidence: str = Field(
+        default="medium",
+        description=(
+            "Confidence in this assessment: high, medium, or low. Use low when the only "
+            "basis is the product's own description, with no independent evidence."
+        )
+    )
+    score_rationale: str = Field(
+        description="What drives the score — which capabilities carry the job and where it falls short"
+    )
+    features: List[JobFeatureAssessment] = Field(
+        default=[],
+        description="Our capabilities that serve this job (whose is always 'ours')"
+    )
+    outcome_coverage: List[OutcomeCoverage] = Field(
+        default=[],
+        description="How well each desired outcome is covered by our product"
+    )
+    evidence_ids: List[int] = Field(
+        default=[],
+        description="IDs of evidence records that informed this assessment"
+    )
+
+
+class SelfAssessmentOutput(BaseModel):
+    """Complete output schema for SelfAssessmentAgent."""
+    job_assessments: List[SelfJobAssessment] = Field(
+        default=[],
+        description="One assessment per job in the map"
+    )
+    evidence_based: bool = Field(
+        default=False,
+        description=(
+            "Whether independent evidence informed this assessment. False means it rests "
+            "only on the product's own description, which makes every score partly "
+            "self-referential — the jobs were derived from that same description."
+        )
+    )
+    assessment_summary: str = Field(
+        default="",
+        description="Two or three sentences on where the product is strong and weak across the map"
     )
 
 
@@ -232,6 +342,10 @@ class FunctionalAuditOutput(BaseModel):
     evidence_citations: List[EvidenceCitation] = Field(
         default=[],
         description="Evidence records cited in the analysis"
+    )
+    unmapped_capabilities: List[UnmappedCapability] = Field(
+        default=[],
+        description="Competitor capabilities that fit no job in the map"
     )
 
 
@@ -285,11 +399,28 @@ class FunctionalAuditStage2Output(BaseModel):
         default=[],
         description="Deep-dive on gap features (populated when no job map)"
     )
+    unmapped_capabilities: List[UnmappedCapability] = Field(
+        default=[],
+        description="Competitor capabilities that fit no job in the map"
+    )
 
 
 # =============================================================================
 # API Response Schemas
 # =============================================================================
+
+class StoredFunctionalAuditOutput(FunctionalAuditOutput):
+    """The audit as persisted, with our score joined in from the self-assessment.
+
+    The agent's own output carries competitor scores only. This is the shape after
+    enrichment, and it is what the markdown report is built from — otherwise the export
+    would always claim our score was pending, even where a self-assessment exists.
+    """
+    job_assessments: List[StoredJobAssessment] = Field(
+        default=[],
+        description="Per-job comparison after our score and review state are joined in"
+    )
+
 
 class FunctionalReportResponse(BaseModel):
     """API response schema for a competitor functional report."""
@@ -305,5 +436,6 @@ class FunctionalReportResponse(BaseModel):
     technical_constraints: Optional[TechnicalConstraints] = None
     job_assessments: Optional[List[StoredJobAssessment]] = None
     evidence_citations: Optional[List[EvidenceCitation]] = None
+    unmapped_capabilities: Optional[List[UnmappedCapability]] = None
     generated_at: Optional[str] = None
     queue_job_id: Optional[int] = None

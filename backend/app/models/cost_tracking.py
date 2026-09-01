@@ -31,6 +31,7 @@ class OperationType(str, enum.Enum):
     LANDSCAPE_SYNTHESIS = "landscape_synthesis"
     ACTIVITY_INSIGHT = "activity_insight"
     INTERNAL_DISCOVERY = "internal_discovery"
+    SELF_ASSESSMENT = "self_assessment"
     OTHER = "other"
 
 

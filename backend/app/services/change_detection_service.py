@@ -12,12 +12,19 @@ coordinate is (job, competitor), and the comparable value on it is the derived
 `system_position` — a band comparison rather than a raw score, so within-band
 score jitter doesn't register as change. See `app.utils.job_position`.
 
-A position flip is a CANDIDATE change, not a confirmed one: two runs on the
-same subject with the same evidence can disagree. Each flip is therefore
-tagged with whether the underlying evidence changed, so a caller can weigh a
-flip backed by new sources differently from one that moved on its own. What to
-do with an unsubstantiated flip — suppress it, downgrade it, escalate it — is
-the caller's decision, not this service's.
+What is compared is the COMPETITOR's score band, not the derived position.
+Position is a join of their score and ours, and our side comes from a
+self-assessment that re-runs independently of any competitor — so diffing
+position would report our own progress as their movement. A competitor report
+answers what the competitor did; what we did is a fact about us, and belongs to
+the self-assessment rather than here.
+
+A band change is a CANDIDATE change, not a confirmed one: two runs on the same
+subject with the same evidence can disagree. Each change is therefore tagged
+with whether the underlying evidence changed, so a caller can weigh one backed
+by new sources differently from one that moved on its own. What to do with an
+unsubstantiated change — suppress it, downgrade it, escalate it — is the
+caller's decision, not this service's.
 
 Job keys are stable but the statements behind them are editable, so the same
 key can describe materially different jobs in two versions. Those are reported
@@ -31,7 +38,11 @@ into the diff would report a correction as market movement.
 
 from typing import Dict, Any, List, Optional
 
-from app.utils.job_position import evidence_ids_for_assessment, normalize_statement
+from app.utils.job_position import (
+    evidence_ids_for_assessment,
+    normalize_statement,
+    score_to_tier,
+)
 
 
 class ChangeDetectionService:
@@ -124,9 +135,9 @@ class ChangeDetectionService:
 
             # Job keys are stable but their statements are editable. If the
             # statement changed, the two versions of this key describe
-            # materially different jobs and their positions are not comparable —
-            # the same error as diffing on feature names, one level up. Report
-            # the restatement instead of a change that cannot be interpreted.
+            # materially different jobs and are not comparable — the same error
+            # as diffing on feature names, one level up. Report the restatement
+            # instead of a change that cannot be interpreted.
             if normalize_statement(prev.get("job_statement")) != normalize_statement(
                 curr.get("job_statement")
             ):
@@ -140,7 +151,13 @@ class ChangeDetectionService:
                 })
                 continue
 
-            if old_position == new_position:
+            # Compare the COMPETITOR's band, not the derived position. Position is a
+            # join of their score and ours, so it moves when either side does — and our
+            # side is re-derived by a self-assessment that has nothing to do with this
+            # competitor. Diffing it would report our own progress as their movement.
+            old_tier = score_to_tier(prev.get("competitor_score"))
+            new_tier = score_to_tier(curr.get("competitor_score"))
+            if old_tier == new_tier:
                 continue
 
             prev_evidence = evidence_ids_for_assessment(prev)
