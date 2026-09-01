@@ -1015,8 +1015,126 @@ export interface FunctionalReportDetail {
   functional_comparison: FunctionalComparison[];
   gaps_deep_dive: GapDeepDive[];
   technical_constraints: TechnicalConstraints | null;
+  job_assessments: JobAssessment[] | null;
+  unmapped_capabilities: UnmappedCapability[] | null;
+  changes_from_previous: FunctionalReportChanges | null;
   generated_at: string;
   job_status: string | null;
+}
+
+/**
+ * Where a job's verdict sits. `unknown` means the comparison could not be made —
+ * position needs both sides, and ours is missing.
+ */
+export type JobPosition = 'advantage' | 'gap' | 'parity' | 'differentiator' | 'unknown';
+
+export type ReviewConfidence = 'high' | 'medium' | 'low';
+
+/**
+ * A feature contributing to a job's score. Features are supporting evidence for the
+ * verdict, never the organising unit — they only appear inside a job.
+ */
+export interface JobFeatureAssessment {
+  feature_name: string;
+  description: string;
+  whose: 'ours' | 'theirs';
+  position: JobPosition;
+  evidence_ids: number[];
+}
+
+export interface OutcomeCoverage {
+  desired_outcome: string;
+  our_coverage: string;
+  competitor_coverage: string;
+}
+
+/**
+ * One job, compared against one competitor.
+ *
+ * `our_score` is joined from the product's self-assessment rather than produced by this
+ * audit, so it is one number per job rather than a different one in every competitor's
+ * report. `system_position` is derived from both sides and is `unknown` until a
+ * self-assessment exists.
+ *
+ * `human_position` is a PM's override and is authoritative for display. It being null
+ * does not mean unreviewed — a plain agreement records `reviewed_at` and leaves the
+ * position alone, so that today's verdict is not frozen against future re-derivation.
+ */
+export interface JobAssessment {
+  job_id: string;
+  job_statement: string;
+  importance: string;
+  competitor_score: number;
+  score_rationale: string;
+  confidence: ReviewConfidence;
+  features: JobFeatureAssessment[];
+  outcome_coverage: OutcomeCoverage[];
+
+  our_score: number | null;
+  our_confidence: ReviewConfidence | null;
+  self_assessment_version: number | null;
+  system_position: JobPosition | null;
+
+  human_position: JobPosition | null;
+  reviewed_at: string | null;
+  reviewed_by: number | null;
+  reviewed_job_statement: string | null;
+  review_stale: boolean;
+  review_note: string | null;
+}
+
+/**
+ * A competitor capability that fits no job in the map. Recorded rather than dropped: the
+ * map is generated from our own product description, so a competitor serving a job it
+ * lacks is evidence the map is incomplete.
+ */
+export interface UnmappedCapability {
+  capability: string;
+  why_unmapped: string;
+  suggested_job_statement: string;
+}
+
+/**
+ * What moved since the previous audit. Compares the COMPETITOR's score band, not the
+ * derived position — position also moves when our own self-assessment re-runs, which
+ * would report our progress as their movement.
+ */
+export interface JobPositionChange {
+  job_id: string;
+  job_statement: string;
+  importance: string;
+  old_position: JobPosition | null;
+  new_position: JobPosition | null;
+  old_scores: { ours: number | null; theirs: number | null };
+  new_scores: { ours: number | null; theirs: number | null };
+  confidence: ReviewConfidence | null;
+  evidence_changed: boolean;
+  new_evidence_ids: number[];
+}
+
+export interface FunctionalReportChanges {
+  job_position_changes: JobPositionChange[];
+  jobs_added: { job_id: string; job_statement: string; position: JobPosition | null }[];
+  jobs_removed: { job_id: string; job_statement: string; was_position: JobPosition | null }[];
+  jobs_restated: {
+    job_id: string;
+    old_job_statement: string;
+    new_job_statement: string;
+    positions_comparable: false;
+  }[];
+  positioning_changes: { old: string; new: string } | null;
+  assessment_diff_available: boolean;
+  summary: string;
+}
+
+/**
+ * Whether a comparison verdict is worth stating for one (job, competitor) pair.
+ * Decided server-side so the report, the export and MCP all agree — a verdict hidden in
+ * the UI but handed to an agent would be worse than not hiding it at all.
+ */
+export interface VerdictGrounding {
+  verdict_shown: boolean;
+  verdict_withheld_reason: string | null;
 }
 
 /**

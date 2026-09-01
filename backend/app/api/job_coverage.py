@@ -33,9 +33,10 @@ from app.models.competitor_intelligence import (
 )
 from app.models.queue import JobType as QueueJobType
 from app.models.user import User
-from app.services.job_provenance import map_health
+from app.services.job_provenance import map_health, signal_counts
 from app.services.queue_service import QueueService
 from app.utils.celery_utils import send_celery_task as send_task
+from app.utils.job_position import verdict_grounding
 from app.utils.security import get_current_active_user
 
 router = APIRouter(
@@ -154,6 +155,10 @@ def get_job_coverage(
         if isinstance(entry, dict) and entry.get("job_id")
     }
 
+    # Corroboration is what can rescue a low-confidence self-score: a job carrying real
+    # customer signal is grounded even when the map entry itself came from product copy.
+    corroboration = signal_counts(db, product_id)
+
     now = datetime.now(timezone.utc)
     competitor_columns: List[Dict[str, Any]] = []
     assessments_by_competitor: Dict[int, Dict[str, Dict[str, Any]]] = {}
@@ -200,11 +205,20 @@ def get_job_coverage(
                     "assessed": False,
                 })
                 continue
+            grounded, withheld_reason = verdict_grounding(
+                self_entry.get("confidence"),
+                (corroboration.get(job.job_id_key) or {}).get("total", 0),
+            )
             cells.append({
                 "competitor_id": competitor.id,
                 "assessed": True,
                 "competitor_score": entry.get("competitor_score"),
                 "system_position": entry.get("system_position"),
+                # The verdict is a claim about how we compare, and it is only as good as
+                # our own score. Withheld where ours is ungrounded — the competitor's
+                # score is researched independently and still reported at full strength.
+                "verdict_shown": grounded,
+                "verdict_withheld_reason": withheld_reason,
                 # Authoritative for display where a PM has overridden; the system
                 # verdict is kept alongside rather than replaced.
                 "human_position": entry.get("human_position"),
@@ -222,6 +236,7 @@ def get_job_coverage(
             "provenance": job.provenance,
             "our_score": self_entry.get("score"),
             "our_confidence": self_entry.get("confidence"),
+            "corroborating_signals": (corroboration.get(job.job_id_key) or {}).get("total", 0),
             "competitors": cells,
         })
 

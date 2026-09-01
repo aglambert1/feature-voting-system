@@ -492,11 +492,14 @@ def functional_audit_task(self, job_id: int):
         self_assessment = db.query(ProductSelfAssessment).filter(
             ProductSelfAssessment.product_id == product_id
         ).order_by(ProductSelfAssessment.assessment_version.desc()).first()
-        self_scores = {
-            entry.get("job_id"): entry.get("score")
-            for entry in ((self_assessment.job_assessments or []) if self_assessment else [])
+        self_entries = [
+            entry for entry in ((self_assessment.job_assessments or []) if self_assessment else [])
             if isinstance(entry, dict) and entry.get("job_id")
-        }
+        ]
+        self_scores = {e["job_id"]: e.get("score") for e in self_entries}
+        # Confidence travels with the score: a verdict is only as good as our side of it,
+        # and one built on an ungrounded self-score must not render as authoritative.
+        self_confidences = {e["job_id"]: e.get("confidence") for e in self_entries}
 
         # Join our score in, derive system_position, and carry forward any PM overrides
         # from the previous version — a re-audit regenerates the system verdict alongside
@@ -508,6 +511,7 @@ def functional_audit_task(self, job_id: int):
             self_assessment_version=(
                 self_assessment.assessment_version if self_assessment else None
             ),
+            self_confidences=self_confidences,
         )
 
         queue_service.update_progress(job_id, 85.0, "Generating report...")

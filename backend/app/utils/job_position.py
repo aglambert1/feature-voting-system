@@ -90,6 +90,39 @@ def derive_system_position(our_score: Any, competitor_score: Any) -> str:
     return POSITION_PARITY
 
 
+def verdict_grounding(
+    our_confidence: Optional[str],
+    corroboration_total: int = 0,
+) -> tuple:
+    """Whether a comparison verdict is worth stating, and why not when it isn't.
+
+    Returns (grounded: bool, reason: Optional[str]).
+
+    A verdict is a claim about how we compare, and it is only as good as our own score.
+    The job map is usually generated from the product's own description, so a self-score
+    with low confidence and nothing external corroborating it is close to a restatement
+    of marketing copy — and rendering it as a confident `GAP` or `ADVANTAGE` is worse
+    than saying nothing, because a reader cannot tell the difference.
+
+    Withheld deliberately per job rather than per report. The weakness is not uniform:
+    some jobs carry customer signal and deserve a verdict, others do not, and a
+    report-wide switch would discard the earned verdicts along with the unearned. It also
+    means verdicts appear one by one as the map earns them, with no threshold to cross.
+
+    Suppression applies ONLY to the comparison. The competitor's own score is researched
+    independently of our map and is reported at full strength either way.
+    """
+    if corroboration_total > 0:
+        return True, None
+    if (our_confidence or "").lower() != "low":
+        return True, None
+    return False, (
+        "Our score for this job rests only on the product description — the "
+        "self-assessment rated its own confidence low, and no customer signal, "
+        "lost deal, or evidence record has linked to it."
+    )
+
+
 def evidence_ids_for_assessment(assessment: Dict[str, Any]) -> set:
     """Collect every evidence id cited by an assessment's features.
 
@@ -111,6 +144,7 @@ def enrich_assessments(
     previous_assessments: Optional[List[Dict[str, Any]]] = None,
     self_scores: Optional[Dict[str, int]] = None,
     self_assessment_version: Optional[int] = None,
+    self_confidences: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """Join our score in, derive system_position, and carry forward human review state.
 
@@ -123,6 +157,11 @@ def enrich_assessments(
     Position needs both sides, so a job with no self-assessment score is `unknown`
     rather than guessed. Audits still produce competitor scores without one — the
     comparison simply cannot be stated until our side is assessed.
+
+    Our confidence is joined alongside our score. It is not decoration: a verdict built
+    on a self-score with nothing behind it looks exactly as authoritative as one built on
+    evidence, and presenting the two identically is how a circular map produces confident
+    nonsense. See `verdict_grounding`.
 
     The system position is recomputed on every run. Human review state
     (human_position, reviewed_at, reviewed_by) is carried forward from the
@@ -164,6 +203,7 @@ def enrich_assessments(
         # exists to remove.
         our_score = (self_scores or {}).get(item.get("job_id"))
         item["our_score"] = our_score
+        item["our_confidence"] = (self_confidences or {}).get(item.get("job_id"))
         item["self_assessment_version"] = self_assessment_version
 
         item["system_position"] = derive_system_position(
