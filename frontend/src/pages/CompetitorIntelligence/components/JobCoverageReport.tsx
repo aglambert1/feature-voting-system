@@ -65,7 +65,7 @@ function TierPips({ score, mine }: { score: number | null; mine?: boolean }) {
       <div className="flex gap-0.5" aria-hidden="true">
         {[1, 2, 3, 4, 5].map((i) => {
           if (tier === null) {
-            return <span key={i} className="w-1.5 h-4 rounded-sm border border-dashed border-gray-300" />;
+            return <span key={i} className="w-1.5 h-4 rounded-sm border border-dashed border-gray-400 bg-gray-50" />;
           }
           const on = i <= tier;
           const fill = on ? (mine ? 'bg-teal-700' : 'bg-gray-500') : 'bg-gray-200';
@@ -114,6 +114,7 @@ export default function JobCoverageReport({
   exporting,
 }: Props) {
   const [openJobs, setOpenJobs] = useState<Set<string>>(new Set());
+  const [overriding, setOverriding] = useState<string | null>(null);
 
   const toggle = (jobId: string) =>
     setOpenJobs((prev) => {
@@ -175,21 +176,28 @@ export default function JobCoverageReport({
         </button>
       </div>
 
-      {/* Map health — the map was derived from the same description it is scoring */}
+      {/* Map health. One line by default — this sits above every competitor report, and a
+          four-line explanation repeated on each one stops being read. The reasoning is a
+          click away for the first time someone meets it. */}
       {productDerivedOnly > 0 && mapHealth && (
-        <div className="bg-amber-50 rounded-lg p-3 text-sm text-gray-800">
-          <span className="font-semibold text-amber-800 mr-2">!</span>
-          <b>
-            {productDerivedOnly} of {mapHealth.total_jobs} jobs were written from your product
-            description.
-          </b>
-          <p className="text-gray-600 mt-1">
+        <details className="bg-amber-50 rounded-lg px-3 py-2 text-sm text-gray-800">
+          <summary className="cursor-pointer list-none flex items-center gap-2">
+            <span className="font-semibold text-amber-800">!</span>
+            <b>
+              {productDerivedOnly} of {mapHealth.total_jobs} jobs were written from your product
+              description.
+            </b>
+            <span className="text-gray-500 text-xs underline underline-offset-2">
+              Why this matters
+            </span>
+          </summary>
+          <p className="text-gray-600 mt-2">
             A product always scores well against jobs derived from its own marketing. Jobs added
             from customer signal, lost deals, or competitor research make these scores mean more.
             Where our side has nothing behind it, no verdict is shown — the competitor's score
             still is.
           </p>
-        </div>
+        </details>
       )}
 
       {/* Scorecard */}
@@ -425,39 +433,69 @@ export default function JobCoverageReport({
                             </>
                           )}
                         </div>
-                        {job.reviewed_at ? (
-                          <>
+
+                        {overriding === job.job_id ? (
+                          // Overriding means choosing a verdict, so the choice has to be
+                          // offered. Previously "Override" re-submitted the system's own
+                          // position, which changed nothing.
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm text-gray-600">Set to:</span>
+                            {(['advantage', 'gap', 'parity', 'differentiator'] as const)
+                              .filter((p) => p !== job.human_position)
+                              .map((p) => (
+                                <button
+                                  key={p}
+                                  onClick={() => {
+                                    onReview(job.job_id, 'override', p);
+                                    setOverriding(null);
+                                  }}
+                                  className={`px-2.5 py-1 text-xs uppercase tracking-wider font-bold rounded border ${POSITION_STYLES[p]}`}
+                                >
+                                  {p}
+                                </button>
+                              ))}
                             <button
-                              onClick={() => onReview(job.job_id, 'agree')}
+                              onClick={() => setOverriding(null)}
+                              className="px-2 py-1 text-sm text-gray-500 hover:text-gray-700"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            {/* Every action is named for what it does. "Change review"
+                                previously submitted an agree, which silently discarded an
+                                override and its note. */}
+                            {!job.reviewed_at && (
+                              <button
+                                onClick={() => onReview(job.job_id, 'agree')}
+                                className="px-3 py-1.5 text-sm bg-teal-700 text-white rounded-lg hover:bg-teal-800 font-medium"
+                              >
+                                Agree
+                              </button>
+                            )}
+                            {job.human_position && (
+                              <button
+                                onClick={() => onReview(job.job_id, 'agree')}
+                                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+                              >
+                                Drop override, agree with system
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setOverriding(job.job_id)}
                               className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
                             >
-                              {job.review_stale ? 'Re-review' : 'Change review'}
+                              {job.human_position ? 'Change override' : 'Override'}
                             </button>
-                            {job.human_position && (
+                            {job.reviewed_at && (
                               <button
                                 onClick={() => onReview(job.job_id, 'clear')}
                                 className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
                               >
-                                Clear
+                                Clear review
                               </button>
                             )}
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => onReview(job.job_id, 'agree')}
-                              className="px-3 py-1.5 text-sm bg-teal-700 text-white rounded-lg hover:bg-teal-800 font-medium"
-                            >
-                              Agree
-                            </button>
-                            <button
-                              onClick={() =>
-                                onReview(job.job_id, 'override', job.system_position ?? undefined)
-                              }
-                              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
-                            >
-                              Override
-                            </button>
                           </>
                         )}
                       </div>
