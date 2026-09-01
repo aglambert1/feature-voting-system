@@ -1139,6 +1139,70 @@ export interface FunctionalReportChanges {
 }
 
 /**
+ * One (job, competitor) cell in the coverage matrix.
+ *
+ * `verdict_shown` false means our own side of the comparison is not grounded enough to
+ * state a verdict. The competitor's score is still reported: it is researched
+ * independently of our job map and is unaffected by that map's weakness.
+ */
+export interface JobCoverageCell {
+  competitor_id: number;
+  assessed: boolean;
+  competitor_score?: number | null;
+  system_position?: JobPosition | null;
+  human_position?: JobPosition | null;
+  review_stale?: boolean;
+  review_note?: string | null;
+  confidence?: ReviewConfidence | null;
+  verdict_shown?: boolean;
+  verdict_withheld_reason?: string | null;
+}
+
+export interface JobCoverageRow {
+  job_id: string;
+  job_statement: string;
+  job_type: string | null;
+  importance: string | null;
+  serve_intent: string | null;
+  provenance: { type: string; source_ref: string | null; added_at: string } | null;
+  our_score: number | null;
+  our_confidence: ReviewConfidence | null;
+  corroborating_signals: number;
+  competitors: JobCoverageCell[];
+}
+
+export interface JobCoverageColumn {
+  competitor_id: number;
+  competitor_name: string;
+  audited: boolean;
+  audited_at: string | null;
+  audit_age_days: number | null;
+  stale: boolean;
+  report_version: number | null;
+}
+
+export interface JobCoverageResponse {
+  product_id: number;
+  product_name: string;
+  jobs: JobCoverageRow[];
+  competitors: JobCoverageColumn[];
+  map_health: {
+    total_jobs: number;
+    jobs_with_independent_source: number;
+    independent_source_pct: number | null;
+    by_provenance: Record<string, number>;
+    unvalidated: number;
+    out_of_target: number;
+  };
+  self_assessment: {
+    exists: boolean;
+    version: number | null;
+    assessed_at: string | null;
+    evidence_based: boolean | null;
+  };
+}
+
+/**
  * Whether a comparison verdict is worth stating for one (job, competitor) pair.
  * Decided server-side so the report, the export and MCP all agree — a verdict hidden in
  * the UI but handed to an agent would be worse than not hiding it at all.

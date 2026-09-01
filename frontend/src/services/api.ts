@@ -813,6 +813,7 @@ import type {
   FunctionalReportSummary,
   FunctionalReportDetail,
   BatchIdeaStatusesResponse,
+  JobCoverageResponse,
 } from '../types';
 
 /**
@@ -821,6 +822,27 @@ import type {
 export const getFunctionalReports = async (productId: number): Promise<FunctionalReportSummary[]> => {
   const response = await api.get<FunctionalReportSummary[]>(
     `/product-intelligence/agents/${productId}/functional-reports`
+  );
+  return response.data;
+};
+
+/**
+ * Our score beside every tracked competitor's, one row per job.
+ *
+ * A join over audits that have already run — no LLM, and not gated behind synthesis,
+ * which answers a different question.
+ */
+export const getJobCoverage = async (productId: number): Promise<JobCoverageResponse> => {
+  const response = await api.get<JobCoverageResponse>(
+    `/product-intelligence/products/${productId}/job-coverage`
+  );
+  return response.data;
+};
+
+/** Queue a self-assessment of our product against its job map. */
+export const runSelfAssessment = async (productId: number): Promise<{ job_id: number }> => {
+  const response = await api.post(
+    `/product-intelligence/products/${productId}/self-assessment`
   );
   return response.data;
 };
