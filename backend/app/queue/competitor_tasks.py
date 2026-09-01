@@ -594,6 +594,20 @@ def functional_audit_task(self, job_id: int):
             except Exception as diff_err:
                 print(f"[functional_audit_task] Warning: Change detection failed: {diff_err}")
 
+        # Competitor capabilities that fit no job are evidence the map is incomplete.
+        # File them where signal-derived need suggestions already go, so the PM reviews
+        # one queue rather than discovering them only by reading each report.
+        try:
+            from app.queue.helpers import suggest_needs_from_unmapped_capabilities
+            filed = suggest_needs_from_unmapped_capabilities(
+                db, product_id, competitor.competitor_name,
+                result.get("unmapped_capabilities"),
+            )
+            if filed:
+                print(f"[functional_audit_task] filed {filed} need suggestion(s)")
+        except Exception as sugg_err:
+            print(f"[functional_audit_task] Warning: need suggestions failed: {sugg_err}")
+
         # Increment citation counts for evidence referenced in this report
         try:
             from app.services.evidence_service import increment_evidence_citations

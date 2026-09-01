@@ -23,6 +23,7 @@ import {
   setMainJob,
   updateJob,
   updateTargetCustomer,
+  getJobCoverage,
 } from '../../services/api';
 import Navigation from '../../components/Navigation';
 import AgentJobStatus from '../../components/AgentJobStatus';
@@ -46,6 +47,24 @@ interface ActionMessage {
   text: string;
 }
 
+type MapHealth = {
+  total_jobs: number;
+  jobs_with_independent_source: number;
+  independent_source_pct: number | null;
+  by_provenance: Record<string, number>;
+  unvalidated: number;
+  out_of_target: number;
+};
+
+/** Plain-language names — the stored values are internal vocabulary. */
+const PROVENANCE_LABELS: Record<string, string> = {
+  product_derived: 'from product description',
+  signal_derived: 'from customer signal',
+  competitor_derived: 'from competitor research',
+  pm_authored: 'written by hand',
+  unknown: 'origin not recorded',
+};
+
 export default function JobMapEditorPage() {
   const { productId } = useParams<{ productId: string }>();
   const numProductId = productId ? parseInt(productId, 10) : NaN;
@@ -56,6 +75,7 @@ export default function JobMapEditorPage() {
   // Set when arriving from a competitor report's "N linked signals" badge — opens that
   // job's signals directly rather than dropping the reader on the whole map.
   const focusJobKey = searchParams.get('job');
+  const [mapHealth, setMapHealth] = useState<MapHealth | null>(null);
 
   const [data, setData] = useState<JobMapResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,6 +93,11 @@ export default function JobMapEditorPage() {
     try {
       const result = await getJobMap(numProductId);
       setData(result);
+      // Health comes from the coverage endpoint, which already computes it for the
+      // comparison views — one definition of "independently sourced", not two.
+      getJobCoverage(numProductId)
+        .then((c) => setMapHealth(c.map_health))
+        .catch(() => setMapHealth(null));
       setMainJobText((result.job_map as any)?.main_job ?? '');
       setError(null);
     } catch (err: any) {
@@ -344,6 +369,54 @@ export default function JobMapEditorPage() {
               Signal count reflects ideas, evidence, and feedback linked to each need.
             </p>
           </header>
+
+          {/* Map health. This map is usually generated from the product's own
+              description, which makes scoring the product against it partly circular —
+              a need with something independent behind it carries far more weight than
+              one without. The headline is the share that has any. */}
+          {mapHealth && mapHealth.total_jobs > 0 && (
+            <div className="mb-4 border border-gray-200 rounded-lg p-4">
+              <div className="flex items-baseline justify-between gap-4 flex-wrap">
+                <h3 className="text-sm font-semibold text-gray-900">Map health</h3>
+                <span className="text-sm text-gray-500">
+                  <strong className="text-gray-900 tabular-nums">
+                    {mapHealth.independent_source_pct}%
+                  </strong>{' '}
+                  of needs have a source other than your product description
+                </span>
+              </div>
+              <div className="mt-2 h-1.5 bg-gray-100 rounded overflow-hidden">
+                <div
+                  className="h-full bg-teal-600"
+                  style={{ width: `${mapHealth.independent_source_pct ?? 0}%` }}
+                />
+              </div>
+              <div className="mt-3 flex gap-x-6 gap-y-1 flex-wrap text-xs text-gray-500">
+                {Object.entries(mapHealth.by_provenance).map(([type, count]) => (
+                  <span key={type}>
+                    {PROVENANCE_LABELS[type] ?? type}:{' '}
+                    <strong className="text-gray-700 tabular-nums">{count}</strong>
+                  </span>
+                ))}
+                {mapHealth.unvalidated > 0 && (
+                  <span>
+                    unreviewed wording:{' '}
+                    <strong className="text-gray-700 tabular-nums">
+                      {mapHealth.unvalidated}
+                    </strong>
+                  </span>
+                )}
+              </div>
+              {(mapHealth.independent_source_pct ?? 0) < 50 && (
+                <p className="text-xs text-gray-500 mt-3 max-w-2xl">
+                  A product always scores well against needs derived from its own
+                  marketing. Importing support tickets or win/loss notes, adding evidence,
+                  or accepting needs surfaced from competitor research all give the map
+                  something independent to stand on.
+                </p>
+              )}
+            </div>
+          )}
 
           {data.jobs.length === 0 && (
             <p className="text-sm text-gray-500 italic mb-3">

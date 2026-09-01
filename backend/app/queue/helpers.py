@@ -181,6 +181,98 @@ def _link_idea_to_job(db, idea, llm_service=None) -> Optional[str]:
     return None
 
 
+def suggest_needs_from_unmapped_capabilities(
+    db,
+    product_id: int,
+    competitor_name: str,
+    capabilities: Optional[List[dict]],
+) -> int:
+    """File a need suggestion for each competitor capability that fits no job.
+
+    Routed into the SAME PMReviewQueue mechanism that signal-derived suggestions use,
+    rather than a parallel one. The map already gains needs from ideas, evidence and
+    themes; adding a second path would mean later sources each invent their own, and
+    nothing could dedupe a need proposed by both a support theme and a competitor.
+
+    No embedding comparison here, unlike `_maybe_suggest_need`: the audit has already
+    judged that no job covers this capability, and re-deriving that from a similarity
+    score would be a second opinion on a question already answered.
+
+    Never raises — a failure here must not fail the audit that produced the finding.
+    """
+    if not capabilities:
+        return 0
+
+    try:
+        from app.models.pm_review import (
+            PMReviewQueue, ReviewQueueType, ReviewQueueStatus, ReviewQueuePriority,
+        )
+
+        filed = 0
+        for cap in capabilities:
+            if not isinstance(cap, dict):
+                continue
+            capability = (cap.get("capability") or "").strip()
+            if not capability:
+                continue
+
+            suggested = (cap.get("suggested_job_statement") or "").strip()
+
+            # Dedupe on the capability text: re-auditing a competitor surfaces the same
+            # gaps again, and a queue that regrows every run stops being read.
+            existing = db.query(PMReviewQueue).filter(
+                PMReviewQueue.queue_type == ReviewQueueType.NEED_SUGGESTION,
+                PMReviewQueue.product_id == product_id,
+                PMReviewQueue.status.in_(
+                    [ReviewQueueStatus.PENDING, ReviewQueueStatus.IN_REVIEW]
+                ),
+            ).all()
+            if any(
+                (e.item_metadata or {}).get("capability") == capability
+                for e in existing
+            ):
+                continue
+
+            db.add(PMReviewQueue(
+                queue_type=ReviewQueueType.NEED_SUGGESTION,
+                status=ReviewQueueStatus.PENDING,
+                priority=ReviewQueuePriority.NORMAL,
+                product_id=product_id,
+                item_type="need_suggestion",
+                item_id=0,
+                title=f"Need candidate from {competitor_name}: {capability[:70]}",
+                summary=(
+                    cap.get("why_unmapped")
+                    or f"{competitor_name} does this and no need in your map covers it."
+                ),
+                item_metadata={
+                    "signal_type": "competitor_capability",
+                    "signal_id": None,
+                    "signal_content": suggested or capability,
+                    "match_type": "no_match",
+                    "matched_job_id": None,
+                    "matched_job_statement": None,
+                    "matched_similarity": None,
+                    "product_id": product_id,
+                    "capability": capability,
+                    "competitor_name": competitor_name,
+                },
+            ))
+            filed += 1
+
+        if filed:
+            db.commit()
+        return filed
+
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        print(f"[suggest_needs_from_unmapped_capabilities] failed: {exc}")
+        return 0
+
+
 def _maybe_suggest_need(
     db,
     product_id: int,

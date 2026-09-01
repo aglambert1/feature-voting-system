@@ -1,6 +1,11 @@
 # Competitive Intelligence — JTBD Redesign Plan
 
-**Status: plan, not implemented.** Redesigns competitor reporting around jobs, with features
+**Status: Phases 1-3 implemented** (2026-09-01). Phase 1 merged as PR #111; Phases 2-3 on
+`feat/job-coverage-ui`. All four views built and verified in a browser against seeded data.
+The plan is kept as written so the reasoning behind each decision stays legible; where
+implementation diverged, the commit messages carry the correction.
+
+**Originally: plan, not implemented.** Redesigns competitor reporting around jobs, with features
 demoted to supporting evidence. Companion to
 [evidence-interchange-schema.md](evidence-interchange-schema.md).
 

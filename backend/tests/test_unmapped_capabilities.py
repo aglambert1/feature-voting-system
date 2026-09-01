@@ -140,3 +140,71 @@ class TestMarkdownReport:
     def test_section_omitted_when_there_are_none(self):
         md = generate_markdown_report("Productboard", _minimal_output())
         assert "Capabilities Outside the Job Map" not in md
+
+
+class TestNeedSuggestionsFromCapabilities:
+    """Unmapped capabilities route into the SAME queue as signal-derived suggestions.
+
+    A second path would mean later sources (interviews, lost deals) each invent their
+    own, and nothing could dedupe a need proposed by both a support theme and a
+    competitor.
+    """
+
+    def _caps(self):
+        return [{
+            "capability": "Objective hierarchy and OKR alignment",
+            "why_unmapped": "No job covers connecting roadmap work to company goals.",
+            "suggested_job_statement": "When I plan a quarter, I want to show how the "
+                                       "roadmap ladders to our objectives.",
+        }]
+
+    def test_files_into_the_need_suggestion_queue(self, db_session, test_product):
+        from app.models.pm_review import PMReviewQueue, ReviewQueueType
+        from app.queue.helpers import suggest_needs_from_unmapped_capabilities
+
+        filed = suggest_needs_from_unmapped_capabilities(
+            db_session, test_product.id, "Productboard", self._caps()
+        )
+
+        items = db_session.query(PMReviewQueue).filter(
+            PMReviewQueue.product_id == test_product.id,
+            PMReviewQueue.queue_type == ReviewQueueType.NEED_SUGGESTION,
+        ).all()
+        assert filed == 1
+        assert len(items) == 1
+        # The suggested statement becomes the candidate need, so approving it does not
+        # require the PM to write one from scratch.
+        assert "ladders to our objectives" in items[0].item_metadata["signal_content"]
+        assert items[0].item_metadata["competitor_name"] == "Productboard"
+
+    def test_re_auditing_does_not_regrow_the_queue(self, db_session, test_product):
+        # Audits re-run on a schedule and surface the same gaps each time. A queue that
+        # regrows every run stops being read.
+        from app.queue.helpers import suggest_needs_from_unmapped_capabilities
+
+        suggest_needs_from_unmapped_capabilities(
+            db_session, test_product.id, "Productboard", self._caps()
+        )
+        second = suggest_needs_from_unmapped_capabilities(
+            db_session, test_product.id, "Productboard", self._caps()
+        )
+
+        assert second == 0
+
+    def test_empty_input_is_a_no_op(self, db_session, test_product):
+        from app.queue.helpers import suggest_needs_from_unmapped_capabilities
+
+        assert suggest_needs_from_unmapped_capabilities(
+            db_session, test_product.id, "Productboard", None
+        ) == 0
+        assert suggest_needs_from_unmapped_capabilities(
+            db_session, test_product.id, "Productboard", []
+        ) == 0
+
+    def test_a_failure_here_never_breaks_the_audit(self, db_session, test_product):
+        # The finding is a byproduct of the audit; losing it must not lose the audit.
+        from app.queue.helpers import suggest_needs_from_unmapped_capabilities
+
+        assert suggest_needs_from_unmapped_capabilities(
+            db_session, test_product.id, "Productboard", [{"not_a_capability": True}]
+        ) == 0
