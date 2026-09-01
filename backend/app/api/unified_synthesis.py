@@ -404,7 +404,7 @@ async def get_investment_recommendations(
             "investment_recommendation": entry.get("investment_recommendation"),
             "rationale": entry.get("rationale"),
             "our_score": entry.get("our_score"),
-            "best_in_class": entry.get("best_in_class"),
+            "competitor_scores": entry.get("competitor_scores") or {},
             "evidence_ids": entry.get("evidence_ids") or [],
         })
     return {

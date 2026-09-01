@@ -65,15 +65,12 @@ def _build_unified_synthesis_markdown(
             parts.append(f"### {entry.get('job_id')} — {entry.get('job_statement', '')}")
             parts.append(
                 f"- Importance: {entry.get('importance', 'medium')}; "
-                f"our_score: {entry.get('our_score', 0)}/10; "
-                f"rank: {entry.get('our_rank')}/{entry.get('total_ranked')}"
+                f"our_score: {entry.get('our_score', 0)}/10"
             )
             comp_scores = entry.get("competitor_scores") or {}
             if comp_scores:
                 comp_str = ", ".join(f"{n}={s}" for n, s in comp_scores.items())
                 parts.append(f"- Competitors: {comp_str}")
-            if entry.get("best_in_class"):
-                parts.append(f"- Best-in-class: {entry['best_in_class']}")
             parts.append(
                 f"- Investment: **{entry.get('investment_recommendation', 'maintain')}** — "
                 f"{entry.get('rationale', '')}"

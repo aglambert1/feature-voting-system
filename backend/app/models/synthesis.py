@@ -422,10 +422,12 @@ class SynthesisReport(Base):
     # Example: ["competitive", "customer", "internal", "evidence"]
     included_source_types = Column(JSON, nullable=False)
 
-    # Per-job scorecard (our_score, competitor_scores, best_in_class, investment_rec)
+    # Per-job scorecard: how well we serve each job, with competitor scores as context.
+    # Deliberately carries no rank or best-in-class label — an important job served poorly
+    # is a problem regardless of where competitors sit, and the customer's real alternative
+    # is often a manual process rather than a tracked vendor.
     # [{job_id, job_statement, importance, our_score, competitor_scores: {name: score},
-    #   best_in_class, our_rank, total_ranked, investment_recommendation, rationale,
-    #   evidence_ids}]
+    #   investment_recommendation, rationale, evidence_ids}]
     job_scorecard = Column(JSON, nullable=True)
 
     # Feature cluster matrix, organized by job (null if no competitors)
