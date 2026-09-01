@@ -1082,7 +1082,8 @@ Return ONLY the JSON object."""
 
 def generate_markdown_report(
     competitor_name: str,
-    output: FunctionalAuditOutput
+    output: FunctionalAuditOutput,
+    withheld_job_ids: Optional[set] = None,
 ) -> str:
     """
     Generate a markdown report from the agent output.
@@ -1158,10 +1159,18 @@ def generate_markdown_report(
                     f"**Our Score:** {ja.our_score}/10 | "
                     f"**Competitor Score:** {ja.competitor_score}/10"
                     if getattr(ja, "our_score", None)
-                    # Position needs both sides; without a self-assessment we can report
-                    # what the competitor does but not how we compare.
+                    and ja.job_id not in (withheld_job_ids or set())
+                    # An exported report gets pasted into decks and read without the app
+                    # beside it, so it must not state a score the app itself withholds.
+                    # Either our side is not assessed at all, or it is not grounded
+                    # enough to compare — both cases report their score only.
                     else f"**Competitor Score:** {ja.competitor_score}/10 "
-                         f"_(our score pending a self-assessment)_"
+                         + (
+                             "_(no verdict — our score for this job rests only on the "
+                             "product description)_"
+                             if ja.job_id in (withheld_job_ids or set())
+                             else "_(our score pending a self-assessment)_"
+                         )
                 ),
                 "",
                 f"**Rationale:** {ja.score_rationale}",

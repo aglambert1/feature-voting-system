@@ -1280,9 +1280,49 @@ def export_functional_report(
             detail=f"No functional report found for competitor {competitor_id}"
         )
 
-    # Return markdown content
+    # Generate from the stored structured data rather than serving the markdown
+    # snapshot taken at audit time. That snapshot goes stale the moment anything
+    # downstream changes it — a PM override, a self-assessment refreshing our score and
+    # every derived position, or a schema addition older reports never captured. The
+    # structured fields are the source of truth, so render from them.
+    markdown = report.report_content_md
+    try:
+        from app.agents.functional_audit_agent import generate_markdown_report
+        from app.schemas.competitive_reports import StoredFunctionalAuditOutput
+
+        from app.services.job_provenance import signal_counts
+        from app.utils.job_position import verdict_grounding as _vg
+
+        corroboration = signal_counts(db, product_id)
+        withheld = {
+            e["job_id"]
+            for e in (report.job_assessments or [])
+            if isinstance(e, dict) and e.get("job_id")
+            and not _vg(
+                e.get("our_confidence"),
+                (corroboration.get(e["job_id"]) or {}).get("total", 0),
+            )[0]
+        }
+
+        markdown = generate_markdown_report(
+            competitor.competitor_name,
+            StoredFunctionalAuditOutput(
+                competitor_context=report.competitor_context or {},
+                functional_comparison=report.functional_comparison or [],
+                gaps_deep_dive=report.gaps_deep_dive or [],
+                technical_constraints=report.technical_constraints or {},
+                job_assessments=report.job_assessments or [],
+                unmapped_capabilities=report.unmapped_capabilities or [],
+            ),
+            withheld_job_ids=withheld,
+        )
+    except Exception as render_err:
+        # Fall back to the snapshot rather than failing the download — a stale report
+        # is more use than none.
+        print(f"[export_functional_report] regenerate failed, using stored: {render_err}")
+
     return PlainTextResponse(
-        content=report.report_content_md or "# No report content available",
+        content=markdown or "# No report content available",
         media_type="text/markdown",
         headers={
             "Content-Disposition": f"attachment; filename={competitor.competitor_name.replace(' ', '_')}_functional_audit.md"

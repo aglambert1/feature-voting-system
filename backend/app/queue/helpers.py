@@ -218,8 +218,37 @@ def suggest_needs_from_unmapped_capabilities(
 
             suggested = (cap.get("suggested_job_statement") or "").strip()
 
-            # Dedupe on the capability text: re-auditing a competitor surfaces the same
-            # gaps again, and a queue that regrows every run stops being read.
+            # Dedupe on MEANING, not on the exact string. Re-auditing surfaces the same
+            # gaps again, and two competitors describe one gap differently — "OKR
+            # alignment" and "Objective hierarchy and OKR alignment" are one need, and a
+            # queue that files both stops being read. Uses the same embedding comparison
+            # and threshold that decide whether a signal belongs to an existing job, so
+            # "the same thing" means the same thing everywhere in the system.
+            candidate_text = suggested or capability
+            candidate_emb = None
+            try:
+                from app.services.embedding_service import generate_embedding
+                candidate_emb = generate_embedding(candidate_text, input_type="document")
+            except Exception:
+                candidate_emb = None
+
+            # Already covered by a job? Then the audit called it unmapped in error, and
+            # filing a suggestion would ask the PM to add what they already have.
+            if candidate_emb:
+                from app.models.competitor_intelligence import ProductJob
+
+                jobs = db.query(ProductJob).filter(
+                    ProductJob.product_id == product_id,
+                    ProductJob.status == "active",
+                ).all()
+                if any(
+                    j.statement_embedding
+                    and _cosine_similarity(candidate_emb, j.statement_embedding)
+                    >= _AUTO_LINK_THRESHOLD
+                    for j in jobs
+                ):
+                    continue
+
             existing = db.query(PMReviewQueue).filter(
                 PMReviewQueue.queue_type == ReviewQueueType.NEED_SUGGESTION,
                 PMReviewQueue.product_id == product_id,
@@ -227,10 +256,19 @@ def suggest_needs_from_unmapped_capabilities(
                     [ReviewQueueStatus.PENDING, ReviewQueueStatus.IN_REVIEW]
                 ),
             ).all()
-            if any(
-                (e.item_metadata or {}).get("capability") == capability
-                for e in existing
-            ):
+
+            def _duplicate(item) -> bool:
+                meta = item.item_metadata or {}
+                if meta.get("capability") == capability:
+                    return True
+                prior = meta.get("statement_embedding")
+                if candidate_emb and prior:
+                    return (
+                        _cosine_similarity(candidate_emb, prior) >= _AUTO_LINK_THRESHOLD
+                    )
+                return False
+
+            if any(_duplicate(e) for e in existing):
                 continue
 
             db.add(PMReviewQueue(
@@ -256,6 +294,8 @@ def suggest_needs_from_unmapped_capabilities(
                     "product_id": product_id,
                     "capability": capability,
                     "competitor_name": competitor_name,
+                    # Kept so the next audit can compare meanings rather than strings.
+                    "statement_embedding": candidate_emb,
                 },
             ))
             filed += 1
