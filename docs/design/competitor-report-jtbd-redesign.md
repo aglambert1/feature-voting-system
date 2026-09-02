@@ -405,6 +405,19 @@ tasks, and mixing in a subsystem retirement would make it hard to review and har
 revert. The real blocker is a decision about whether those flows are being deprecated at
 all, not the code.
 
+**Override as job validation (deferred).** A PM's override grounds the *verdict* and our
+score on that row: judging the comparison applies knowledge the product description does
+not contain, which is what our score was missing. It does **not** currently make the job
+itself count as independently sourced in map health — "we differentiate on this job" and
+"this job matters to our customers" are different claims, and only the second speaks to
+whether the map entry is real.
+
+The bridge, when it is wanted: prompt the reviewer at override time to confirm they are
+also asserting the job matters to the target customer. That turns one action into two
+recorded claims, and only then should an override count toward map health. Deferred
+deliberately — doing it implicitly would let a competitive judgement quietly launder
+itself into evidence that a job is real.
+
 Also unresolved:
 
 - **Job-map versioning.** A restated job invalidates prior reviews and makes positions

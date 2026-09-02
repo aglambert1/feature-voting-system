@@ -39,6 +39,18 @@ def _grounding_for(db, product_id: int) -> dict:
     return out
 
 
+def _grounded_for_entry(entry: dict, grounding: dict) -> bool:
+    """Whether this assessment can carry a verdict.
+
+    A human override grounds it: the PM applied knowledge the product description does
+    not contain, which is exactly what our score was missing.
+    """
+    if entry.get("human_position"):
+        return True
+    g = grounding.get(entry.get("job_id"))
+    return g["shown"] if g else True
+
+
 def _apply_grounding(assessments, grounding: dict) -> list:
     """Strip the derived verdict where it is not grounded.
 
@@ -51,11 +63,15 @@ def _apply_grounding(assessments, grounding: dict) -> list:
         if not isinstance(ja, dict):
             continue
         item = dict(ja)
-        g = grounding.get(item.get("job_id"))
-        if g and not g["shown"] and not item.get("human_position"):
+        if item.get("human_position"):
+            # Attribution matters more to an agent than to a reader: it has no UI to
+            # hover and will otherwise report a person's judgement as the system's.
+            item["verdict_source"] = "human_review"
+        if not _grounded_for_entry(item, grounding):
+            g = grounding.get(item.get("job_id"))
             item["system_position"] = None
             item["our_score"] = None
-            item["verdict_withheld_reason"] = g["reason"]
+            item["verdict_withheld_reason"] = g["reason"] if g else None
         result.append(item)
     return result
 

@@ -754,7 +754,8 @@ class TestCoverageExport:
         )
 
         assert "parity" in resp.text
-        assert "(yours)" in resp.text
+        # Attributed, not anonymous: a judgement is only evidence if you can see whose.
+        assert "'s call)" in resp.text
 
 
 class TestMcpAppliesTheSameRule:
@@ -818,3 +819,128 @@ class TestMcpAppliesTheSameRule:
             [{"job_id": "j99", "system_position": "parity"}], self._grounding()
         )
         assert out[0]["system_position"] == "parity"
+
+
+class TestHumanJudgementGroundsTheJob:
+    """A PM's override IS the missing grounding, not an exception to it.
+
+    Verdicts are withheld because our score rests on the product description the job map
+    was derived from — circular. Someone judging the comparison applies knowledge that is
+    not in that description, which breaks the circle. Treating their call as ungrounded
+    would be exactly backwards, and showing "—" for our score beside their verdict made
+    the row assert and disclaim at once.
+    """
+
+    def test_override_grounds_an_otherwise_withheld_verdict(self):
+        from app.utils.job_position import verdict_grounding
+
+        assert verdict_grounding("low", 0)[0] is False
+        assert verdict_grounding("low", 0, "differentiator")[0] is True
+
+    def test_override_grounds_our_score_for_the_row(
+        self, db_session, client, test_product, po_user
+    ):
+        _job(db_session, test_product, "j1")
+        comp = _competitor(db_session, test_product, "Productboard")
+        _report(db_session, test_product, comp, [{
+            "job_id": "j1", "competitor_score": 2, "system_position": "advantage",
+            "human_position": "differentiator", "reviewed_by": po_user.id,
+            "reviewed_at": "2026-08-28T00:00:00Z",
+        }])
+        _self_assessment(db_session, test_product, [
+            {"job_id": "j1", "score": 8, "confidence": "low"},
+        ])
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage",
+            headers=auth_headers(po_user),
+        )
+
+        row = resp.json()["jobs"][0]
+        assert row["our_score_grounded"] is True
+        assert row["competitors"][0]["verdict_shown"] is True
+
+    def test_the_judgement_is_attributed(
+        self, db_session, client, test_product, po_user
+    ):
+        # "Grounded by a human" is not evidence; grounded by a named person on a date is
+        # something a reader can weigh or chase.
+        _job(db_session, test_product, "j1")
+        comp = _competitor(db_session, test_product, "Productboard")
+        _report(db_session, test_product, comp, [{
+            "job_id": "j1", "competitor_score": 2, "system_position": "advantage",
+            "human_position": "differentiator", "reviewed_by": po_user.id,
+            "reviewed_at": "2026-08-28T00:00:00Z",
+        }])
+        _self_assessment(db_session, test_product, [
+            {"job_id": "j1", "score": 8, "confidence": "low"},
+        ])
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage",
+            headers=auth_headers(po_user),
+        )
+
+        body = resp.json()
+        expected = po_user.full_name or po_user.username
+        assert body["jobs"][0]["our_score_grounded_by"] == [expected]
+        assert body["jobs"][0]["competitors"][0]["reviewed_by_name"] == expected
+
+    def test_without_an_override_the_row_stays_withheld(
+        self, db_session, client, test_product, po_user
+    ):
+        _job(db_session, test_product, "j1")
+        comp = _competitor(db_session, test_product, "Productboard")
+        _report(db_session, test_product, comp, [{
+            "job_id": "j1", "competitor_score": 2, "system_position": "advantage",
+        }])
+        _self_assessment(db_session, test_product, [
+            {"job_id": "j1", "score": 8, "confidence": "low"},
+        ])
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage",
+            headers=auth_headers(po_user),
+        )
+
+        row = resp.json()["jobs"][0]
+        assert row["our_score_grounded"] is False
+        assert row["our_score_grounded_by"] == []
+
+    def test_mcp_marks_the_verdict_as_human_sourced(self):
+        # An agent has no UI to hover and will otherwise report a person's judgement as
+        # the system's own.
+        from mcp_server.tools.competitive import _apply_grounding
+
+        out = _apply_grounding(
+            [{"job_id": "j1", "system_position": "advantage", "our_score": 8,
+              "competitor_score": 2, "human_position": "differentiator"}],
+            {"j1": {"shown": False, "reason": "ungrounded"}},
+        )[0]
+
+        assert out["verdict_source"] == "human_review"
+        assert out["human_position"] == "differentiator"
+        # Grounded by the override, so nothing is stripped.
+        assert out["system_position"] == "advantage"
+        assert out["our_score"] == 8
+
+    def test_export_attributes_the_call(
+        self, db_session, client, test_product, po_user
+    ):
+        _job(db_session, test_product, "j1")
+        comp = _competitor(db_session, test_product, "Productboard")
+        _report(db_session, test_product, comp, [{
+            "job_id": "j1", "competitor_score": 2, "system_position": "advantage",
+            "human_position": "differentiator", "reviewed_by": po_user.id,
+        }])
+        _self_assessment(db_session, test_product, [
+            {"job_id": "j1", "score": 8, "confidence": "low"},
+        ])
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage/export",
+            headers=auth_headers(po_user),
+        )
+
+        assert "differentiator" in resp.text
+        assert "'s call)" in resp.text

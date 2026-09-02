@@ -1243,7 +1243,9 @@ def get_functional_report(
             continue
         job_id = entry["job_id"]
         total = (corroboration.get(job_id) or {}).get("total", 0)
-        shown, reason = _verdict_grounding(self_confidences.get(job_id), total)
+        shown, reason = _verdict_grounding(
+            self_confidences.get(job_id), total, entry.get("human_position")
+        )
         grounding[job_id] = {"shown": shown, "reason": reason}
         signals[job_id] = total
 
@@ -1328,6 +1330,7 @@ def export_functional_report(
             and not _vg(
                 live_conf.get(e["job_id"]),
                 (corroboration.get(e["job_id"]) or {}).get("total", 0),
+                e.get("human_position"),
             )[0]
         }
 

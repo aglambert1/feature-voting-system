@@ -100,12 +100,7 @@ export default function JobDetailPage() {
 
   const byId = new Map(data.competitors.map((c) => [c.competitor_id, c]));
 
-  // Same rule as the matrix: grounding is per job, so if every assessed competitor
-  // withholds its verdict, the score behind those verdicts is the one just disowned.
-  // Stating it here while the matrix shows "—" would have the two screens disagree.
-  const assessedCells = row.competitors.filter((c) => c.assessed);
-  const ourScoreGrounded =
-    assessedCells.length === 0 || assessedCells.some((c) => c.verdict_shown !== false);
+  const ourScoreGrounded = row.our_score_grounded;
   const provenanceType = row.provenance?.type ?? 'unknown';
   const provenanceLabel: Record<string, string> = {
     product_derived: 'written from the product description',
@@ -190,9 +185,8 @@ export default function JobDetailPage() {
               </>
             ) : !ourScoreGrounded ? (
               <>
-                Our score for this job rests only on the product description — the
-                self-assessment rated its own confidence low, and nothing external
-                corroborates it. Competitor scores below stand on their own research.
+                {row.our_score_withheld_reason} Competitor scores below stand on their
+                own research.
               </>
             ) : (
               <>

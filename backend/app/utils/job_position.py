@@ -93,6 +93,7 @@ def derive_system_position(our_score: Any, competitor_score: Any) -> str:
 def verdict_grounding(
     our_confidence: Optional[str],
     corroboration_total: int = 0,
+    human_position: Optional[str] = None,
 ) -> tuple:
     """Whether a comparison verdict is worth stating, and why not when it isn't.
 
@@ -111,7 +112,17 @@ def verdict_grounding(
 
     Suppression applies ONLY to the comparison. The competitor's own score is researched
     independently of our map and is reported at full strength either way.
+
+    Note the asymmetry: an override grounds the VERDICT, not our score. The PM judged the
+    comparison, not our capability — so our score stays withheld while the verdict shows.
     """
+    # A PM's override IS the missing grounding, not an exception to it. The reason a
+    # verdict is withheld is that our score rests on the product description the job map
+    # was derived from — circular. Someone saying "this is a differentiator" applies
+    # knowledge that is not in that description, which breaks the circle. Treating their
+    # judgement as ungrounded would be exactly backwards.
+    if human_position:
+        return True, None
     if corroboration_total > 0:
         return True, None
     if (our_confidence or "").lower() != "low":
