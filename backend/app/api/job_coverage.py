@@ -438,7 +438,12 @@ def export_job_coverage(
             "",
         ]
 
-    names = [c["competitor_name"] for c in coverage["competitors"]]
+    # Escape pipes in names too, not just statements — a competitor called "Foo|Bar"
+    # would otherwise split the markdown table.
+    def _cell(text) -> str:
+        return str(text if text is not None else "—").replace("|", "\\|")
+
+    names = [_cell(c["competitor_name"]) for c in coverage["competitors"]]
     lines.append("| Job | Importance | Us | " + " | ".join(names) + " |")
     lines.append("|---|---|---|" + "---|" * len(names))
 
@@ -453,22 +458,27 @@ def export_job_coverage(
                 cells.append("not audited")
                 continue
             score = cell.get("competitor_score")
-            if cell.get("verdict_shown") is False:
+            human = cell.get("human_position")
+            # Withholding applies to the derived verdict, which rests on our ungrounded
+            # score. A PM's override is their own claim and owes nothing to it — dropping
+            # it here would misrepresent their judgement as absent.
+            if cell.get("verdict_shown") is False and not human:
                 cells.append(f"{score} (no verdict)")
             else:
-                verdict = cell.get("human_position") or cell.get("system_position") or "unknown"
-                marker = " *(yours)*" if cell.get("human_position") else ""
+                verdict = human or cell.get("system_position") or "unknown"
+                marker = " *(yours)*" if human else ""
                 cells.append(f"{score} — {verdict}{marker}")
 
         grounded = any(
             c.get("assessed") and c.get("verdict_shown") is not False
             for c in row["competitors"]
         ) or not any(c.get("assessed") for c in row["competitors"])
+
         our = row["our_score"] if (grounded and row["our_score"] is not None) else "—"
 
-        statement = (row["job_statement"] or "").replace("|", "\\|")
         lines.append(
-            f"| **{row['job_id']}** {statement} | {row['importance']} | {our} | "
+            f"| **{row['job_id']}** {_cell(row['job_statement'])} | "
+            f"{_cell(row['importance'])} | {our} | "
             + " | ".join(cells)
             + " |"
         )

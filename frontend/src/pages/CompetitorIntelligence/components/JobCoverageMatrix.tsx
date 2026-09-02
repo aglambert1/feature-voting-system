@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getJobCoverage, runSelfAssessment } from '../../../services/api';
+import { exportJobCoverage, getJobCoverage, runSelfAssessment } from '../../../services/api';
 import type {
   JobCoverageCell,
   JobCoverageResponse,
@@ -59,7 +59,10 @@ function Cell({ cell }: { cell: JobCoverageCell }) {
     );
   }
 
-  const verdictShown = cell.verdict_shown !== false;
+  // A human override stands regardless of whether our derived score is grounded: it is
+  // their claim, not something computed from ours. Rendering "no verdict" above a
+  // "yours" marker made the cell contradict itself.
+  const verdictShown = cell.verdict_shown !== false || !!cell.human_position;
   const verdict = (cell.human_position ?? cell.system_position) ?? 'unknown';
 
   return (
@@ -94,6 +97,7 @@ export default function JobCoverageMatrix({ productId }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [assessing, setAssessing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -102,6 +106,24 @@ export default function JobCoverageMatrix({ productId }: Props) {
       .catch((e) => setError(e.message || 'Failed to load job coverage'))
       .finally(() => setLoading(false));
   }, [productId]);
+
+  const handleExport = async () => {
+    try {
+      setExporting(true);
+      const md = await exportJobCoverage(productId);
+      const blob = new Blob([md], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(data?.product_name ?? 'product').replace(/\s+/g, '_')}_job_coverage.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError(e.message || 'Failed to export');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const handleSelfAssess = async () => {
     try {
@@ -175,6 +197,13 @@ export default function JobCoverageMatrix({ productId }: Props) {
             {' · sorted by importance, then weakest coverage'}
           </p>
         </div>
+        <button
+          onClick={handleExport}
+          disabled={exporting}
+          className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+        >
+          {exporting ? 'Exporting...' : 'Export .md'}
+        </button>
       </div>
 
       {message && (

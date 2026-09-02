@@ -1220,13 +1220,6 @@ export interface IdeaStatusResponse {
   idea_id: number | null;
 }
 
-/**
- * Batch idea statuses response.
- */
-export interface BatchIdeaStatusesResponse {
-  statuses: Record<number, IdeaStatusResponse>;
-  total_ideas_created: number;
-}
 
 // ============================================================================
 // INTERNAL FEEDBACK TYPES (Phase 2 - Internal Discovery Agent)

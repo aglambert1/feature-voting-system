@@ -812,7 +812,6 @@ export const markAllAlertsRead = async (
 import type {
   FunctionalReportSummary,
   FunctionalReportDetail,
-  BatchIdeaStatusesResponse,
   JobCoverageResponse,
 } from '../types';
 
@@ -835,6 +834,15 @@ export const getFunctionalReports = async (productId: number): Promise<Functiona
 export const getJobCoverage = async (productId: number): Promise<JobCoverageResponse> => {
   const response = await api.get<JobCoverageResponse>(
     `/product-intelligence/products/${productId}/job-coverage`
+  );
+  return response.data;
+};
+
+/** Download the coverage matrix as markdown — the cross-competitor view for a deck. */
+export const exportJobCoverage = async (productId: number): Promise<string> => {
+  const response = await api.get<string>(
+    `/product-intelligence/products/${productId}/job-coverage/export`,
+    { responseType: 'text' }
   );
   return response.data;
 };
@@ -910,19 +918,6 @@ export const exportFunctionalReportMd = async (
 
 /**
  * Get idea statuses for all gaps of a competitor
- */
-export const getGapIdeaStatuses = async (
-  productId: number,
-  competitorId: number
-): Promise<BatchIdeaStatusesResponse> => {
-  const response = await api.get<BatchIdeaStatusesResponse>(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/gaps/idea-statuses`
-  );
-  return response.data;
-};
-
-/**
- * Trigger full V2 competitive analysis
  */
 export const triggerCompetitiveAnalysisV2 = async (productId: number): Promise<AgentJobResponse> => {
   const response = await api.post<AgentJobResponse>(

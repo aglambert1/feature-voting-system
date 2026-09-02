@@ -9,6 +9,8 @@ intelligence system:
 - Manual feature-to-idea workflow
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -42,6 +44,8 @@ router = APIRouter(
     prefix="/product-intelligence/agents",
     tags=["Competitive Agents"]
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -1220,6 +1224,18 @@ def get_functional_report(
     ).order_by(ProductSelfAssessment.assessment_version.desc()).first()
 
     corroboration = signal_counts(db, product_id)
+    # Read confidence from the LIVE self-assessment, not from the copy stored on the
+    # report. our_confidence is joined onto assessments at audit time, so any report
+    # written before that field existed carries None — and verdict_grounding(None, 0)
+    # returns "shown". The coverage matrix reads live and would withhold the same
+    # verdict this endpoint displays, so the two screens would disagree until a
+    # re-audit. One source for both.
+    self_confidences = {
+        e.get("job_id"): e.get("confidence")
+        for e in ((self_assessment.job_assessments or []) if self_assessment else [])
+        if isinstance(e, dict) and e.get("job_id")
+    }
+
     grounding: dict = {}
     signals: dict = {}
     for entry in (report.job_assessments or []):
@@ -1227,7 +1243,7 @@ def get_functional_report(
             continue
         job_id = entry["job_id"]
         total = (corroboration.get(job_id) or {}).get("total", 0)
-        shown, reason = _verdict_grounding(entry.get("our_confidence"), total)
+        shown, reason = _verdict_grounding(self_confidences.get(job_id), total)
         grounding[job_id] = {"shown": shown, "reason": reason}
         signals[job_id] = total
 
@@ -1293,13 +1309,24 @@ def export_functional_report(
         from app.services.job_provenance import signal_counts
         from app.utils.job_position import verdict_grounding as _vg
 
+        from app.models.competitive_reports import ProductSelfAssessment
+
+        latest_self = db.query(ProductSelfAssessment).filter(
+            ProductSelfAssessment.product_id == product_id
+        ).order_by(ProductSelfAssessment.assessment_version.desc()).first()
+        live_conf = {
+            e.get("job_id"): e.get("confidence")
+            for e in ((latest_self.job_assessments or []) if latest_self else [])
+            if isinstance(e, dict) and e.get("job_id")
+        }
+
         corroboration = signal_counts(db, product_id)
         withheld = {
             e["job_id"]
             for e in (report.job_assessments or [])
             if isinstance(e, dict) and e.get("job_id")
             and not _vg(
-                e.get("our_confidence"),
+                live_conf.get(e["job_id"]),
                 (corroboration.get(e["job_id"]) or {}).get("total", 0),
             )[0]
         }
@@ -1307,7 +1334,11 @@ def export_functional_report(
         markdown = generate_markdown_report(
             competitor.competitor_name,
             StoredFunctionalAuditOutput(
-                competitor_context=report.competitor_context or {},
+                # Both columns are nullable but the schema requires them, so an empty
+                # dict is not enough — supply the fields the model demands.
+                competitor_context=report.competitor_context or {
+                    "positioning": "", "core_differentiation": "", "target_customer": "",
+                },
                 functional_comparison=report.functional_comparison or [],
                 gaps_deep_dive=report.gaps_deep_dive or [],
                 technical_constraints=report.technical_constraints or {},
@@ -1317,9 +1348,20 @@ def export_functional_report(
             withheld_job_ids=withheld,
         )
     except Exception as render_err:
-        # Fall back to the snapshot rather than failing the download — a stale report
-        # is more use than none.
-        print(f"[export_functional_report] regenerate failed, using stored: {render_err}")
+        # The snapshot was generated at audit time WITHOUT the withheld set, so it
+        # states every score the app declines to show. Falling back to it silently is
+        # worst exactly where it is most likely to trigger, so it is logged loudly and
+        # the document says what it is. A stale report still beats no download.
+        logger.error(
+            "export_functional_report: regeneration failed for product=%s competitor=%s: %s",
+            product_id, competitor_id, render_err,
+        )
+        if markdown:
+            markdown = (
+                "> **Note:** this is a snapshot from when the audit ran. It may state "
+                "scores that are no longer shown in the app, and predates any later "
+                "review or self-assessment.\n\n" + markdown
+            )
 
     return PlainTextResponse(
         content=markdown or "# No report content available",
@@ -1443,13 +1485,3 @@ def get_all_gap_idea_statuses(
         'statuses': status_map,
         'total_ideas_created': len(status_map)
     }
-
-
-class ExportGapsRequest(BaseModel):
-    """Request to export selected competitor gaps as JSON."""
-    gap_indices: List[int] = Field(
-        ...,
-        min_length=1,
-        max_length=50,
-        description="Indices of gaps to export (0-indexed)"
-    )

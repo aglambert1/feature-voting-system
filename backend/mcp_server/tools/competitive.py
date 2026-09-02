@@ -8,6 +8,58 @@ from app.models.competitor_intelligence import ProductPermissionLevel
 from app.services.evidence_service import resolve_competitor_by_name
 
 
+def _grounding_for(db, product_id: int) -> dict:
+    """Which jobs can carry a comparison verdict, keyed by job_id.
+
+    An agent reading these treats them as fact and has no UI caveat beside them, so a
+    verdict built on an ungrounded self-score is more dangerous here than on screen.
+    Same rule and same source as the app: our confidence from the live self-assessment,
+    plus corroborating signals.
+    """
+    from app.models.competitive_reports import ProductSelfAssessment
+    from app.services.job_provenance import signal_counts
+    from app.utils.job_position import verdict_grounding
+
+    latest = db.query(ProductSelfAssessment).filter(
+        ProductSelfAssessment.product_id == product_id
+    ).order_by(ProductSelfAssessment.assessment_version.desc()).first()
+    confidences = {
+        e.get("job_id"): e.get("confidence")
+        for e in ((latest.job_assessments or []) if latest else [])
+        if isinstance(e, dict) and e.get("job_id")
+    }
+    corroboration = signal_counts(db, product_id)
+
+    out = {}
+    for job_id, conf in confidences.items():
+        shown, reason = verdict_grounding(
+            conf, (corroboration.get(job_id) or {}).get("total", 0)
+        )
+        out[job_id] = {"shown": shown, "reason": reason}
+    return out
+
+
+def _apply_grounding(assessments, grounding: dict) -> list:
+    """Strip the derived verdict where it is not grounded.
+
+    A human override survives: it is the PM's own claim and does not rest on our score.
+    The competitor's score always survives — it is researched independently of our job
+    map and is unaffected by that map's weakness.
+    """
+    result = []
+    for ja in (assessments or []):
+        if not isinstance(ja, dict):
+            continue
+        item = dict(ja)
+        g = grounding.get(item.get("job_id"))
+        if g and not g["shown"] and not item.get("human_position"):
+            item["system_position"] = None
+            item["our_score"] = None
+            item["verdict_withheld_reason"] = g["reason"]
+        result.append(item)
+    return result
+
+
 @mcp.tool()
 def ci_get_competitor_list(product_id: int) -> dict:
     """List all competitors for a product with audit status and synthesis-inclusion flags.
@@ -126,7 +178,9 @@ def ci_get_competitor_report(product_id: int, competitor_name: str, section: str
             "gaps_deep_dive": report.gaps_deep_dive,
             "technical_constraints": report.technical_constraints,
             "changes_from_previous": report.changes_from_previous,
-            "job_assessments": report.job_assessments,
+            "job_assessments": _apply_grounding(
+                report.job_assessments, _grounding_for(db, product_id)
+            ),
             "evidence_citations": report.evidence_citations,
             "additional_evidence": [e.to_summary_dict() for e in linked_evidence],
         }
@@ -528,7 +582,10 @@ def ci_get_job_comparison(product_id: int, job_id: str) -> dict:
 
             assessment = None
             if report.job_assessments:
-                for ja in report.job_assessments:
+                grounded = _apply_grounding(
+                    report.job_assessments, _grounding_for(db, product_id)
+                )
+                for ja in grounded:
                     if ja.get("job_id") == job_id:
                         assessment = ja
                         break

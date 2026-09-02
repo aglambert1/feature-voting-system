@@ -209,6 +209,9 @@ def suggest_needs_from_unmapped_capabilities(
         )
 
         filed = 0
+        accepted_embeddings: List = []
+        accepted_capabilities: List[str] = []
+        _embed_cache: Dict[str, Any] = {}
         for cap in capabilities:
             if not isinstance(cap, dict):
                 continue
@@ -257,18 +260,43 @@ def suggest_needs_from_unmapped_capabilities(
                 ),
             ).all()
 
+            # Re-embed the pending items rather than storing their vectors. A 1024-float
+            # array in item_metadata is served verbatim by the PM review queue endpoint,
+            # so persisting it would ship ~20KB of JSON per suggestion to every client
+            # listing the queue. Embedding a handful of short strings is cheap by
+            # comparison, and keeps the API payload readable.
             def _duplicate(item) -> bool:
                 meta = item.item_metadata or {}
                 if meta.get("capability") == capability:
                     return True
-                prior = meta.get("statement_embedding")
-                if candidate_emb and prior:
-                    return (
-                        _cosine_similarity(candidate_emb, prior) >= _AUTO_LINK_THRESHOLD
-                    )
-                return False
+                if not candidate_emb:
+                    return False
+                prior_text = meta.get("signal_content") or meta.get("capability")
+                if not prior_text:
+                    return False
+                prior_emb = _embed_cache.get(prior_text)
+                if prior_emb is None:
+                    try:
+                        from app.services.embedding_service import generate_embedding
+                        prior_emb = generate_embedding(prior_text, input_type="document")
+                    except Exception:
+                        return False
+                    _embed_cache[prior_text] = prior_emb
+                return _cosine_similarity(candidate_emb, prior_emb) >= _AUTO_LINK_THRESHOLD
 
             if any(_duplicate(e) for e in existing):
+                continue
+
+            # The session is autoflush=False and nothing commits until the loop ends, so
+            # the query above cannot see items added earlier in THIS batch. Without this,
+            # one audit returning both "OKR alignment" and "Objective hierarchy and OKR
+            # alignment" files them both — the exact case this dedupe exists to prevent.
+            if candidate_emb and any(
+                _cosine_similarity(candidate_emb, seen_emb) >= _AUTO_LINK_THRESHOLD
+                for seen_emb in accepted_embeddings
+            ):
+                continue
+            if any(text == capability for text in accepted_capabilities):
                 continue
 
             db.add(PMReviewQueue(
@@ -294,10 +322,11 @@ def suggest_needs_from_unmapped_capabilities(
                     "product_id": product_id,
                     "capability": capability,
                     "competitor_name": competitor_name,
-                    # Kept so the next audit can compare meanings rather than strings.
-                    "statement_embedding": candidate_emb,
                 },
             ))
+            if candidate_emb:
+                accepted_embeddings.append(candidate_emb)
+            accepted_capabilities.append(capability)
             filed += 1
 
         if filed:

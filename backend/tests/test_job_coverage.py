@@ -675,3 +675,146 @@ class TestVerdictWithholding:
         row = resp.json()["jobs"][0]
         assert row["corroborating_signals"] == 1
         assert row["competitors"][0]["verdict_shown"] is True
+
+
+class TestCoverageExport:
+    """The cross-competitor view is what goes into a planning deck, so it leaves the app
+    as a document read without the app beside it — and must not state a verdict the app
+    itself withholds."""
+
+    def test_withheld_verdicts_are_not_stated(
+        self, db_session, client, test_product, po_user
+    ):
+        _job(db_session, test_product, "j1")
+        comp = _competitor(db_session, test_product, "Productboard")
+        _report(db_session, test_product, comp, [{
+            "job_id": "j1", "competitor_score": 8, "system_position": "gap",
+        }])
+        _self_assessment(db_session, test_product, [
+            {"job_id": "j1", "score": 4, "confidence": "low"},
+        ])
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage/export",
+            headers=auth_headers(po_user),
+        )
+
+        assert resp.status_code == 200
+        body = resp.text
+        # Their score stands; the comparison does not.
+        assert "8 (no verdict)" in body
+        assert "gap" not in body.lower().split("_where no verdict")[0].replace(
+            "no verdict", ""
+        )
+
+    def test_pipes_in_names_do_not_break_the_table(
+        self, db_session, client, test_product, po_user
+    ):
+        _job(db_session, test_product, "j1")
+        comp = _competitor(db_session, test_product, "Foo|Bar")
+        _report(db_session, test_product, comp, [{"job_id": "j1", "competitor_score": 5}])
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage/export",
+            headers=auth_headers(po_user),
+        )
+
+        assert "Foo\\|Bar" in resp.text
+
+    def test_missing_importance_renders_a_placeholder(
+        self, db_session, client, test_product, po_user
+    ):
+        from app.models.competitor_intelligence import JobImportance
+
+        _job(db_session, test_product, "j1", importance=JobImportance.MEDIUM)
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage/export",
+            headers=auth_headers(po_user),
+        )
+        assert "None" not in resp.text
+
+    def test_human_override_survives_the_export(
+        self, db_session, client, test_product, po_user
+    ):
+        # An override is the PM's own claim; a document that drops it misrepresents
+        # their judgement as the system's.
+        _job(db_session, test_product, "j1")
+        comp = _competitor(db_session, test_product, "Productboard")
+        _report(db_session, test_product, comp, [{
+            "job_id": "j1", "competitor_score": 8,
+            "system_position": "gap", "human_position": "parity",
+        }])
+        _self_assessment(db_session, test_product, [
+            {"job_id": "j1", "score": 4, "confidence": "low"},
+        ])
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage/export",
+            headers=auth_headers(po_user),
+        )
+
+        assert "parity" in resp.text
+        assert "(yours)" in resp.text
+
+
+class TestMcpAppliesTheSameRule:
+    """An agent has no UI caveat beside the number it reads, so a verdict built on an
+    ungrounded self-score is more dangerous over MCP than on screen."""
+
+    def _grounding(self):
+        return {"j1": {"shown": False, "reason": "ungrounded"},
+                "j2": {"shown": True, "reason": None}}
+
+    def test_withheld_verdict_is_stripped(self):
+        from mcp_server.tools.competitive import _apply_grounding
+
+        out = _apply_grounding(
+            [{"job_id": "j1", "system_position": "gap", "our_score": 4,
+              "competitor_score": 8}],
+            self._grounding(),
+        )
+        assert out[0]["system_position"] is None
+        assert out[0]["our_score"] is None
+        assert out[0]["verdict_withheld_reason"] == "ungrounded"
+
+    def test_competitor_score_always_survives(self):
+        # Their side is researched independently of our map and is unaffected by its
+        # weakness — withholding it would discard sound data.
+        from mcp_server.tools.competitive import _apply_grounding
+
+        out = _apply_grounding(
+            [{"job_id": "j1", "system_position": "gap", "competitor_score": 8}],
+            self._grounding(),
+        )
+        assert out[0]["competitor_score"] == 8
+
+    def test_human_override_survives(self):
+        from mcp_server.tools.competitive import _apply_grounding
+
+        out = _apply_grounding(
+            [{"job_id": "j1", "system_position": "gap", "our_score": 4,
+              "human_position": "parity"}],
+            self._grounding(),
+        )
+        assert out[0]["human_position"] == "parity"
+        assert out[0]["system_position"] == "gap"
+
+    def test_grounded_jobs_are_untouched(self):
+        from mcp_server.tools.competitive import _apply_grounding
+
+        out = _apply_grounding(
+            [{"job_id": "j2", "system_position": "gap", "our_score": 5}],
+            self._grounding(),
+        )
+        assert out[0]["system_position"] == "gap"
+        assert out[0]["our_score"] == 5
+
+    def test_unknown_jobs_pass_through(self):
+        # A job with no self-assessment entry has nothing to judge grounding by;
+        # stripping it would hide data on no evidence.
+        from mcp_server.tools.competitive import _apply_grounding
+
+        out = _apply_grounding(
+            [{"job_id": "j99", "system_position": "parity"}], self._grounding()
+        )
+        assert out[0]["system_position"] == "parity"
