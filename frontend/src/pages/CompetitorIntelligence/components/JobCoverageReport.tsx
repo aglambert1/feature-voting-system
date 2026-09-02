@@ -427,11 +427,23 @@ export default function JobCoverageReport({
                       </div>
                     )}
 
-                    {verdictShown && (
+                    {(
                       <div className="flex items-center gap-3 flex-wrap pt-3 border-t border-gray-200">
                         <div className="text-sm text-gray-600 flex-1 min-w-[15rem]">
-                          System says <b className="text-gray-900">{job.system_position}</b>
-                          {job.confidence ? `, confidence ${job.confidence}` : ''}.
+                          {verdictShown ? (
+                            <>
+                              System says <b className="text-gray-900">{job.system_position}</b>
+                              {job.confidence ? `, confidence ${job.confidence}` : ''}.
+                            </>
+                          ) : (
+                            // Withheld jobs must still offer an override: the PM's
+                            // judgement is what would ground this, so hiding the action
+                            // leaves the job permanently unresolvable.
+                            <>
+                              No verdict can be computed. Your judgement would settle it
+                              — and counts as evidence for this job.
+                            </>
+                          )}
                           {job.human_position && (
                             <>
                               {' '}
@@ -473,7 +485,7 @@ export default function JobCoverageReport({
                             {/* Every action is named for what it does. "Change review"
                                 previously submitted an agree, which silently discarded an
                                 override and its note. */}
-                            {!job.reviewed_at && (
+                            {!job.reviewed_at && verdictShown && (
                               <button
                                 onClick={() => onReview(job.job_id, 'agree')}
                                 className="px-3 py-1.5 text-sm bg-teal-700 text-white rounded-lg hover:bg-teal-800 font-medium"
@@ -491,9 +503,17 @@ export default function JobCoverageReport({
                             )}
                             <button
                               onClick={() => setOverriding(job.job_id)}
-                              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+                              className={
+                                verdictShown
+                                  ? 'px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50'
+                                  : 'px-3 py-1.5 text-sm bg-teal-700 text-white rounded-lg hover:bg-teal-800 font-medium'
+                              }
                             >
-                              {job.human_position ? 'Change override' : 'Override'}
+                              {job.human_position
+                                ? 'Change override'
+                                : verdictShown
+                                  ? 'Override'
+                                  : 'Set the verdict'}
                             </button>
                             {job.reviewed_at && (
                               <button

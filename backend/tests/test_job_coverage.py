@@ -944,3 +944,61 @@ class TestHumanJudgementGroundsTheJob:
 
         assert "differentiator" in resp.text
         assert "'s call)" in resp.text
+
+
+class TestGroundingIsRowLevel:
+    """Grounding belongs to OUR score on a job, not to one competitor's cell.
+
+    If a PM's judgement establishes our score, that number is equally available for every
+    competitor with a computed score — so the whole row resolves, not just the cell the
+    override happened to be recorded on.
+    """
+
+    def _row_with_override_on_one_competitor(self, db_session, product, po_user):
+        _job(db_session, product, "j1")
+        a = _competitor(db_session, product, "Productboard")
+        b = _competitor(db_session, product, "Canny")
+        _report(db_session, product, a, [{
+            "job_id": "j1", "competitor_score": 2, "system_position": "advantage",
+            "human_position": "differentiator", "reviewed_by": po_user.id,
+        }])
+        _report(db_session, product, b, [{
+            "job_id": "j1", "competitor_score": 5, "system_position": "advantage",
+        }])
+        _self_assessment(db_session, product, [
+            {"job_id": "j1", "score": 8, "confidence": "low"},
+        ])
+
+    def test_one_override_resolves_every_cell_in_the_row(
+        self, db_session, client, test_product, po_user
+    ):
+        self._row_with_override_on_one_competitor(db_session, test_product, po_user)
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage",
+            headers=auth_headers(po_user),
+        )
+
+        row = resp.json()["jobs"][0]
+        assert row["our_score_grounded"] is True
+        # Both cells, not only the one carrying the override.
+        assert all(c["verdict_shown"] is True for c in row["competitors"])
+
+    def test_the_uncontested_cell_keeps_the_computed_verdict(
+        self, db_session, client, test_product, po_user
+    ):
+        # The PM judged Productboard, not Canny — Canny's verdict is still the system's.
+        self._row_with_override_on_one_competitor(db_session, test_product, po_user)
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage",
+            headers=auth_headers(po_user),
+        )
+
+        by_name = {
+            c["competitor_id"]: c
+            for c in resp.json()["jobs"][0]["competitors"]
+        }
+        cells = list(by_name.values())
+        assert any(c.get("human_position") == "differentiator" for c in cells)
+        assert any(c.get("human_position") is None and c["verdict_shown"] for c in cells)

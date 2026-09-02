@@ -212,6 +212,28 @@ def get_job_coverage(
     for job in jobs:
         self_entry = self_by_job.get(job.job_id_key) or {}
 
+        # Grounding is a property of OUR score on this job, not of any one competitor.
+        # If a PM's judgement establishes our score, that number is equally available
+        # for every competitor with a computed score — so the whole row lights up, not
+        # just the cell the override happened to be recorded on.
+        human_entries = [
+            e for e in (
+                assessments_by_competitor.get(c.id, {}).get(job.job_id_key)
+                for c in competitors
+            )
+            if e and e.get("human_position")
+        ]
+        row_grounded, row_reason = verdict_grounding(
+            self_entry.get("confidence"),
+            (corroboration.get(job.job_id_key) or {}).get("total", 0),
+            "reviewed" if human_entries else None,
+        )
+        grounded_by = sorted({
+            name for name in (
+                reviewers.get(e.get("reviewed_by")) for e in human_entries
+            ) if name
+        })
+
         cells = []
         for competitor in competitors:
             entry = assessments_by_competitor.get(competitor.id, {}).get(job.job_id_key)
@@ -221,11 +243,6 @@ def get_job_coverage(
                     "assessed": False,
                 })
                 continue
-            grounded, withheld_reason = verdict_grounding(
-                self_entry.get("confidence"),
-                (corroboration.get(job.job_id_key) or {}).get("total", 0),
-                entry.get("human_position"),
-            )
             cells.append({
                 "competitor_id": competitor.id,
                 "assessed": True,
@@ -234,8 +251,8 @@ def get_job_coverage(
                 # The verdict is a claim about how we compare, and it is only as good as
                 # our own score. Withheld where ours is ungrounded — the competitor's
                 # score is researched independently and still reported at full strength.
-                "verdict_shown": grounded,
-                "verdict_withheld_reason": withheld_reason,
+                "verdict_shown": row_grounded,
+                "verdict_withheld_reason": row_reason,
                 # Authoritative for display where a PM has overridden; the system
                 # verdict is kept alongside rather than replaced.
                 "human_position": entry.get("human_position"),
@@ -246,32 +263,9 @@ def get_job_coverage(
                 "confidence": entry.get("confidence"),
             })
 
-        # A PM who judges the comparison on this job has applied knowledge the product
-        # description does not contain, which is what our score was missing. So their
-        # call grounds the row, not just the cell it was made on.
-        human_entries = [
-            e for e in (
-                assessments_by_competitor.get(c.id, {}).get(job.job_id_key)
-                for c in competitors
-            )
-            if e and e.get("human_position")
-        ]
-        our_score_grounded, our_score_reason = verdict_grounding(
-            self_entry.get("confidence"),
-            (corroboration.get(job.job_id_key) or {}).get("total", 0),
-            "reviewed" if human_entries else None,
-        )
-        # Say whose judgement it rests on. "Grounded by a human" is not evidence;
-        # "grounded by A.G. Lambert on 28 Aug" is something a reader can weigh or chase.
-        grounded_by = sorted({
-            name for name in (
-                reviewers.get(e.get("reviewed_by")) for e in human_entries
-            ) if name
-        })
-
         rows.append({
-            "our_score_grounded": our_score_grounded,
-            "our_score_withheld_reason": our_score_reason,
+            "our_score_grounded": row_grounded,
+            "our_score_withheld_reason": row_reason,
             "our_score_grounded_by": grounded_by,
             "job_id": job.job_id_key,
             "job_statement": job.statement,
