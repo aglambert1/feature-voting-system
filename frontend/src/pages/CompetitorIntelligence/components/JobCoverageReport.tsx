@@ -213,7 +213,12 @@ export default function JobCoverageReport({
           const open = openJobs.has(job.job_id);
           const change = changedJobs.get(job.job_id);
           const grounding = verdictGrounding[job.job_id];
-          const verdictShown = grounding?.shown !== false;
+          // Withholding applies to the DERIVED verdict, which depends on our ungrounded
+          // score. A PM's override is an independent claim that owes nothing to that
+          // score, so it survives — and must stay editable, or a withheld job would trap
+          // an override with no way to clear it.
+          const systemShown = grounding?.shown !== false;
+          const verdictShown = systemShown || !!job.human_position;
           const displayed = job.human_position ?? job.system_position ?? 'unknown';
           const signalCount = corroboratingSignals[job.job_id] ?? 0;
 
@@ -282,7 +287,9 @@ export default function JobCoverageReport({
                   {verdictShown ? (
                     <ReviewState job={job} />
                   ) : (
-                    <span className="text-xs text-gray-400">our side unassessed</span>
+                    // Not "unassessed" — withholding requires a low-confidence score, so
+                    // our side IS assessed, just not on anything independent.
+                    <span className="text-xs text-gray-400">our score ungrounded</span>
                   )}
                 </div>
               </button>
@@ -290,7 +297,7 @@ export default function JobCoverageReport({
               {open && (
                 <div className="px-4 pb-5 border-t border-dashed border-gray-200 -mt-px">
                   <div className="pt-4 space-y-4">
-                    {!verdictShown && grounding?.reason && (
+                    {!systemShown && grounding?.reason && (
                       <div className="text-sm text-gray-600 bg-gray-50 border border-dashed border-gray-300 rounded p-2.5 max-w-2xl">
                         <b className="text-gray-900">
                           No verdict, because our own score for this job has nothing independent

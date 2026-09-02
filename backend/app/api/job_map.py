@@ -19,7 +19,8 @@ from sqlalchemy import func as sa_func, delete as sa_delete
 from app.models.competitor_intelligence import (
     CIProduct, ProductJob, JobType, JobImportance,
     ProductPermissionLevel,
-    JOB_PROVENANCE_PM, JOB_PROVENANCE_PRODUCT, JOB_PROVENANCE_SIGNAL, JOB_EDITED,
+    JOB_PROVENANCE_PM, JOB_PROVENANCE_PRODUCT, JOB_PROVENANCE_SIGNAL,
+    JOB_PROVENANCE_COMPETITOR, JOB_EDITED,
 )
 from app.models.idea import Idea
 from app.models.evidence import Evidence
@@ -572,13 +573,23 @@ def approve_need_suggestion(
         desired_outcomes=desired_outcomes,
         importance=importance,
         statement_embedding=embedding,
-        # Proposed by a signal that matched no existing job — independent of the
-        # product's own description, which is what makes it worth recording.
+        # Independent of the product's own description either way, but the source
+        # matters: a job proposed by a competitor capability is not the same evidence as
+        # one proposed by a customer signal, and the map-health breakdown reports them
+        # separately. Hardcoding signal_derived made competitor_derived unreachable.
         provenance={
-            "type": JOB_PROVENANCE_SIGNAL,
+            "type": (
+                JOB_PROVENANCE_COMPETITOR
+                if suggestion_meta.get("signal_type") == "competitor_capability"
+                else JOB_PROVENANCE_SIGNAL
+            ),
             "source_ref": (
-                f"{suggestion_meta.get('signal_type')}:{suggestion_meta.get('signal_id')}"
-                if suggestion_meta.get("signal_type") else None
+                f"competitor:{suggestion_meta.get('competitor_name')}"
+                if suggestion_meta.get("signal_type") == "competitor_capability"
+                else (
+                    f"{suggestion_meta.get('signal_type')}:{suggestion_meta.get('signal_id')}"
+                    if suggestion_meta.get("signal_type") else None
+                )
             ),
             "added_at": _now_iso(),
         },
