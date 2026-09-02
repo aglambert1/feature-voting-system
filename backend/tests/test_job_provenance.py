@@ -200,3 +200,81 @@ class TestMapHealth:
         health = map_health(db_session, product.id)
 
         assert health["total_jobs"] == 1
+
+
+class TestHumanJudgementSupportsTheJob:
+    """A PM asserting a competitive position presupposes the job is real.
+
+    Within a JTBD frame you cannot meaningfully claim differentiation on a need nobody
+    has, so the assertion is independent support for the job itself — not only for the
+    comparison. Holding that back made the system less consistent with its own spine.
+    """
+
+    def _judged_job(self, db_session, product, position="differentiator"):
+        from app.models.competitive_reports import CompetitorFunctionalReport
+        from app.models.competitor_intelligence import (
+            JOB_PROVENANCE_PRODUCT, ProductCompetitor,
+        )
+
+        job = _job(db_session, product, "j1", JOB_PROVENANCE_PRODUCT)
+        comp = ProductCompetitor(
+            product_id=product.id, competitor_name="Productboard",
+            tracked=True, status="active",
+        )
+        db_session.add(comp)
+        db_session.commit()
+        db_session.add(CompetitorFunctionalReport(
+            product_competitor_id=comp.id, product_id=product.id, report_version=1,
+            job_assessments=[{
+                "job_id": "j1", "competitor_score": 2,
+                "system_position": "advantage", "human_position": position,
+            }],
+        ))
+        db_session.commit()
+        return job
+
+    def test_a_judged_job_counts_as_supported(self, db_session, product):
+        self._judged_job(db_session, product)
+
+        health = map_health(db_session, product.id)
+
+        assert health["jobs_with_independent_source"] == 1
+        assert health["independent_source_pct"] == 100
+        assert health["human_judged"] == 1
+
+    def test_an_unjudged_product_derived_job_is_not_supported(self, db_session, product):
+        from app.models.competitor_intelligence import JOB_PROVENANCE_PRODUCT
+
+        _job(db_session, product, "j1", JOB_PROVENANCE_PRODUCT)
+
+        health = map_health(db_session, product.id)
+
+        assert health["jobs_with_independent_source"] == 0
+        assert health["human_judged"] == 0
+
+    def test_agreement_alone_does_not_support_the_job(self, db_session, product):
+        # Endorsing a computed verdict is not the same as asserting the job matters —
+        # only an override carries that claim.
+        from app.models.competitive_reports import CompetitorFunctionalReport
+        from app.models.competitor_intelligence import (
+            JOB_PROVENANCE_PRODUCT, ProductCompetitor,
+        )
+
+        _job(db_session, product, "j1", JOB_PROVENANCE_PRODUCT)
+        comp = ProductCompetitor(
+            product_id=product.id, competitor_name="Canny", tracked=True, status="active",
+        )
+        db_session.add(comp)
+        db_session.commit()
+        db_session.add(CompetitorFunctionalReport(
+            product_competitor_id=comp.id, product_id=product.id, report_version=1,
+            job_assessments=[{
+                "job_id": "j1", "competitor_score": 2, "system_position": "advantage",
+                "human_position": None, "reviewed_at": "2026-09-01T00:00:00Z",
+            }],
+        ))
+        db_session.commit()
+
+        health = map_health(db_session, product.id)
+
+        assert health["jobs_with_independent_source"] == 0

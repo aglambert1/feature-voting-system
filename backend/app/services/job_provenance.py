@@ -91,17 +91,42 @@ def signal_counts(
     return counts
 
 
+def jobs_with_human_verdict(db: Session, product_id: int) -> set:
+    """Jobs a person has judged the competitive position on.
+
+    A PM asserting "we differentiate here" is applying knowledge the product description
+    does not contain — and, within a JTBD frame, presupposing the job is real. You cannot
+    meaningfully claim differentiation on a need nobody has. So the assertion counts as
+    independent support for the job itself, not only for the comparison.
+    """
+    from app.models.competitive_reports import CompetitorFunctionalReport
+
+    reports = db.query(CompetitorFunctionalReport).filter(
+        CompetitorFunctionalReport.product_id == product_id
+    ).all()
+
+    return {
+        entry["job_id"]
+        for report in reports
+        for entry in (report.job_assessments or [])
+        if isinstance(entry, dict) and entry.get("job_id") and entry.get("human_position")
+    }
+
+
 def has_independent_support(
     job: ProductJob,
     corroboration: Optional[Dict[str, int]],
+    human_verdict: bool = False,
 ) -> bool:
     """Whether anything other than the product's own description supports this job.
 
-    True when the job entered the map from an independent source, or when any signal has
-    since linked to it. A job whose provenance is unknown (predating tracking) counts as
+    True when the job entered the map from an independent source, when any signal has
+    since linked to it, or when a person has judged its competitive position. A job whose provenance is unknown (predating tracking) counts as
     unsupported unless signals corroborate it — the honest reading, since we cannot claim
     an origin we never recorded.
     """
+    if human_verdict:
+        return True
     provenance = job.provenance or {}
     if provenance.get("type") in JOB_PROVENANCE_INDEPENDENT:
         return True
@@ -125,17 +150,24 @@ def map_health(db: Session, product_id: int) -> Dict[str, Any]:
     )
 
     counts = signal_counts(db, product_id)
+    judged = jobs_with_human_verdict(db, product_id)
 
     by_provenance: Dict[str, int] = {}
     supported = 0
     unvalidated = 0
     out_of_target = 0
+    human_judged = 0
 
     for job in jobs:
         provenance_type = (job.provenance or {}).get("type") or "unknown"
         by_provenance[provenance_type] = by_provenance.get(provenance_type, 0) + 1
 
-        if has_independent_support(job, counts.get(job.job_id_key)):
+        if job.job_id_key in judged:
+            human_judged += 1
+
+        if has_independent_support(
+            job, counts.get(job.job_id_key), job.job_id_key in judged
+        ):
             supported += 1
         if job.validation_state == "unvalidated":
             unvalidated += 1
@@ -152,4 +184,5 @@ def map_health(db: Session, product_id: int) -> Dict[str, Any]:
         "by_provenance": by_provenance,
         "unvalidated": unvalidated,
         "out_of_target": out_of_target,
+        "human_judged": human_judged,
     }
