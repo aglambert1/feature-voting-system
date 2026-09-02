@@ -29,7 +29,10 @@ interface Props {
   selfAssessedAt: string | null;
   mapHealth: { total_jobs: number; jobs_with_independent_source: number } | null;
   /** Server decides; the UI must not re-derive it. See verdict_grounding. */
-  verdictGrounding: Record<string, { shown: boolean; reason: string | null }>;
+  verdictGrounding: Record<
+    string,
+    { shown: boolean; reason: string | null; grounded_by_human?: boolean }
+  >;
   corroboratingSignals: Record<string, number>;
   onReview: (jobId: string, action: 'agree' | 'override' | 'clear', position?: JobPosition) => void;
   onExport: () => void;
@@ -297,6 +300,21 @@ export default function JobCoverageReport({
               {open && (
                 <div className="px-4 pb-5 border-t border-dashed border-gray-200 -mt-px">
                   <div className="pt-4 space-y-4">
+                    {grounding?.grounded_by_human && (
+                      // The suppression note vanishing is not enough: without this the
+                      // PM cannot tell their own judgement is what is holding the row
+                      // up, or that it did more than fill one cell.
+                      <div className="text-sm text-gray-600 bg-teal-50 border-l-2 border-teal-600 rounded-r p-2.5 max-w-2xl">
+                        <b className="text-gray-900">
+                          This verdict rests on your judgement, not on our scores.
+                        </b>{' '}
+                        Our own score for this job came only from the product
+                        description, so nothing could be computed. Your call settles the
+                        comparison for every competitor on this job, and counts as
+                        support for the job itself in map health.
+                      </div>
+                    )}
+
                     {!systemShown && grounding?.reason && (
                       <div className="text-sm text-gray-600 bg-gray-50 border border-dashed border-gray-300 rounded p-2.5 max-w-2xl">
                         <b className="text-gray-900">

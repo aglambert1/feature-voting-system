@@ -1002,3 +1002,69 @@ class TestGroundingIsRowLevel:
         cells = list(by_name.values())
         assert any(c.get("human_position") == "differentiator" for c in cells)
         assert any(c.get("human_position") is None and c["verdict_shown"] for c in cells)
+
+
+class TestHumanGroundingIsDistinguishable:
+    """Evidence-grounded and person-grounded verdicts both show, but the reader should be
+    told which — it is the difference between a measurement and a judgement, and only one
+    of them rests on someone's name."""
+
+    def _setup(self, db_session, product, po_user, human=None, with_signal=False):
+        _job(db_session, product, "j1")
+        comp = _competitor(db_session, product, "Productboard")
+        _report(db_session, product, comp, [{
+            "job_id": "j1", "competitor_score": 2, "system_position": "advantage",
+            "human_position": human, "reviewed_by": po_user.id if human else None,
+        }])
+        _self_assessment(db_session, product, [
+            {"job_id": "j1", "score": 8, "confidence": "low"},
+        ])
+        if with_signal:
+            _evidence_for_job(db_session, product, "j1")
+        return comp
+
+    def _grounding(self, client, product, comp, po_user):
+        resp = client.get(
+            f"/product-intelligence/agents/{product.id}"
+            f"/competitors/{comp.id}/functional-report",
+            headers=auth_headers(po_user),
+        )
+        return resp.json()["verdict_grounding"]["j1"]
+
+    def test_override_is_flagged_as_human_grounded(
+        self, db_session, client, test_product, po_user
+    ):
+        comp = self._setup(db_session, test_product, po_user, human="differentiator")
+        g = self._grounding(client, test_product, comp, po_user)
+        assert g["shown"] is True
+        assert g["grounded_by_human"] is True
+
+    def test_evidence_grounding_is_not_flagged_as_human(
+        self, db_session, client, test_product, po_user
+    ):
+        # A linked signal grounds it without anyone judging — no panel should claim
+        # a person's judgement is holding it up.
+        comp = self._setup(db_session, test_product, po_user, with_signal=True)
+        g = self._grounding(client, test_product, comp, po_user)
+        assert g["shown"] is True
+        assert g["grounded_by_human"] is False
+
+    def test_an_override_on_already_grounded_data_is_not_flagged(
+        self, db_session, client, test_product, po_user
+    ):
+        # The flag means "this verdict would not exist without your call", not merely
+        # "you overrode something".
+        comp = self._setup(
+            db_session, test_product, po_user, human="gap", with_signal=True
+        )
+        g = self._grounding(client, test_product, comp, po_user)
+        assert g["grounded_by_human"] is False
+
+    def test_ungrounded_and_unjudged_stays_withheld(
+        self, db_session, client, test_product, po_user
+    ):
+        comp = self._setup(db_session, test_product, po_user)
+        g = self._grounding(client, test_product, comp, po_user)
+        assert g["shown"] is False
+        assert g["grounded_by_human"] is False
+        assert "product description" in g["reason"]

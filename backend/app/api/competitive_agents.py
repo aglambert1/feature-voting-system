@@ -1243,10 +1243,19 @@ def get_functional_report(
             continue
         job_id = entry["job_id"]
         total = (corroboration.get(job_id) or {}).get("total", 0)
-        shown, reason = _verdict_grounding(
-            self_confidences.get(job_id), total, entry.get("human_position")
+        human = entry.get("human_position")
+        shown, reason = _verdict_grounding(self_confidences.get(job_id), total, human)
+        # Distinguish "grounded by evidence" from "grounded by a person". Both show a
+        # verdict, but only one of them rests on someone's name — and the reader should
+        # know which, because it is the difference between a measurement and a judgement.
+        grounded_by_human = bool(
+            human and not _verdict_grounding(self_confidences.get(job_id), total)[0]
         )
-        grounding[job_id] = {"shown": shown, "reason": reason}
+        grounding[job_id] = {
+            "shown": shown,
+            "reason": reason,
+            "grounded_by_human": grounded_by_human,
+        }
         signals[job_id] = total
 
     return FunctionalReportDetail(
