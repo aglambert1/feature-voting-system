@@ -175,6 +175,10 @@ class StoredJobAssessment(JobAssessment):
         default=None,
         description="Our score for this job, joined from the latest self-assessment"
     )
+    our_confidence: Optional[str] = Field(
+        default=None,
+        description="Confidence the self-assessment placed in our score for this job"
+    )
     self_assessment_version: Optional[int] = Field(
         default=None,
         description="Which self-assessment our_score came from"

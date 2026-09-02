@@ -9,6 +9,7 @@
  * - Competitor alerts display
  */
 
+import JobCoverageReport from './JobCoverageReport';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { format } from 'date-fns';
 import {
@@ -16,8 +17,7 @@ import {
   getFunctionalReport,
   triggerFunctionalAudit,
   exportFunctionalReportMd,
-  getGapIdeaStatuses,
-  exportGapsJson,
+  reviewJobAssessment,
   getAgentCompetitors,
   getAgentConfig,
   triggerCompetitorDiscovery,
@@ -33,7 +33,6 @@ import {
 import type {
   FunctionalReportSummary,
   FunctionalReportDetail,
-  BatchIdeaStatusesResponse,
   AgentCompetitor,
   CompetitiveAgentConfig,
   QueueJob,
@@ -242,10 +241,8 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
   // Detail view state
   const [selectedReport, setSelectedReport] = useState<FunctionalReportDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [gapIdeaStatuses, setGapIdeaStatuses] = useState<BatchIdeaStatusesResponse | null>(null);
 
   // Gap selection state
-  const [selectedGaps, setSelectedGaps] = useState<Set<number>>(new Set());
 
   // Modal state
   const [showAddCompetitorModal, setShowAddCompetitorModal] = useState(false);
@@ -427,13 +424,8 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
   const handleViewReport = async (competitorId: number) => {
     try {
       setDetailLoading(true);
-      const [report, statuses] = await Promise.all([
-        getFunctionalReport(productId, competitorId),
-        getGapIdeaStatuses(productId, competitorId),
-      ]);
+      const report = await getFunctionalReport(productId, competitorId);
       setSelectedReport(report);
-      setGapIdeaStatuses(statuses);
-      setSelectedGaps(new Set());
     } catch (err: any) {
       setError(err.message || 'Failed to load report');
     } finally {
@@ -441,10 +433,32 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     }
   };
 
+  const handleReviewJob = async (
+    jobId: string,
+    action: 'agree' | 'override' | 'clear',
+    position?: string
+  ) => {
+    if (!selectedReport) return;
+    try {
+      await reviewJobAssessment(
+        productId,
+        selectedReport.product_competitor_id,
+        jobId,
+        action,
+        position
+      );
+      // Re-fetch rather than patching locally: the server carries review state the
+      // client cannot reconstruct — staleness, and the wording the review was made
+      // against — so a local guess would drift from it.
+      const report = await getFunctionalReport(productId, selectedReport.product_competitor_id);
+      setSelectedReport(report);
+    } catch (err: any) {
+      setError(err.message || 'Failed to record review');
+    }
+  };
+
   const handleCloseDetail = () => {
     setSelectedReport(null);
-    setGapIdeaStatuses(null);
-    setSelectedGaps(new Set());
   };
 
   const handleRunAudit = async (competitorId: number, competitorName: string) => {
@@ -501,64 +515,6 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
     }
   };
 
-  const handleGapSelection = (gapIndex: number) => {
-    setSelectedGaps(prev => {
-      const next = new Set(prev);
-      if (next.has(gapIndex)) {
-        next.delete(gapIndex);
-      } else {
-        next.add(gapIndex);
-      }
-      return next;
-    });
-  };
-
-  const handleSelectAllGaps = () => {
-    if (!selectedReport) return;
-    const allGapIndices = selectedReport.gaps_deep_dive.map((_, i) => i);
-    if (selectedGaps.size === allGapIndices.length) {
-      setSelectedGaps(new Set());
-    } else {
-      setSelectedGaps(new Set(allGapIndices));
-    }
-  };
-
-  const handleExportGapsJson = async () => {
-    if (!selectedReport || selectedGaps.size === 0) return;
-
-    try {
-      setActionLoading('export-json');
-      const gapIndices = Array.from(selectedGaps);
-      const data = await exportGapsJson(productId, selectedReport.product_competitor_id, gapIndices);
-
-      // Create blob and download
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${selectedReport.competitor_name.replace(/\s+/g, '_')}_gaps.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err: any) {
-      setError(err.message || 'Failed to export gaps');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const getIdeaStatusForGap = (gapIndex: number) => {
-    if (!gapIdeaStatuses) return null;
-    return gapIdeaStatuses.statuses[gapIndex];
-  };
-
-  const countSelectedWithExistingIdeas = () => {
-    if (!gapIdeaStatuses) return 0;
-    return Array.from(selectedGaps).filter(idx => gapIdeaStatuses.statuses[idx]?.idea_created).length;
-  };
-
-  // Stats
   const totalCompetitors = competitors.length;
   const trackedCompetitors = competitors.filter(c => c.tracked);
   const untrackedCompetitors = competitors.filter(c => !c.tracked);
@@ -576,181 +532,77 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
 
   // Detail View (viewing a specific report)
   if (selectedReport) {
+    const jobAssessments = selectedReport.job_assessments ?? [];
+
     return (
-      <div className="p-6">
-        {/* Header */}
-        <div className="flex justify-between items-start mb-6">
-          <div>
-            <button
-              onClick={handleCloseDetail}
-              className="text-blue-600 hover:text-blue-800 mb-2 font-medium text-sm"
-            >
-              &larr; Back to Competitors
-            </button>
-            <h2 className="text-lg font-semibold text-gray-900">
-              Functional Audit: {selectedReport.competitor_name}
-            </h2>
-            <p className="text-sm text-gray-500">
-              Generated: {formatDateTime(selectedReport.generated_at)} | Version {selectedReport.report_version}
-            </p>
-          </div>
+      <div>
+        <div className="px-6 pt-6">
           <button
-            onClick={() => handleExportMd(selectedReport.product_competitor_id, selectedReport.competitor_name)}
-            disabled={actionLoading === `export-${selectedReport.product_competitor_id}`}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+            onClick={handleCloseDetail}
+            className="text-blue-600 hover:text-blue-800 font-medium text-sm"
           >
-            {actionLoading === `export-${selectedReport.product_competitor_id}` ? 'Exporting...' : 'Export .md'}
+            &larr; Back to Competitors
           </button>
         </div>
 
         {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
+          <div className="mx-6 mt-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
             {error}
           </div>
         )}
 
         {successMessage && (
-          <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
+          <div className="mx-6 mt-4 bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
             {successMessage}
           </div>
         )}
 
-        {/* Competitor Context */}
-        {selectedReport.competitor_context && (
-          <section className="mb-6">
-            <h3 className="text-md font-medium text-gray-900 mb-3">Competitor Context</h3>
-            <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-              <p><span className="font-medium">Primary Focus:</span> {selectedReport.competitor_context.positioning}</p>
-              <p><span className="font-medium">Target Market:</span> {selectedReport.competitor_context.target_customer}</p>
-              <p><span className="font-medium">Key Differentiator:</span> {selectedReport.competitor_context.core_differentiation}</p>
+        {jobAssessments.length > 0 ? (
+          <JobCoverageReport
+            productId={productId}
+            competitorName={selectedReport.competitor_name}
+            reportVersion={selectedReport.report_version}
+            generatedAt={formatDateTime(selectedReport.generated_at)}
+            positioning={selectedReport.competitor_context?.positioning ?? null}
+            targetCustomer={selectedReport.competitor_context?.target_customer ?? null}
+            jobAssessments={jobAssessments}
+            unmappedCapabilities={selectedReport.unmapped_capabilities ?? []}
+            changes={selectedReport.changes_from_previous}
+            selfAssessmentVersion={selectedReport.self_assessment_version}
+            selfAssessedAt={
+              selectedReport.self_assessed_at
+                ? formatDateTime(selectedReport.self_assessed_at)
+                : null
+            }
+            mapHealth={selectedReport.map_health}
+            verdictGrounding={selectedReport.verdict_grounding ?? {}}
+            corroboratingSignals={selectedReport.corroborating_signals ?? {}}
+            onReview={handleReviewJob}
+            onExport={() =>
+              handleExportMd(selectedReport.product_competitor_id, selectedReport.competitor_name)
+            }
+            exporting={actionLoading === `export-${selectedReport.product_competitor_id}`}
+          />
+        ) : (
+          // Without a job map there is nothing to organise the report around. The audit
+          // still ran and its markdown export still holds, but the comparison this view
+          // exists to show cannot be built.
+          <div className="p-6">
+            <h2 className="text-lg font-semibold text-gray-900">
+              {selectedReport.competitor_name}
+            </h2>
+            <div className="mt-4 bg-amber-50 rounded-lg p-4 text-sm text-gray-800 max-w-2xl">
+              <b>This audit has no job assessments.</b>
+              <p className="text-gray-600 mt-1">
+                Competitor reports are organised around the jobs your customers are trying to
+                do. Build a job map for this product, then re-run the audit to see how{' '}
+                {selectedReport.competitor_name} serves each one.
+              </p>
             </div>
-          </section>
+          </div>
         )}
 
-        {/* Feature Comparison Table */}
-        {selectedReport.functional_comparison.length > 0 && (
-          <section className="mb-6">
-            <h3 className="text-md font-medium text-gray-900 mb-3">Feature Comparison</h3>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Feature</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Your Product</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{selectedReport.competitor_name}</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Notes</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {selectedReport.functional_comparison.map((comp, idx) => (
-                    <tr key={idx}>
-                      <td className="px-4 py-3 text-sm text-gray-900">{comp.competitor_feature_name}</td>
-                      <td className="px-4 py-3 text-sm">
-                        {comp.mapping_status === 'Gap' ? (
-                          <span className="text-red-600">&#10007;</span>
-                        ) : comp.mapping_status === 'Advantage' ? (
-                          <span className="text-green-600">&#10003; {comp.our_equivalent}</span>
-                        ) : (
-                          <span className="text-gray-600">&#10003; {comp.our_equivalent || ''}</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">&#10003;</td>
-                      <td className="px-4 py-3 text-sm text-gray-500">{comp.notes || comp.functional_description?.slice(0, 50)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
-
-        {/* Gap Analysis with Selection */}
-        {selectedReport.gaps_deep_dive.length > 0 && (
-          <section className="mb-6">
-            <h3 className="text-md font-medium text-gray-900 mb-3">Gap Analysis</h3>
-            <p className="text-sm text-gray-500 mb-4">
-              Select gaps to create ideas for voting or export to another system.
-            </p>
-
-            <div className="flex items-center gap-4 mb-4">
-              <button
-                onClick={handleSelectAllGaps}
-                className="text-sm text-blue-600 hover:text-blue-800"
-              >
-                {selectedGaps.size === selectedReport.gaps_deep_dive.length ? 'Deselect All' : 'Select All'}
-              </button>
-              <span className="text-sm text-gray-500">
-                {selectedGaps.size} of {selectedReport.gaps_deep_dive.length} gaps selected
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {selectedReport.gaps_deep_dive.map((gap, idx) => {
-                const ideaStatus = getIdeaStatusForGap(idx);
-                const hasIdea = ideaStatus?.idea_created;
-
-                return (
-                  <div
-                    key={idx}
-                    className={`border rounded-lg p-4 ${selectedGaps.has(idx) ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedGaps.has(idx)}
-                        onChange={() => handleGapSelection(idx)}
-                        className="mt-1 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-medium text-gray-900">{gap.feature_name}</h4>
-                          {hasIdea && (
-                            <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                              Idea submitted for voting
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm text-gray-700 mt-1">
-                          <span className="font-medium">User Problem:</span> {gap.user_problem}
-                        </p>
-                        {gap.evidence && (
-                          <p className="text-sm text-gray-500 mt-1">
-                            <span className="font-medium">Evidence:</span> {gap.evidence}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Action Box */}
-            {selectedGaps.size > 0 && (
-              <div className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-4">
-                <p className="text-sm text-gray-700 mb-3">
-                  {selectedGaps.size} gap{selectedGaps.size !== 1 ? 's' : ''} selected
-                </p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleExportGapsJson}
-                    disabled={actionLoading === 'export-json'}
-                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium text-sm disabled:opacity-50"
-                  >
-                    {actionLoading === 'export-json' ? 'Exporting...' : 'Export Selected as JSON'}
-                  </button>
-                </div>
-                {countSelectedWithExistingIdeas() > 0 && (
-                  <p className="text-xs text-gray-500 mt-2">
-                    Note: {countSelectedWithExistingIdeas()} selected gap{countSelectedWithExistingIdeas() !== 1 ? 's' : ''} already
-                    {countSelectedWithExistingIdeas() !== 1 ? ' have' : ' has'} an idea from a previous run.
-                  </p>
-                )}
-              </div>
-            )}
-          </section>
-        )}
-
+        <div className="px-6 pb-6">
         {/* Technical Constraints */}
         {selectedReport.technical_constraints && (
           <section className="mb-6">
@@ -785,6 +637,7 @@ export default function CompetitorReportsTab({ productId, refreshKey }: Props) {
             </div>
           </section>
         )}
+        </div>
       </div>
     );
   }

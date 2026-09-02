@@ -26,6 +26,7 @@ import ProductListPage from './pages/CompetitorIntelligence/ProductListPage';
 import CreateProductPage from './pages/CompetitorIntelligence/CreateProductPage';
 import AnalyzeProductPage from './pages/CompetitorIntelligence/AnalyzeProductPage';
 import ProductDetailPage from './pages/CompetitorIntelligence/ProductDetailPage';
+import JobDetailPage from './pages/CompetitorIntelligence/JobDetailPage';
 import JobMapEditorPage from './pages/CompetitorIntelligence/JobMapEditorPage';
 import JobMapReviewPage from './pages/CompetitorIntelligence/JobMapReviewPage';
 import ProductDashboardPage from './pages/ProductDashboardPage';
@@ -206,6 +207,16 @@ function App() {
               <ProtectedRoute>
                 <ProductOwnerRoute>
                   <JobMapEditorPage />
+                </ProductOwnerRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/product-intelligence/products/:productId/job-coverage/:jobId"
+            element={
+              <ProtectedRoute>
+                <ProductOwnerRoute>
+                  <JobDetailPage />
                 </ProductOwnerRoute>
               </ProtectedRoute>
             }

@@ -813,6 +813,7 @@ import type {
   FunctionalReportSummary,
   FunctionalReportDetail,
   BatchIdeaStatusesResponse,
+  JobCoverageResponse,
 } from '../types';
 
 /**
@@ -823,6 +824,48 @@ export const getFunctionalReports = async (productId: number): Promise<Functiona
     `/product-intelligence/agents/${productId}/functional-reports`
   );
   return response.data;
+};
+
+/**
+ * Our score beside every tracked competitor's, one row per job.
+ *
+ * A join over audits that have already run — no LLM, and not gated behind synthesis,
+ * which answers a different question.
+ */
+export const getJobCoverage = async (productId: number): Promise<JobCoverageResponse> => {
+  const response = await api.get<JobCoverageResponse>(
+    `/product-intelligence/products/${productId}/job-coverage`
+  );
+  return response.data;
+};
+
+/** Queue a self-assessment of our product against its job map. */
+export const runSelfAssessment = async (productId: number): Promise<{ job_id: number }> => {
+  const response = await api.post(
+    `/product-intelligence/products/${productId}/self-assessment`
+  );
+  return response.data;
+};
+
+/**
+ * Record a PM's judgement on one (job, competitor) assessment.
+ *
+ * `agree` records that a human looked and the system verdict stands — it deliberately
+ * sets no position, so the verdict can still be re-derived later. `override` replaces it.
+ * `clear` returns to unreviewed, which is not the same as agreeing.
+ */
+export const reviewJobAssessment = async (
+  productId: number,
+  competitorId: number,
+  jobId: string,
+  action: 'agree' | 'override' | 'clear',
+  position?: string,
+  note?: string
+): Promise<void> => {
+  await api.post(
+    `/product-intelligence/products/${productId}/competitors/${competitorId}/job-assessments/${jobId}/review`,
+    { action, position, note }
+  );
 };
 
 /**
@@ -874,21 +917,6 @@ export const getGapIdeaStatuses = async (
 ): Promise<BatchIdeaStatusesResponse> => {
   const response = await api.get<BatchIdeaStatusesResponse>(
     `/product-intelligence/agents/${productId}/competitors/${competitorId}/gaps/idea-statuses`
-  );
-  return response.data;
-};
-
-/**
- * Export selected gaps as JSON
- */
-export const exportGapsJson = async (
-  productId: number,
-  competitorId: number,
-  gapIndices: number[]
-): Promise<any> => {
-  const response = await api.post(
-    `/product-intelligence/agents/${productId}/competitors/${competitorId}/gaps/export-json`,
-    { gap_indices: gapIndices }
   );
   return response.data;
 };

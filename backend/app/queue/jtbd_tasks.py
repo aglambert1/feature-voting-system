@@ -406,11 +406,12 @@ def _refresh_competitor_positions(db, product_id: int, assessment) -> int:
     from app.models.competitive_reports import CompetitorFunctionalReport
     from app.utils.job_position import enrich_assessments
 
-    self_scores = {
-        entry.get("job_id"): entry.get("score")
-        for entry in (assessment.job_assessments or [])
+    entries = [
+        entry for entry in (assessment.job_assessments or [])
         if isinstance(entry, dict) and entry.get("job_id")
-    }
+    ]
+    self_scores = {e["job_id"]: e.get("score") for e in entries}
+    self_confidences = {e["job_id"]: e.get("confidence") for e in entries}
 
     reports = db.query(CompetitorFunctionalReport).filter(
         CompetitorFunctionalReport.product_id == product_id
@@ -425,6 +426,7 @@ def _refresh_competitor_positions(db, product_id: int, assessment) -> int:
             previous_assessments=report.job_assessments,
             self_scores=self_scores,
             self_assessment_version=assessment.assessment_version,
+            self_confidences=self_confidences,
         )
         refreshed += 1
 

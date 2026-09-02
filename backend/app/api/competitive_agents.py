@@ -276,7 +276,19 @@ class FunctionalReportDetail(BaseModel):
     functional_comparison: Optional[List[dict]] = None
     gaps_deep_dive: Optional[List[dict]] = None
     technical_constraints: Optional[dict] = None
+    job_assessments: Optional[List[dict]] = None
+    unmapped_capabilities: Optional[List[dict]] = None
+    changes_from_previous: Optional[dict] = None
     generated_at: Optional[datetime] = None
+
+    # Whether each job's comparison verdict is worth stating, keyed by job_id. Decided
+    # here rather than in the client so this report, the markdown export and the MCP
+    # tools cannot disagree about which verdicts are trustworthy.
+    verdict_grounding: Optional[dict] = None
+    corroborating_signals: Optional[dict] = None
+    self_assessment_version: Optional[int] = None
+    self_assessed_at: Optional[datetime] = None
+    map_health: Optional[dict] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1199,6 +1211,26 @@ def get_functional_report(
     if not report:
         return None
 
+    from app.models.competitive_reports import ProductSelfAssessment
+    from app.services.job_provenance import map_health, signal_counts
+    from app.utils.job_position import verdict_grounding as _verdict_grounding
+
+    self_assessment = db.query(ProductSelfAssessment).filter(
+        ProductSelfAssessment.product_id == product_id
+    ).order_by(ProductSelfAssessment.assessment_version.desc()).first()
+
+    corroboration = signal_counts(db, product_id)
+    grounding: dict = {}
+    signals: dict = {}
+    for entry in (report.job_assessments or []):
+        if not isinstance(entry, dict) or not entry.get("job_id"):
+            continue
+        job_id = entry["job_id"]
+        total = (corroboration.get(job_id) or {}).get("total", 0)
+        shown, reason = _verdict_grounding(entry.get("our_confidence"), total)
+        grounding[job_id] = {"shown": shown, "reason": reason}
+        signals[job_id] = total
+
     return FunctionalReportDetail(
         id=report.id,
         product_competitor_id=report.product_competitor_id,
@@ -1210,7 +1242,17 @@ def get_functional_report(
         functional_comparison=report.functional_comparison,
         gaps_deep_dive=report.gaps_deep_dive,
         technical_constraints=report.technical_constraints,
-        generated_at=report.generated_at
+        job_assessments=report.job_assessments,
+        unmapped_capabilities=report.unmapped_capabilities,
+        changes_from_previous=report.changes_from_previous,
+        generated_at=report.generated_at,
+        verdict_grounding=grounding,
+        corroborating_signals=signals,
+        self_assessment_version=(
+            self_assessment.assessment_version if self_assessment else None
+        ),
+        self_assessed_at=self_assessment.generated_at if self_assessment else None,
+        map_health=map_health(db, product_id),
     )
 
 
@@ -1238,9 +1280,49 @@ def export_functional_report(
             detail=f"No functional report found for competitor {competitor_id}"
         )
 
-    # Return markdown content
+    # Generate from the stored structured data rather than serving the markdown
+    # snapshot taken at audit time. That snapshot goes stale the moment anything
+    # downstream changes it — a PM override, a self-assessment refreshing our score and
+    # every derived position, or a schema addition older reports never captured. The
+    # structured fields are the source of truth, so render from them.
+    markdown = report.report_content_md
+    try:
+        from app.agents.functional_audit_agent import generate_markdown_report
+        from app.schemas.competitive_reports import StoredFunctionalAuditOutput
+
+        from app.services.job_provenance import signal_counts
+        from app.utils.job_position import verdict_grounding as _vg
+
+        corroboration = signal_counts(db, product_id)
+        withheld = {
+            e["job_id"]
+            for e in (report.job_assessments or [])
+            if isinstance(e, dict) and e.get("job_id")
+            and not _vg(
+                e.get("our_confidence"),
+                (corroboration.get(e["job_id"]) or {}).get("total", 0),
+            )[0]
+        }
+
+        markdown = generate_markdown_report(
+            competitor.competitor_name,
+            StoredFunctionalAuditOutput(
+                competitor_context=report.competitor_context or {},
+                functional_comparison=report.functional_comparison or [],
+                gaps_deep_dive=report.gaps_deep_dive or [],
+                technical_constraints=report.technical_constraints or {},
+                job_assessments=report.job_assessments or [],
+                unmapped_capabilities=report.unmapped_capabilities or [],
+            ),
+            withheld_job_ids=withheld,
+        )
+    except Exception as render_err:
+        # Fall back to the snapshot rather than failing the download — a stale report
+        # is more use than none.
+        print(f"[export_functional_report] regenerate failed, using stored: {render_err}")
+
     return PlainTextResponse(
-        content=report.report_content_md or "# No report content available",
+        content=markdown or "# No report content available",
         media_type="text/markdown",
         headers={
             "Content-Disposition": f"attachment; filename={competitor.competitor_name.replace(' ', '_')}_functional_audit.md"
@@ -1370,96 +1452,4 @@ class ExportGapsRequest(BaseModel):
         min_length=1,
         max_length=50,
         description="Indices of gaps to export (0-indexed)"
-    )
-
-
-@router.post("/{product_id}/competitors/{competitor_id}/gaps/export-json")
-def export_gaps_json(
-    product_id: int,
-    competitor_id: int,
-    request: ExportGapsRequest,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Export selected competitor gaps as JSON.
-
-    Returns a portable JSON format suitable for import into
-    external roadmap or backlog management tools.
-    """
-    from fastapi.responses import JSONResponse
-
-    verify_product_access(db, product_id, current_user)
-
-    # Get product name
-    product = db.query(CIProduct).filter(CIProduct.id == product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
-
-    # Get competitor name
-    competitor = db.query(ProductCompetitor).filter(
-        ProductCompetitor.id == competitor_id
-    ).first()
-    if not competitor:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Competitor not found"
-        )
-
-    # Get the functional report
-    report = db.query(CompetitorFunctionalReport).filter(
-        CompetitorFunctionalReport.product_competitor_id == competitor_id,
-        CompetitorFunctionalReport.product_id == product_id
-    ).first()
-
-    if not report:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No functional report found for this competitor."
-        )
-
-    if not report.gaps_deep_dive:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No gaps in the functional report."
-        )
-
-    # Validate indices
-    max_index = len(report.gaps_deep_dive) - 1
-    invalid_indices = [i for i in request.gap_indices if i < 0 or i > max_index]
-    if invalid_indices:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid gap indices: {invalid_indices}. Valid range: 0-{max_index}"
-        )
-
-    # Build export data for selected gaps
-    selected_gaps = [
-        report.gaps_deep_dive[idx]
-        for idx in request.gap_indices
-    ]
-
-    export_data = {
-        "version": "1.0",
-        "generated_at": report.generated_at.isoformat() if report.generated_at else None,
-        "product_id": product_id,
-        "product_name": product.product_name,
-        "competitor_id": competitor_id,
-        "competitor_name": competitor.competitor_name,
-        "gaps": selected_gaps,
-        "metadata": {
-            "total_gaps_in_report": len(report.gaps_deep_dive),
-            "exported_count": len(selected_gaps),
-            "report_version": report.report_version,
-        }
-    }
-
-    return JSONResponse(
-        content=export_data,
-        headers={
-            "Content-Disposition": f"attachment; filename={competitor.competitor_name.replace(' ', '_')}_gaps_v{report.report_version}.json"
-        }
     )

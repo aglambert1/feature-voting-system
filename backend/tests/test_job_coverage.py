@@ -60,6 +60,21 @@ def _report(db_session, product, competitor, assessments):
     return report
 
 
+def _evidence_for_job(db_session, product, job_id_key):
+    from app.models.evidence import Evidence, EvidenceType
+
+    ev = Evidence(
+        product_id=product.id,
+        evidence_type=EvidenceType.CUSTOMER_INTERVIEW,
+        title="A customer described this struggle",
+        content="...",
+        job_id_key=job_id_key,
+    )
+    db_session.add(ev)
+    db_session.commit()
+    return ev
+
+
 def _self_assessment(db_session, product, entries, version=1, evidence_based=True):
     assessment = ProductSelfAssessment(
         product_id=product.id,
@@ -576,3 +591,87 @@ class TestMapHealthOnCoverage:
         )
 
         assert resp.json()["map_health"]["independent_source_pct"] == 0
+
+
+class TestVerdictWithholding:
+    """A verdict is a claim about how we compare, and is only as good as our own score.
+
+    The job map is usually generated from the product's own description, so a low-confidence
+    self-score with nothing corroborating it is close to a restatement of marketing copy.
+    Rendering that as a confident GAP is worse than saying nothing, because a reader cannot
+    tell it apart from a grounded one.
+    """
+
+    def _setup(self, db_session, product, our_confidence, with_evidence=False):
+        _job(db_session, product, "j1")
+        comp = _competitor(db_session, product, "Productboard")
+        _report(db_session, product, comp, [{
+            "job_id": "j1",
+            "competitor_score": 8,
+            "system_position": "gap",
+        }])
+        _self_assessment(db_session, product, [{
+            "job_id": "j1", "score": 4, "confidence": our_confidence,
+        }])
+        if with_evidence:
+            _evidence_for_job(db_session, product, "j1")
+        return comp
+
+    def test_withheld_when_our_score_is_ungrounded(
+        self, db_session, client, test_product, po_user
+    ):
+        self._setup(db_session, test_product, "low")
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage",
+            headers=auth_headers(po_user),
+        )
+
+        cell = resp.json()["jobs"][0]["competitors"][0]
+        assert cell["verdict_shown"] is False
+        assert "product description" in cell["verdict_withheld_reason"]
+
+    def test_competitor_score_is_still_reported_when_withheld(
+        self, db_session, client, test_product, po_user
+    ):
+        # Their side is researched independently of our map and is unaffected by its
+        # weakness — withholding it too would discard sound data.
+        self._setup(db_session, test_product, "low")
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage",
+            headers=auth_headers(po_user),
+        )
+
+        cell = resp.json()["jobs"][0]["competitors"][0]
+        assert cell["competitor_score"] == 8
+
+    def test_shown_when_confidence_is_not_low(
+        self, db_session, client, test_product, po_user
+    ):
+        self._setup(db_session, test_product, "medium")
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage",
+            headers=auth_headers(po_user),
+        )
+
+        cell = resp.json()["jobs"][0]["competitors"][0]
+        assert cell["verdict_shown"] is True
+        assert cell["verdict_withheld_reason"] is None
+
+    def test_corroborating_signal_rescues_a_low_confidence_score(
+        self, db_session, client, test_product, po_user
+    ):
+        # Provenance is not the trigger — grounding is. A job carrying real customer
+        # signal deserves a verdict even when the map entry came from product copy.
+        self._setup(db_session, test_product, "low", with_evidence=True)
+
+        resp = client.get(
+            f"/product-intelligence/products/{test_product.id}/job-coverage",
+            headers=auth_headers(po_user),
+        )
+
+        row = resp.json()["jobs"][0]
+        assert row["corroborating_signals"] == 1
+        assert row["competitors"][0]["verdict_shown"] is True

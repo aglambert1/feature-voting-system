@@ -33,9 +33,10 @@ from app.models.competitor_intelligence import (
 )
 from app.models.queue import JobType as QueueJobType
 from app.models.user import User
-from app.services.job_provenance import map_health
+from app.services.job_provenance import map_health, signal_counts
 from app.services.queue_service import QueueService
 from app.utils.celery_utils import send_celery_task as send_task
+from app.utils.job_position import verdict_grounding
 from app.utils.security import get_current_active_user
 
 router = APIRouter(
@@ -154,6 +155,10 @@ def get_job_coverage(
         if isinstance(entry, dict) and entry.get("job_id")
     }
 
+    # Corroboration is what can rescue a low-confidence self-score: a job carrying real
+    # customer signal is grounded even when the map entry itself came from product copy.
+    corroboration = signal_counts(db, product_id)
+
     now = datetime.now(timezone.utc)
     competitor_columns: List[Dict[str, Any]] = []
     assessments_by_competitor: Dict[int, Dict[str, Dict[str, Any]]] = {}
@@ -200,11 +205,20 @@ def get_job_coverage(
                     "assessed": False,
                 })
                 continue
+            grounded, withheld_reason = verdict_grounding(
+                self_entry.get("confidence"),
+                (corroboration.get(job.job_id_key) or {}).get("total", 0),
+            )
             cells.append({
                 "competitor_id": competitor.id,
                 "assessed": True,
                 "competitor_score": entry.get("competitor_score"),
                 "system_position": entry.get("system_position"),
+                # The verdict is a claim about how we compare, and it is only as good as
+                # our own score. Withheld where ours is ungrounded — the competitor's
+                # score is researched independently and still reported at full strength.
+                "verdict_shown": grounded,
+                "verdict_withheld_reason": withheld_reason,
                 # Authoritative for display where a PM has overridden; the system
                 # verdict is kept alongside rather than replaced.
                 "human_position": entry.get("human_position"),
@@ -222,6 +236,7 @@ def get_job_coverage(
             "provenance": job.provenance,
             "our_score": self_entry.get("score"),
             "our_confidence": self_entry.get("confidence"),
+            "corroborating_signals": (corroboration.get(job.job_id_key) or {}).get("total", 0),
             "competitors": cells,
         })
 
@@ -380,3 +395,93 @@ def review_job_assessment(
         "reviewed_at": updated.get("reviewed_at"),
         "review_stale": updated.get("review_stale", False),
     }
+
+
+@router.get("/{product_id}/job-coverage/export")
+def export_job_coverage(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Export the coverage matrix as markdown.
+
+    The cross-competitor view is the one that goes into a planning deck, so it needs to
+    leave the app. Rendered from the same data and the same withholding rule as the
+    screen — a document read without the app beside it must not state a verdict the app
+    itself declines to.
+    """
+    from fastapi.responses import PlainTextResponse
+
+    _verify_access_or_404 = _verify_product_access(db, product_id, current_user)
+    coverage = get_job_coverage(product_id, 30, db, current_user)
+
+    lines = [
+        f"# Job coverage — {coverage['product_name']}",
+        "",
+        f"_{len(coverage['competitors'])} tracked competitor(s). "
+        f"Sorted by importance, then weakest coverage._",
+        "",
+    ]
+
+    health = coverage["map_health"]
+    if health["total_jobs"]:
+        lines += [
+            f"**Map health:** {health['independent_source_pct']}% of jobs have a source "
+            f"other than the product description.",
+            "",
+        ]
+    if coverage["self_assessment"]["evidence_based"] is False:
+        lines += [
+            "> Our scores rest only on the product description, which is also what the "
+            "job map was generated from. Read them as the product's own claim rather "
+            "than a measurement.",
+            "",
+        ]
+
+    names = [c["competitor_name"] for c in coverage["competitors"]]
+    lines.append("| Job | Importance | Us | " + " | ".join(names) + " |")
+    lines.append("|---|---|---|" + "---|" * len(names))
+
+    for row in coverage["jobs"]:
+        cells = []
+        for col in coverage["competitors"]:
+            cell = next(
+                (c for c in row["competitors"] if c["competitor_id"] == col["competitor_id"]),
+                None,
+            )
+            if not cell or not cell.get("assessed"):
+                cells.append("not audited")
+                continue
+            score = cell.get("competitor_score")
+            if cell.get("verdict_shown") is False:
+                cells.append(f"{score} (no verdict)")
+            else:
+                verdict = cell.get("human_position") or cell.get("system_position") or "unknown"
+                marker = " *(yours)*" if cell.get("human_position") else ""
+                cells.append(f"{score} — {verdict}{marker}")
+
+        grounded = any(
+            c.get("assessed") and c.get("verdict_shown") is not False
+            for c in row["competitors"]
+        ) or not any(c.get("assessed") for c in row["competitors"])
+        our = row["our_score"] if (grounded and row["our_score"] is not None) else "—"
+
+        statement = (row["job_statement"] or "").replace("|", "\\|")
+        lines.append(
+            f"| **{row['job_id']}** {statement} | {row['importance']} | {our} | "
+            + " | ".join(cells)
+            + " |"
+        )
+
+    lines += [
+        "",
+        "_Where no verdict is shown, our own score for that job is not grounded enough "
+        "to compare. The competitor's score is researched independently and stands._",
+    ]
+
+    safe = (coverage["product_name"] or "product").replace(" ", "_")
+    return PlainTextResponse(
+        content="\n".join(lines),
+        media_type="text/markdown",
+        headers={"Content-Disposition": f"attachment; filename={safe}_job_coverage.md"},
+    )

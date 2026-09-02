@@ -19,10 +19,11 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import Navigation from "../../components/Navigation";
 import AgentSettingsTab from "./components/AgentSettingsTab";
 import CompetitorReportsTab from "./components/CompetitorReportsTab";
+import JobCoverageMatrix from "./components/JobCoverageMatrix";
 import api from "../../services/api";
 
 // Tab configuration (Landscape Analysis moved to SynthesisHubPage)
-type TabId = "competitor-reports" | "settings";
+type TabId = "competitor-reports" | "job-coverage" | "settings";
 
 interface Tab {
   id: TabId;
@@ -31,6 +32,20 @@ interface Tab {
 }
 
 const tabs: Tab[] = [
+  {
+    id: "job-coverage",
+    label: "Job Coverage",
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M4 6h16M4 12h16M4 18h16M8 6v12M16 6v12"
+        />
+      </svg>
+    ),
+  },
   {
     id: "competitor-reports",
     label: "Competitor Reports",
@@ -221,6 +236,9 @@ export default function IntelligenceHubPage() {
             <CompetitorReportsTab
               productId={numProductId}
             />
+          )}
+          {activeTab === "job-coverage" && (
+            <JobCoverageMatrix productId={numProductId} />
           )}
           {activeTab === "settings" && (
             <AgentSettingsTab productId={numProductId} />

@@ -722,7 +722,7 @@ export default function ProductDetailPage() {
               {/* Actions */}
               <div className="pt-2 border-t border-gray-100">
                 <Link
-                  to={`/product-intelligence/products/${productId}/intelligence?tab=competitor-reports`}
+                  to={`/product-intelligence/products/${productId}/intelligence?tab=job-coverage`}
                   className="text-blue-600 hover:text-blue-800 font-medium text-sm"
                 >
                   View Reports →
