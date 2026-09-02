@@ -1022,7 +1022,10 @@ export interface FunctionalReportDetail {
   job_status: string | null;
 
   /** Server-decided per job. The client renders this; it must not re-derive it. */
-  verdict_grounding: Record<string, { shown: boolean; reason: string | null }> | null;
+  verdict_grounding: Record<
+    string,
+    { shown: boolean; reason: string | null; grounded_by_human?: boolean }
+  > | null;
   corroborating_signals: Record<string, number> | null;
   self_assessment_version: number | null;
   self_assessed_at: string | null;
