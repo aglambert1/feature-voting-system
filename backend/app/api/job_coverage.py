@@ -159,6 +159,22 @@ def get_job_coverage(
     # customer signal is grounded even when the map entry itself came from product copy.
     corroboration = signal_counts(db, product_id)
 
+    # A human judgement is only evidence if you can see whose it is. reviewed_by is
+    # stored as a bare user id and has never surfaced anywhere, which makes an override
+    # unattributable — resolve it once here rather than per cell.
+    reviewer_ids = {
+        entry.get("reviewed_by")
+        for report in reports
+        for entry in (report.job_assessments or [])
+        if isinstance(entry, dict) and entry.get("reviewed_by")
+    }
+    reviewers = {
+        u.id: (u.full_name or u.username)
+        for u in (
+            db.query(User).filter(User.id.in_(reviewer_ids)).all() if reviewer_ids else []
+        )
+    }
+
     now = datetime.now(timezone.utc)
     competitor_columns: List[Dict[str, Any]] = []
     assessments_by_competitor: Dict[int, Dict[str, Dict[str, Any]]] = {}
@@ -208,6 +224,7 @@ def get_job_coverage(
             grounded, withheld_reason = verdict_grounding(
                 self_entry.get("confidence"),
                 (corroboration.get(job.job_id_key) or {}).get("total", 0),
+                entry.get("human_position"),
             )
             cells.append({
                 "competitor_id": competitor.id,
@@ -224,10 +241,38 @@ def get_job_coverage(
                 "human_position": entry.get("human_position"),
                 "review_stale": entry.get("review_stale", False),
                 "review_note": entry.get("review_note"),
+                "reviewed_by_name": reviewers.get(entry.get("reviewed_by")),
+                "reviewed_at": entry.get("reviewed_at"),
                 "confidence": entry.get("confidence"),
             })
 
+        # A PM who judges the comparison on this job has applied knowledge the product
+        # description does not contain, which is what our score was missing. So their
+        # call grounds the row, not just the cell it was made on.
+        human_entries = [
+            e for e in (
+                assessments_by_competitor.get(c.id, {}).get(job.job_id_key)
+                for c in competitors
+            )
+            if e and e.get("human_position")
+        ]
+        our_score_grounded, our_score_reason = verdict_grounding(
+            self_entry.get("confidence"),
+            (corroboration.get(job.job_id_key) or {}).get("total", 0),
+            "reviewed" if human_entries else None,
+        )
+        # Say whose judgement it rests on. "Grounded by a human" is not evidence;
+        # "grounded by A.G. Lambert on 28 Aug" is something a reader can weigh or chase.
+        grounded_by = sorted({
+            name for name in (
+                reviewers.get(e.get("reviewed_by")) for e in human_entries
+            ) if name
+        })
+
         rows.append({
+            "our_score_grounded": our_score_grounded,
+            "our_score_withheld_reason": our_score_reason,
+            "our_score_grounded_by": grounded_by,
             "job_id": job.job_id_key,
             "job_statement": job.statement,
             "job_type": job.job_type.value if job.job_type else None,
@@ -466,7 +511,11 @@ def export_job_coverage(
                 cells.append(f"{score} (no verdict)")
             else:
                 verdict = human or cell.get("system_position") or "unknown"
-                marker = " *(yours)*" if human else ""
+                if human:
+                    who = cell.get("reviewed_by_name") or "a reviewer"
+                    marker = f" *({who}'s call)*"
+                else:
+                    marker = ""
                 cells.append(f"{score} — {verdict}{marker}")
 
         grounded = any(
@@ -487,6 +536,9 @@ def export_job_coverage(
         "",
         "_Where no verdict is shown, our own score for that job is not grounded enough "
         "to compare. The competitor's score is researched independently and stands._",
+        "",
+        "_A verdict attributed to a person is their judgement, which is what grounds "
+        "that row — the scores alone did not._",
     ]
 
     safe = (coverage["product_name"] or "product").replace(" ", "_")

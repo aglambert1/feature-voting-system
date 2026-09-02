@@ -305,9 +305,9 @@ export default function JobCoverageMatrix({ productId }: Props) {
           </thead>
           <tbody>
             {sorted.map((row) => {
-              const assessedCells = row.competitors.filter((c) => c.assessed);
-              const rowGrounded =
-                assessedCells.length === 0 || assessedCells.some((c) => c.verdict_shown !== false);
+              // Server-decided: our score is grounded by evidence, by non-low
+              // confidence, or by a PM having judged this job on any competitor.
+              const rowGrounded = row.our_score_grounded;
               return (
               <tr key={row.job_id} className="border-b border-gray-200 last:border-b-0">
                 <td className="px-4 py-3 align-top">

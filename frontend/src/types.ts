@@ -1167,6 +1167,9 @@ export interface JobCoverageRow {
   provenance: { type: string; source_ref: string | null; added_at: string } | null;
   our_score: number | null;
   our_confidence: ReviewConfidence | null;
+  /** False when our score rests only on the product description and nobody has judged it. */
+  our_score_grounded: boolean;
+  our_score_withheld_reason: string | null;
   corroborating_signals: number;
   competitors: JobCoverageCell[];
 }
