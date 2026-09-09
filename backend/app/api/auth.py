@@ -37,7 +37,6 @@ from app.schemas.auth import (
     MessageResponse,
     PasswordResetResponse,
     DevOTPResponse,
-    AdminPasswordResetResponse,
     MFASetupResponse,
     MFAVerifyRequest,
     MFADisableRequest,
@@ -140,13 +139,16 @@ def register(
     else:
         assigned_role = UserRole.VOTER
 
-    # Create new user with hashed password
+    # Create new user with hashed password. Admin-created accounts must
+    # change the admin-chosen password on first login, since the admin
+    # who set it otherwise retains a permanently working credential.
     new_user = User(
         email=user_data.email,
         username=user_data.username,
         hashed_password=hash_password(user_data.password),
         full_name=user_data.full_name,
         role=assigned_role,
+        must_change_password=is_admin_creating,
     )
 
     db.add(new_user)
@@ -564,18 +566,28 @@ async def get_login_history(
     ]
 
 
-@router.post("/users/{user_id}/reset-password", response_model=AdminPasswordResetResponse)
+@router.post("/users/{user_id}/reset-password", response_model=MessageResponse)
+@limiter.limit("3/minute")
 async def admin_reset_password(
+    request: Request,
     user_id: int,
     current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """
-    Admin-initiated password reset. Generates a temporary password,
-    sets must_change_password flag, and invalidates existing sessions.
-    """
-    import secrets
+    Admin-triggered password reset. Sends a password-reset OTP to the
+    target user's own registered email — the same flow as self-service
+    reset-request. The admin never sees a working credential for the
+    account; only the user's own inbox does.
 
+    This no longer gives an admin an immediate way to kill a compromised
+    user's password/sessions on the spot (that required generating and
+    knowing a new password, which was the vulnerability). For urgent
+    lockdown, deactivate the account instead — PATCH /users/{id}/deactivate
+    takes effect immediately (checked per-request via is_active), no OTP
+    round-trip required — then reactivate once the legitimate user has
+    completed their own reset.
+    """
     if user_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -589,16 +601,11 @@ async def admin_reset_password(
             detail="User not found"
         )
 
-    temporary_password = secrets.token_urlsafe(9)
-    user.hashed_password = hash_password(temporary_password)
-    user.must_change_password = True
-    user.tokens_valid_after = datetime.now(timezone.utc)
-    db.commit()
+    _trigger_password_reset_otp(user, db)
 
-    return AdminPasswordResetResponse(
-        message="Password has been reset. Share the temporary password with the user securely.",
-        temporary_password=temporary_password,
-        username=user.username,
+    return MessageResponse(
+        message="Password reset email sent.",
+        detail=f"A password reset code has been sent to {user.email}.",
     )
 
 
@@ -607,53 +614,20 @@ async def admin_reset_password(
 # =============================================================================
 
 
-@router.post("/password/reset-request", response_model=PasswordResetResponse)
-@limiter.limit("3/minute")
-async def request_password_reset(
-    request: Request,
-    reset_request: PasswordResetRequest,
-    db: Session = Depends(get_db)
-):
+def _trigger_password_reset_otp(user: User, db: Session) -> str:
     """
-    Request a password reset (sends OTP to email).
+    Generate a password-reset OTP for `user`, store it, and email it to
+    their registered address. Returns the OTP (callers decide whether it's
+    safe to expose, e.g. dev-mode debugging only).
 
-    This is a public endpoint - no authentication required.
-    User provides their email and receives a 6-digit OTP code.
-
-    Steps:
-    1. Find user by email
-    2. Generate 6-digit OTP
-    3. Store OTP in database with expiration (15 minutes)
-    4. Send OTP to user's email
-    5. Return success message
-
-    Args:
-        request: Password reset request with email
-        db: Database session
-
-    Returns:
-        Success message
-
-    Raises:
-        404 Not Found: If email doesn't exist (for security, we may want to return success anyway)
+    Shared by the self-service reset-request flow and the admin-triggered
+    reset, so that in both cases only the user's own inbox ever receives a
+    working credential.
     """
     from app.models.password_reset import PasswordResetToken
     from app.utils.otp import generate_otp, get_otp_expiration
     from app.utils.email import email_service
     from app.config import settings
-    from datetime import datetime, timezone
-
-    # Find user by email
-    user = db.query(User).filter(User.email == reset_request.email).first()
-
-    # Security consideration: Don't reveal if email exists or not
-    # Always return success, but only send email if user exists
-    if not user:
-        # Return success even if user doesn't exist (prevents email enumeration)
-        return PasswordResetResponse(
-            message="If this email is registered, you will receive a password reset code.",
-            detail="Check your email for the OTP code."
-        )
 
     # Invalidate any existing unused tokens for this user
     existing_tokens = db.query(PasswordResetToken).filter(
@@ -690,6 +664,48 @@ async def request_password_reset(
         email_service.send_password_reset_otp(
             to_email=user.email, otp=otp, username=user.username
         )
+
+    return otp
+
+
+@router.post("/password/reset-request", response_model=PasswordResetResponse)
+@limiter.limit("3/minute")
+async def request_password_reset(
+    request: Request,
+    reset_request: PasswordResetRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Request a password reset (sends OTP to email).
+
+    This is a public endpoint - no authentication required.
+    User provides their email and receives a 6-digit OTP code.
+
+    Args:
+        request: Password reset request with email
+        db: Database session
+
+    Returns:
+        Success message
+
+    Raises:
+        404 Not Found: If email doesn't exist (for security, we may want to return success anyway)
+    """
+    from app.config import settings
+
+    # Find user by email
+    user = db.query(User).filter(User.email == reset_request.email).first()
+
+    # Security consideration: Don't reveal if email exists or not
+    # Always return success, but only send email if user exists
+    if not user:
+        # Return success even if user doesn't exist (prevents email enumeration)
+        return PasswordResetResponse(
+            message="If this email is registered, you will receive a password reset code.",
+            detail="Check your email for the OTP code."
+        )
+
+    otp = _trigger_password_reset_otp(user, db)
 
     # In development mode, return the OTP in the response for easy testing
     response = PasswordResetResponse(
@@ -783,6 +799,16 @@ async def confirm_password_reset(
 
     # Update user's password
     user.hashed_password = hash_password(confirm_request.new_password)
+
+    # The user has now set their own password via OTP, which already
+    # supersedes whatever password an admin set at account creation or
+    # reset — no separate forced change is needed on top of this.
+    user.must_change_password = False
+
+    # Invalidate any existing sessions now that the reset actually completed —
+    # closes out access for anyone (including an admin who triggered this
+    # reset) who was already logged in under the old password.
+    user.tokens_valid_after = datetime.now(timezone.utc)
 
     # Mark token as used (skip for dev bypass)
     if reset_token:

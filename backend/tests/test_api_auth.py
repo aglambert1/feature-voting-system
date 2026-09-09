@@ -91,6 +91,9 @@ class TestRegistration:
         assert data["role"] == "voter"  # default role
         assert data["is_active"] is True
         assert "hashed_password" not in data
+        # Admin knows the password they just typed in, so the account must
+        # force a change on first login rather than trusting it indefinitely.
+        assert data["must_change_password"] is True
 
     def test_register_requires_invite_code(self, client, db_session):
         """Self-registration without invite code is rejected."""
@@ -209,6 +212,19 @@ class TestRegistration:
         }, headers=auth_headers(admin_user))
         assert resp.status_code == 201
         assert resp.json()["role"] == "product_owner"
+
+    def test_self_registration_not_forced_to_change_password(
+        self, client, db_session, test_invite_code
+    ):
+        """Self-registrants chose their own password, so no forced change."""
+        resp = client.post("/auth/register", json={
+            "email": "selfreg@example.com",
+            "username": "selfreg",
+            "password": "Secure@pass1",
+            "invite_code": test_invite_code.code,
+        })
+        assert resp.status_code == 201
+        assert resp.json()["must_change_password"] is False
 
 
 # ============================================================================
@@ -552,6 +568,37 @@ class TestPasswordReset:
         assert verify_password("NewPass@456", voter_user.hashed_password)
 
     @patch("app.utils.email.email_service")
+    def test_reset_confirm_clears_must_change_password(self, mock_email_svc, client, voter_user, db_session):
+        """An OTP-set password already supersedes any admin-known one — no
+        redundant forced change afterward."""
+        mock_email_svc.is_live = False
+        mock_email_svc.send_password_reset_otp = Mock(return_value=True)
+        mock_email_svc.send_password_changed_notification = Mock(return_value=True)
+
+        voter_user.must_change_password = True
+        db_session.commit()
+
+        from app.utils.otp import generate_otp, get_otp_expiration
+        otp = generate_otp()
+        token = PasswordResetToken(
+            user_id=voter_user.id,
+            token=otp,
+            expires_at=get_otp_expiration(minutes=15),
+        )
+        db_session.add(token)
+        db_session.commit()
+
+        resp = client.post("/auth/password/reset-confirm", json={
+            "email": voter_user.email,
+            "otp": otp,
+            "new_password": "NewPass@456"
+        })
+        assert resp.status_code == 200
+
+        db_session.refresh(voter_user)
+        assert voter_user.must_change_password is False
+
+    @patch("app.utils.email.email_service")
     def test_reset_confirm_expired_otp(self, mock_email_svc, client, voter_user, db_session):
         mock_email_svc.is_live = False
         token = PasswordResetToken(
@@ -652,6 +699,23 @@ class TestPasswordChange:
         assert resp.status_code == 200
         assert "successfully changed" in resp.json()["message"].lower()
 
+    @patch("app.utils.email.email_service")
+    def test_change_password_clears_must_change_flag(self, mock_email_svc, client, voter_user, db_session):
+        mock_email_svc.is_live = False
+        mock_email_svc.send_password_changed_notification = Mock(return_value=True)
+
+        voter_user.must_change_password = True
+        db_session.commit()
+
+        resp = client.post("/auth/password/change", json={
+            "current_password": "Voter@pass1",
+            "new_password": "Changed@789"
+        }, headers=auth_headers(voter_user))
+        assert resp.status_code == 200
+
+        db_session.refresh(voter_user)
+        assert voter_user.must_change_password is False
+
     def test_change_password_wrong_current(self, client, voter_user):
         resp = client.post("/auth/password/change", json={
             "current_password": "wrongpassword",
@@ -683,28 +747,49 @@ class TestPasswordChange:
 
 class TestAdminPasswordReset:
 
-    def test_admin_resets_user_password(self, client, admin_user, voter_user, db_session):
+    @patch("app.utils.email.email_service")
+    def test_admin_triggers_reset_email_to_user(self, mock_email_svc, client, admin_user, voter_user, db_session):
+        mock_email_svc.is_live = False
+        mock_email_svc.send_password_reset_otp = Mock(return_value=True)
+
         resp = client.post(
             f"/auth/users/{voter_user.id}/reset-password",
             headers=auth_headers(admin_user)
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert "temporary_password" in data
-        assert data["username"] == voter_user.username
-        assert len(data["temporary_password"]) >= 8
+        # The admin never receives a working credential — only a confirmation.
+        assert "temporary_password" not in data
+        assert voter_user.email in data["detail"]
 
-        # Verify must_change_password is set
-        db_session.refresh(voter_user)
-        assert voter_user.must_change_password is True
+        # An OTP was emailed to the user's own address, not returned to the admin.
+        mock_email_svc.send_password_reset_otp.assert_called_once()
+        assert mock_email_svc.send_password_reset_otp.call_args.kwargs["to_email"] == voter_user.email
 
-        # Verify the temp password works for login
-        login_resp = client.post("/auth/login", data={
-            "username": voter_user.username,
-            "password": data["temporary_password"],
-        })
-        assert login_resp.status_code == 200
-        assert login_resp.json()["must_change_password"] is True
+        token = db_session.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == voter_user.id
+        ).first()
+        assert token is not None
+        assert token.is_used is False
+
+    @patch("app.utils.email.email_service")
+    def test_admin_trigger_does_not_invalidate_sessions_immediately(
+        self, mock_email_svc, client, admin_user, voter_user, db_session
+    ):
+        mock_email_svc.is_live = False
+        mock_email_svc.send_password_reset_otp = Mock(return_value=True)
+
+        old_headers = auth_headers(voter_user)
+
+        client.post(
+            f"/auth/users/{voter_user.id}/reset-password",
+            headers=auth_headers(admin_user)
+        )
+
+        # Nothing invalidates the session until the reset is actually
+        # completed with the OTP the user receives by email.
+        resp = client.get("/auth/me", headers=old_headers)
+        assert resp.status_code == 200
 
     def test_admin_cannot_reset_own_password(self, client, admin_user):
         resp = client.post(
@@ -728,37 +813,6 @@ class TestAdminPasswordReset:
         )
         assert resp.status_code == 404
 
-    @patch("app.utils.email.email_service")
-    def test_password_change_clears_must_change_flag(self, mock_email_svc, client, admin_user, voter_user, db_session):
-        mock_email_svc.is_live = False
-        mock_email_svc.send_password_changed_notification = Mock(return_value=True)
-
-        # Admin resets the password
-        reset_resp = client.post(
-            f"/auth/users/{voter_user.id}/reset-password",
-            headers=auth_headers(admin_user)
-        )
-        temp_password = reset_resp.json()["temporary_password"]
-
-        # Login with temp password to get a valid token
-        login_resp = client.post("/auth/login", data={
-            "username": voter_user.username,
-            "password": temp_password,
-        })
-        new_token = login_resp.json()["access_token"]
-        new_headers = {"Authorization": f"Bearer {new_token}"}
-
-        # Change password
-        change_resp = client.post("/auth/password/change", json={
-            "current_password": temp_password,
-            "new_password": "Permanent@123",
-        }, headers=new_headers)
-        assert change_resp.status_code == 200
-
-        # Flag should be cleared
-        db_session.refresh(voter_user)
-        assert voter_user.must_change_password is False
-
 
 # ============================================================================
 # Session Invalidation (tokens_valid_after)
@@ -767,15 +821,29 @@ class TestAdminPasswordReset:
 
 class TestSessionInvalidation:
 
-    def test_old_token_rejected_after_password_reset(self, client, admin_user, voter_user, db_session):
-        # Get a token before the reset
+    @patch("app.utils.email.email_service")
+    def test_old_token_rejected_after_reset_confirm(self, mock_email_svc, client, voter_user, db_session):
+        mock_email_svc.is_live = False
+        mock_email_svc.send_password_changed_notification = Mock(return_value=True)
+
         old_headers = auth_headers(voter_user)
 
-        # Admin resets the password
-        client.post(
-            f"/auth/users/{voter_user.id}/reset-password",
-            headers=auth_headers(admin_user)
+        from app.utils.otp import generate_otp, get_otp_expiration
+        otp = generate_otp()
+        token = PasswordResetToken(
+            user_id=voter_user.id,
+            token=otp,
+            expires_at=get_otp_expiration(minutes=15),
         )
+        db_session.add(token)
+        db_session.commit()
+
+        confirm_resp = client.post("/auth/password/reset-confirm", json={
+            "email": voter_user.email,
+            "otp": otp,
+            "new_password": "NewPass@456"
+        })
+        assert confirm_resp.status_code == 200
 
         # Old token should be rejected
         resp = client.get("/auth/me", headers=old_headers)
@@ -792,16 +860,31 @@ class TestSessionInvalidation:
         resp = client.get("/auth/me", headers=old_headers)
         assert resp.status_code in (401, 403)
 
-    def test_new_token_works_after_password_reset(self, client, admin_user, voter_user, db_session):
-        reset_resp = client.post(
-            f"/auth/users/{voter_user.id}/reset-password",
-            headers=auth_headers(admin_user)
+    @patch("app.utils.email.email_service")
+    def test_new_token_works_after_reset_confirm(self, mock_email_svc, client, voter_user, db_session):
+        mock_email_svc.is_live = False
+        mock_email_svc.send_password_changed_notification = Mock(return_value=True)
+
+        from app.utils.otp import generate_otp, get_otp_expiration
+        otp = generate_otp()
+        token = PasswordResetToken(
+            user_id=voter_user.id,
+            token=otp,
+            expires_at=get_otp_expiration(minutes=15),
         )
-        temp_password = reset_resp.json()["temporary_password"]
+        db_session.add(token)
+        db_session.commit()
+
+        confirm_resp = client.post("/auth/password/reset-confirm", json={
+            "email": voter_user.email,
+            "otp": otp,
+            "new_password": "NewPass@456"
+        })
+        assert confirm_resp.status_code == 200
 
         login_resp = client.post("/auth/login", data={
             "username": voter_user.username,
-            "password": temp_password,
+            "password": "NewPass@456",
         })
         assert login_resp.status_code == 200
 

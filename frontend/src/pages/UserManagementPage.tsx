@@ -1,6 +1,5 @@
 import { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
-import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { useAuth } from '../contexts/AuthContext';
 import Navigation from '../components/Navigation';
 import api from '../services/api';
@@ -40,10 +39,6 @@ export default function UserManagementPage() {
     role: 'voter',
     product_ids: [],
   });
-
-  // Password reset state
-  const [resetPasswordResult, setResetPasswordResult] = useState<{username: string; temporary_password: string} | null>(null);
-  const { copied: resetPasswordCopied, copy: copyResetPassword } = useCopyToClipboard();
 
   // Login history modal state
   const [loginHistoryUserId, setLoginHistoryUserId] = useState<number | null>(null);
@@ -195,16 +190,16 @@ export default function UserManagementPage() {
   };
 
   const handleResetPassword = async (userId: number, username: string) => {
-    if (!confirm(`Reset password for ${username}? This will invalidate all their active sessions.`)) {
+    if (!confirm(`Send a password reset email to ${username}? They'll receive a code at their registered email to set a new password.`)) {
       return;
     }
 
     try {
       const result = await adminResetPassword(userId);
-      setResetPasswordResult({ username: result.username, temporary_password: result.temporary_password });
+      setSuccessMessage(result.detail || result.message);
     } catch (err) {
       const error = err as AxiosError<ApiError>;
-      setError(error.response?.data?.detail || 'Failed to reset password');
+      setError(error.response?.data?.detail || 'Failed to send reset email');
     }
   };
 
@@ -665,51 +660,6 @@ export default function UserManagementPage() {
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
               >
                 Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Temporary Password Modal */}
-      {resetPasswordResult && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-          <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">
-                Password Reset — {resetPasswordResult.username}
-              </h3>
-            </div>
-
-            <div className="px-6 py-4">
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
-                <p className="text-sm font-medium text-amber-800 mb-1">
-                  Share this temporary password with the user securely.
-                </p>
-                <p className="text-xs text-amber-700">
-                  It will not be shown again. The user will be required to change it on next login.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <code className="flex-1 bg-gray-100 border border-gray-300 rounded px-3 py-2 text-sm font-mono text-gray-800 break-all select-all">
-                  {resetPasswordResult.temporary_password}
-                </code>
-                <button
-                  onClick={() => copyResetPassword(resetPasswordResult.temporary_password)}
-                  className="px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap"
-                >
-                  {resetPasswordCopied ? 'Copied!' : 'Copy'}
-                </button>
-              </div>
-            </div>
-
-            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
-              <button
-                onClick={() => setResetPasswordResult(null)}
-                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors"
-              >
-                Done
               </button>
             </div>
           </div>

@@ -196,7 +196,7 @@ Save. Then move 2–3 of the high-vote ideas into these statuses (e.g., one to "
 
 For each prospect you want to share the demo with:
 
-1. Create their account (admin user management) with role `PRODUCT_OWNER` and a temporary password
+1. Create their account (admin user management) with role `PRODUCT_OWNER` and a temporary password — they'll be required to set their own password on first login
 2. On the demo product, add a `ProductPermission` for that user with level `VIEW`
 3. Send them their credentials + the link to [the welcome page](welcome.md) (Track 2)
 

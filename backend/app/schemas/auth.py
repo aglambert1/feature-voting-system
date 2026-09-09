@@ -205,12 +205,6 @@ class DevOTPResponse(BaseModel):
     message: str
 
 
-class AdminPasswordResetResponse(BaseModel):
-    message: str
-    temporary_password: str
-    username: str
-
-
 class MFASetupResponse(BaseModel):
     secret: str
     provisioning_uri: str
