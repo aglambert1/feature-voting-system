@@ -1571,8 +1571,7 @@ export const getSynthesisCompetitorsCfg = async (
 
 export interface AdminPasswordResetResponse {
   message: string;
-  temporary_password: string;
-  username: string;
+  detail?: string;
 }
 
 export const adminResetPassword = async (userId: number): Promise<AdminPasswordResetResponse> => {
