@@ -1022,7 +1022,10 @@ export interface FunctionalReportDetail {
   job_status: string | null;
 
   /** Server-decided per job. The client renders this; it must not re-derive it. */
-  verdict_grounding: Record<string, { shown: boolean; reason: string | null }> | null;
+  verdict_grounding: Record<
+    string,
+    { shown: boolean; reason: string | null; grounded_by_human?: boolean }
+  > | null;
   corroborating_signals: Record<string, number> | null;
   self_assessment_version: number | null;
   self_assessed_at: string | null;
@@ -1167,6 +1170,9 @@ export interface JobCoverageRow {
   provenance: { type: string; source_ref: string | null; added_at: string } | null;
   our_score: number | null;
   our_confidence: ReviewConfidence | null;
+  /** False when our score rests only on the product description and nobody has judged it. */
+  our_score_grounded: boolean;
+  our_score_withheld_reason: string | null;
   corroborating_signals: number;
   competitors: JobCoverageCell[];
 }
@@ -1220,13 +1226,6 @@ export interface IdeaStatusResponse {
   idea_id: number | null;
 }
 
-/**
- * Batch idea statuses response.
- */
-export interface BatchIdeaStatusesResponse {
-  statuses: Record<number, IdeaStatusResponse>;
-  total_ideas_created: number;
-}
 
 // ============================================================================
 // INTERNAL FEEDBACK TYPES (Phase 2 - Internal Discovery Agent)

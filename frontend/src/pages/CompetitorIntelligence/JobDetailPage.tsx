@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getJobCoverage } from '../../services/api';
+import Navigation from '../../components/Navigation';
 import type { JobCoverageResponse, JobCoverageRow } from '../../types';
 
 /**
@@ -59,14 +60,17 @@ export default function JobDetailPage() {
       .finally(() => setLoading(false));
   }, [numProductId]);
 
-  if (loading) return <div className="p-8 text-sm text-gray-500">Loading...</div>;
+  if (loading) return <><Navigation /><div className="p-8 text-sm text-gray-500">Loading...</div></>;
   if (error) {
     return (
-      <div className="p-8">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
-          {error}
+      <>
+        <Navigation />
+        <div className="p-8">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
+            {error}
+          </div>
         </div>
-      </div>
+      </>
     );
   }
   if (!data) return null;
@@ -74,7 +78,9 @@ export default function JobDetailPage() {
   const row: JobCoverageRow | undefined = data.jobs.find((j) => j.job_id === jobId);
   if (!row) {
     return (
-      <div className="p-8 max-w-3xl mx-auto">
+      <>
+        <Navigation />
+        <div className="p-8 max-w-3xl mx-auto">
         <Link
           to={`/product-intelligence/products/${productId}/intelligence?tab=job-coverage`}
           className="text-sm text-teal-700 hover:underline"
@@ -87,11 +93,14 @@ export default function JobDetailPage() {
             It may have been removed or renamed since this link was made.
           </p>
         </div>
-      </div>
+        </div>
+      </>
     );
   }
 
   const byId = new Map(data.competitors.map((c) => [c.competitor_id, c]));
+
+  const ourScoreGrounded = row.our_score_grounded;
   const provenanceType = row.provenance?.type ?? 'unknown';
   const provenanceLabel: Record<string, string> = {
     product_derived: 'written from the product description',
@@ -102,7 +111,9 @@ export default function JobDetailPage() {
   };
 
   return (
-    <div className="p-8 max-w-4xl mx-auto space-y-6">
+    <>
+      <Navigation />
+      <div className="p-8 max-w-4xl mx-auto space-y-6">
       <div>
         <Link
           to={`/product-intelligence/products/${productId}/intelligence?tab=job-coverage`}
@@ -156,9 +167,13 @@ export default function JobDetailPage() {
               Us
             </div>
             <div className="flex items-center gap-2 mt-1">
-              {tierPips(row.our_score, true)}
-              <span className="font-mono tabular-nums text-sm text-gray-900">
-                {row.our_score ?? '—'}
+              {tierPips(ourScoreGrounded ? row.our_score : null, true)}
+              <span
+                className={`font-mono tabular-nums text-sm ${
+                  ourScoreGrounded ? 'text-gray-900' : 'text-gray-300'
+                }`}
+              >
+                {ourScoreGrounded ? (row.our_score ?? '—') : '—'}
               </span>
             </div>
           </div>
@@ -167,6 +182,11 @@ export default function JobDetailPage() {
               <>
                 Not assessed. Competitor scores below are real, but how we compare cannot be
                 stated without our own side scored against this job.
+              </>
+            ) : !ourScoreGrounded ? (
+              <>
+                {row.our_score_withheld_reason} Competitor scores below stand on their
+                own research.
               </>
             ) : (
               <>
@@ -256,5 +276,6 @@ export default function JobDetailPage() {
         })}
       </div>
     </div>
+    </>
   );
 }

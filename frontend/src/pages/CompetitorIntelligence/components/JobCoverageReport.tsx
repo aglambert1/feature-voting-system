@@ -29,7 +29,10 @@ interface Props {
   selfAssessedAt: string | null;
   mapHealth: { total_jobs: number; jobs_with_independent_source: number } | null;
   /** Server decides; the UI must not re-derive it. See verdict_grounding. */
-  verdictGrounding: Record<string, { shown: boolean; reason: string | null }>;
+  verdictGrounding: Record<
+    string,
+    { shown: boolean; reason: string | null; grounded_by_human?: boolean }
+  >;
   corroboratingSignals: Record<string, number>;
   onReview: (jobId: string, action: 'agree' | 'override' | 'clear', position?: JobPosition) => void;
   onExport: () => void;
@@ -213,7 +216,12 @@ export default function JobCoverageReport({
           const open = openJobs.has(job.job_id);
           const change = changedJobs.get(job.job_id);
           const grounding = verdictGrounding[job.job_id];
-          const verdictShown = grounding?.shown !== false;
+          // Withholding applies to the DERIVED verdict, which depends on our ungrounded
+          // score. A PM's override is an independent claim that owes nothing to that
+          // score, so it survives — and must stay editable, or a withheld job would trap
+          // an override with no way to clear it.
+          const systemShown = grounding?.shown !== false;
+          const verdictShown = systemShown || !!job.human_position;
           const displayed = job.human_position ?? job.system_position ?? 'unknown';
           const signalCount = corroboratingSignals[job.job_id] ?? 0;
 
@@ -282,7 +290,9 @@ export default function JobCoverageReport({
                   {verdictShown ? (
                     <ReviewState job={job} />
                   ) : (
-                    <span className="text-xs text-gray-400">our side unassessed</span>
+                    // Not "unassessed" — withholding requires a low-confidence score, so
+                    // our side IS assessed, just not on anything independent.
+                    <span className="text-xs text-gray-400">our score ungrounded</span>
                   )}
                 </div>
               </button>
@@ -290,7 +300,22 @@ export default function JobCoverageReport({
               {open && (
                 <div className="px-4 pb-5 border-t border-dashed border-gray-200 -mt-px">
                   <div className="pt-4 space-y-4">
-                    {!verdictShown && grounding?.reason && (
+                    {grounding?.grounded_by_human && (
+                      // The suppression note vanishing is not enough: without this the
+                      // PM cannot tell their own judgement is what is holding the row
+                      // up, or that it did more than fill one cell.
+                      <div className="text-sm text-gray-600 bg-teal-50 border-l-2 border-teal-600 rounded-r p-2.5 max-w-2xl">
+                        <b className="text-gray-900">
+                          This verdict rests on your judgement, not on our scores.
+                        </b>{' '}
+                        Our own score for this job came only from the product
+                        description, so nothing could be computed. Your call settles the
+                        comparison for every competitor on this job, and counts as
+                        support for the job itself in map health.
+                      </div>
+                    )}
+
+                    {!systemShown && grounding?.reason && (
                       <div className="text-sm text-gray-600 bg-gray-50 border border-dashed border-gray-300 rounded p-2.5 max-w-2xl">
                         <b className="text-gray-900">
                           No verdict, because our own score for this job has nothing independent
@@ -420,11 +445,23 @@ export default function JobCoverageReport({
                       </div>
                     )}
 
-                    {verdictShown && (
+                    {(
                       <div className="flex items-center gap-3 flex-wrap pt-3 border-t border-gray-200">
                         <div className="text-sm text-gray-600 flex-1 min-w-[15rem]">
-                          System says <b className="text-gray-900">{job.system_position}</b>
-                          {job.confidence ? `, confidence ${job.confidence}` : ''}.
+                          {verdictShown ? (
+                            <>
+                              System says <b className="text-gray-900">{job.system_position}</b>
+                              {job.confidence ? `, confidence ${job.confidence}` : ''}.
+                            </>
+                          ) : (
+                            // Withheld jobs must still offer an override: the PM's
+                            // judgement is what would ground this, so hiding the action
+                            // leaves the job permanently unresolvable.
+                            <>
+                              No verdict can be computed. Your judgement would settle it
+                              — and counts as evidence for this job.
+                            </>
+                          )}
                           {job.human_position && (
                             <>
                               {' '}
@@ -466,7 +503,7 @@ export default function JobCoverageReport({
                             {/* Every action is named for what it does. "Change review"
                                 previously submitted an agree, which silently discarded an
                                 override and its note. */}
-                            {!job.reviewed_at && (
+                            {!job.reviewed_at && verdictShown && (
                               <button
                                 onClick={() => onReview(job.job_id, 'agree')}
                                 className="px-3 py-1.5 text-sm bg-teal-700 text-white rounded-lg hover:bg-teal-800 font-medium"
@@ -484,9 +521,17 @@ export default function JobCoverageReport({
                             )}
                             <button
                               onClick={() => setOverriding(job.job_id)}
-                              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+                              className={
+                                verdictShown
+                                  ? 'px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50'
+                                  : 'px-3 py-1.5 text-sm bg-teal-700 text-white rounded-lg hover:bg-teal-800 font-medium'
+                              }
                             >
-                              {job.human_position ? 'Change override' : 'Override'}
+                              {job.human_position
+                                ? 'Change override'
+                                : verdictShown
+                                  ? 'Override'
+                                  : 'Set the verdict'}
                             </button>
                             {job.reviewed_at && (
                               <button

@@ -159,6 +159,22 @@ def get_job_coverage(
     # customer signal is grounded even when the map entry itself came from product copy.
     corroboration = signal_counts(db, product_id)
 
+    # A human judgement is only evidence if you can see whose it is. reviewed_by is
+    # stored as a bare user id and has never surfaced anywhere, which makes an override
+    # unattributable — resolve it once here rather than per cell.
+    reviewer_ids = {
+        entry.get("reviewed_by")
+        for report in reports
+        for entry in (report.job_assessments or [])
+        if isinstance(entry, dict) and entry.get("reviewed_by")
+    }
+    reviewers = {
+        u.id: (u.full_name or u.username)
+        for u in (
+            db.query(User).filter(User.id.in_(reviewer_ids)).all() if reviewer_ids else []
+        )
+    }
+
     now = datetime.now(timezone.utc)
     competitor_columns: List[Dict[str, Any]] = []
     assessments_by_competitor: Dict[int, Dict[str, Dict[str, Any]]] = {}
@@ -196,6 +212,28 @@ def get_job_coverage(
     for job in jobs:
         self_entry = self_by_job.get(job.job_id_key) or {}
 
+        # Grounding is a property of OUR score on this job, not of any one competitor.
+        # If a PM's judgement establishes our score, that number is equally available
+        # for every competitor with a computed score — so the whole row lights up, not
+        # just the cell the override happened to be recorded on.
+        human_entries = [
+            e for e in (
+                assessments_by_competitor.get(c.id, {}).get(job.job_id_key)
+                for c in competitors
+            )
+            if e and e.get("human_position")
+        ]
+        row_grounded, row_reason = verdict_grounding(
+            self_entry.get("confidence"),
+            (corroboration.get(job.job_id_key) or {}).get("total", 0),
+            "reviewed" if human_entries else None,
+        )
+        grounded_by = sorted({
+            name for name in (
+                reviewers.get(e.get("reviewed_by")) for e in human_entries
+            ) if name
+        })
+
         cells = []
         for competitor in competitors:
             entry = assessments_by_competitor.get(competitor.id, {}).get(job.job_id_key)
@@ -205,10 +243,6 @@ def get_job_coverage(
                     "assessed": False,
                 })
                 continue
-            grounded, withheld_reason = verdict_grounding(
-                self_entry.get("confidence"),
-                (corroboration.get(job.job_id_key) or {}).get("total", 0),
-            )
             cells.append({
                 "competitor_id": competitor.id,
                 "assessed": True,
@@ -217,17 +251,22 @@ def get_job_coverage(
                 # The verdict is a claim about how we compare, and it is only as good as
                 # our own score. Withheld where ours is ungrounded — the competitor's
                 # score is researched independently and still reported at full strength.
-                "verdict_shown": grounded,
-                "verdict_withheld_reason": withheld_reason,
+                "verdict_shown": row_grounded,
+                "verdict_withheld_reason": row_reason,
                 # Authoritative for display where a PM has overridden; the system
                 # verdict is kept alongside rather than replaced.
                 "human_position": entry.get("human_position"),
                 "review_stale": entry.get("review_stale", False),
                 "review_note": entry.get("review_note"),
+                "reviewed_by_name": reviewers.get(entry.get("reviewed_by")),
+                "reviewed_at": entry.get("reviewed_at"),
                 "confidence": entry.get("confidence"),
             })
 
         rows.append({
+            "our_score_grounded": row_grounded,
+            "our_score_withheld_reason": row_reason,
+            "our_score_grounded_by": grounded_by,
             "job_id": job.job_id_key,
             "job_statement": job.statement,
             "job_type": job.job_type.value if job.job_type else None,
@@ -438,7 +477,12 @@ def export_job_coverage(
             "",
         ]
 
-    names = [c["competitor_name"] for c in coverage["competitors"]]
+    # Escape pipes in names too, not just statements — a competitor called "Foo|Bar"
+    # would otherwise split the markdown table.
+    def _cell(text) -> str:
+        return str(text if text is not None else "—").replace("|", "\\|")
+
+    names = [_cell(c["competitor_name"]) for c in coverage["competitors"]]
     lines.append("| Job | Importance | Us | " + " | ".join(names) + " |")
     lines.append("|---|---|---|" + "---|" * len(names))
 
@@ -453,22 +497,31 @@ def export_job_coverage(
                 cells.append("not audited")
                 continue
             score = cell.get("competitor_score")
-            if cell.get("verdict_shown") is False:
+            human = cell.get("human_position")
+            # Withholding applies to the derived verdict, which rests on our ungrounded
+            # score. A PM's override is their own claim and owes nothing to it — dropping
+            # it here would misrepresent their judgement as absent.
+            if cell.get("verdict_shown") is False and not human:
                 cells.append(f"{score} (no verdict)")
             else:
-                verdict = cell.get("human_position") or cell.get("system_position") or "unknown"
-                marker = " *(yours)*" if cell.get("human_position") else ""
+                verdict = human or cell.get("system_position") or "unknown"
+                if human:
+                    who = cell.get("reviewed_by_name") or "a reviewer"
+                    marker = f" *({who}'s call)*"
+                else:
+                    marker = ""
                 cells.append(f"{score} — {verdict}{marker}")
 
         grounded = any(
             c.get("assessed") and c.get("verdict_shown") is not False
             for c in row["competitors"]
         ) or not any(c.get("assessed") for c in row["competitors"])
+
         our = row["our_score"] if (grounded and row["our_score"] is not None) else "—"
 
-        statement = (row["job_statement"] or "").replace("|", "\\|")
         lines.append(
-            f"| **{row['job_id']}** {statement} | {row['importance']} | {our} | "
+            f"| **{row['job_id']}** {_cell(row['job_statement'])} | "
+            f"{_cell(row['importance'])} | {our} | "
             + " | ".join(cells)
             + " |"
         )
@@ -477,6 +530,9 @@ def export_job_coverage(
         "",
         "_Where no verdict is shown, our own score for that job is not grounded enough "
         "to compare. The competitor's score is researched independently and stands._",
+        "",
+        "_A verdict attributed to a person is their judgement, which is what grounds "
+        "that row — the scores alone did not._",
     ]
 
     safe = (coverage["product_name"] or "product").replace(" ", "_")
