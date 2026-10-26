@@ -9,7 +9,7 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, select
 
-from app.models.user import User, UserRole, ProductAccessMode
+from app.models.user import User, UserRole
 from app.models.competitor_intelligence import (
     CIProduct, ProductPermission, ProductPermissionLevel
 )
@@ -65,13 +65,7 @@ class PermissionService:
         if product.created_by_user_id == user_id:
             return True
 
-        # 3. Check user's default access mode for team-wide viewing
-        if user.default_product_access == ProductAccessMode.TEAM_WIDE:
-            # Team-wide mode grants VIEW access to all products
-            if required_level == ProductPermissionLevel.VIEW:
-                return True
-
-        # 4. Check explicit product permission grants
+        # 2. Check explicit product permission grants
         permission = self.db.query(ProductPermission).filter(
             ProductPermission.product_id == product_id,
             ProductPermission.user_id == user_id
@@ -117,9 +111,6 @@ class PermissionService:
         min_level. VOTER-role users are excluded when min_level is above VIEW,
         mirroring the role cap in can_access_product. Inactive users are
         excluded. Results are de-duplicated.
-
-        Note: does not expand TEAM_WIDE default access — that only grants VIEW,
-        and this method is used for actionable (EDIT+) alert recipients.
         """
         qualifying_levels = [
             level for level in ProductPermissionLevel

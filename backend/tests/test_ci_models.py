@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
 
 from app.database import Base
-from app.models.user import User, UserRole, ProductAccessMode
+from app.models.user import User, UserRole
 from app.models.competitor_intelligence import (
     CIProduct,
     CompetitorAnalysisSession,
