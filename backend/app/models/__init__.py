@@ -4,7 +4,7 @@ Database models package.
 Import all models here to make them available throughout the app.
 """
 
-from app.models.user import User, UserRole, ProductAccessMode
+from app.models.user import User, UserRole
 from app.models.idea import Idea, SourceType, IdeaStatus
 from app.models.idea_lifecycle_status import IdeaLifecycleStatus
 from app.models.idea_comment import IdeaComment
@@ -75,7 +75,7 @@ from app.models.login_event import LoginEvent
 from mcp_server.oauth_models import OAuthClient, OAuthAuthorizationCode, OAuthRefreshToken
 
 __all__ = [
-    "User", "UserRole", "ProductAccessMode",
+    "User", "UserRole",
     "Idea", "SourceType", "IdeaStatus", "IdeaLifecycleStatus", "IdeaComment", "IdeaStatusHistory",
     "Vote", "Submission", "PasswordResetToken",
     "CIProduct", "CompetitorAnalysisSession", "ProductCompetitor", "SessionCompetitor",

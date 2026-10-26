@@ -169,7 +169,6 @@ def list_products(
 
     Returns products based on:
     - User's role (ADMIN/PO see created + granted products, VOTER sees only granted)
-    - User's default_product_access mode (SINGLE_USER vs TEAM_WIDE)
     - Explicit product permission grants
 
     Args:
