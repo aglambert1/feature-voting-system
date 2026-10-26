@@ -686,6 +686,13 @@ def functional_audit_task(self, job_id: int):
         except Exception:
             pass
 
+        if self.request.retries >= self.max_retries:
+            # Retries exhausted. Return instead of raising: Celery skips a
+            # chord callback when any header task raises, which would leave the
+            # parent job RUNNING forever. The callbacks already count results
+            # without a report_id as failed audits.
+            return {'status': 'failed', 'job_id': job_id, 'error': error_msg}
+
         raise self.retry(exc=e)
 
     finally:

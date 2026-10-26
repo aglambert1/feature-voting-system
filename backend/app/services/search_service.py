@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 from typing import Dict, List, Any, Optional
 
@@ -61,6 +62,9 @@ class SearchService:
                 tests. Pass ``False`` to disable caching entirely.
         """
         self._last_request_time = 0.0
+        # The worker runs audits on a thread pool; the throttle is a shared
+        # read-modify-write on _last_request_time, so it needs a lock.
+        self._throttle_lock = threading.Lock()
         self.search_enabled = (
             settings.enable_web_search
             and settings.brave_api_key
@@ -163,10 +167,12 @@ class SearchService:
 
     def _fetch_from_brave(self, query: str) -> List[Dict[str, Any]]:
         """Fetch a query from Brave at the full cap, no caching."""
-        elapsed = time.time() - self._last_request_time
-        if elapsed < self.MIN_REQUEST_INTERVAL:
-            time.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
-        self._last_request_time = time.time()
+        # Held across the sleep so concurrent callers queue one interval apart.
+        with self._throttle_lock:
+            elapsed = time.time() - self._last_request_time
+            if elapsed < self.MIN_REQUEST_INTERVAL:
+                time.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
+            self._last_request_time = time.time()
 
         try:
             resp = requests.get(
@@ -245,11 +251,15 @@ class SearchService:
 
 # Global singleton instance
 _search_service = None
+_search_service_lock = threading.Lock()
 
 
 def get_search_service() -> SearchService:
     """Get or create the global SearchService instance."""
     global _search_service
-    if _search_service is None:
-        _search_service = SearchService()
-    return _search_service
+    # One shared instance means one shared Brave throttle; two threads racing
+    # on first use must not each build their own.
+    with _search_service_lock:
+        if _search_service is None:
+            _search_service = SearchService()
+        return _search_service

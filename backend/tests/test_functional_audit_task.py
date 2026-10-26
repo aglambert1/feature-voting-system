@@ -332,3 +332,50 @@ class TestStagedAuditTask:
             "context ready" in m.lower() or "job assessments" in m.lower()
             for m in messages
         )
+
+
+class TestAuditFailureHandling:
+    """A failing audit must not strand a chord callback.
+
+    Celery skips a chord callback when any header task raises, so once retries
+    are exhausted the task returns a failed-result dict instead.
+    """
+
+    @staticmethod
+    def _failing_stage_1():
+        return patch(
+            "app.agents.functional_audit_agent.CompetitorFunctionalAuditAgent.execute_stage_1",
+            side_effect=RuntimeError("LLM exploded"),
+        )
+
+    def test_final_failure_returns_failed_result_instead_of_raising(
+        self, db_session, product, competitor, queued_audit_job
+    ):
+        from app.queue.competitor_tasks import functional_audit_task
+
+        job_id = queued_audit_job.id
+        functional_audit_task.push_request(retries=functional_audit_task.max_retries)
+        try:
+            output = _run_task_with_patches(
+                db_session, job_id, extra_patches=[self._failing_stage_1()]
+            )
+        finally:
+            functional_audit_task.pop_request()
+
+        assert output["status"] == "failed"
+        assert output["job_id"] == job_id
+        assert "LLM exploded" in output["error"]
+        # Chord callbacks count a result without a report_id as a failed audit.
+        assert not output.get("report_id")
+
+        db_session.expire_all()
+        job = db_session.query(QueueJob).filter(QueueJob.id == job_id).one()
+        assert job.status == JobStatus.FAILURE
+
+    def test_failure_with_retries_remaining_still_raises(
+        self, db_session, product, competitor, queued_audit_job
+    ):
+        with pytest.raises(RuntimeError, match="LLM exploded"):
+            _run_task_with_patches(
+                db_session, queued_audit_job.id, extra_patches=[self._failing_stage_1()]
+            )

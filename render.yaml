@@ -53,7 +53,7 @@ services:
     autoDeploy: false
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
-    dockerCommand: celery -A app.queue worker --beat --loglevel=info --pool=solo
+    dockerCommand: celery -A app.queue worker --beat --loglevel=info --pool=threads --concurrency=4
     envVars:
       - key: SECRET_KEY
         fromService:
