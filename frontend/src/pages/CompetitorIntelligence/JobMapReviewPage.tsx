@@ -178,7 +178,7 @@ function CompareStep({
                           {pair.old ? 'New' : 'Keep'}
                         </label>
                       )}
-                      {pair.change_type === 'removed' && (
+                      {(pair.change_type === 'removed' || !pair.old) && (
                         <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                           <input
                             type="radio"
