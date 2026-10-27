@@ -331,8 +331,14 @@ def self_assessment_task(self, job_id: int) -> Dict[str, Any]:
 
         queue_service.update_progress(job_id, 40.0, "Assessing coverage per job...")
 
-        agent = SelfAssessmentAgent(db=db, llm_service=LLMService(db=db))
-        result = agent.execute(agent_input, product_id=product_id, user_id=job.user_id)
+        agent = SelfAssessmentAgent(
+            db=db,
+            llm_service=LLMService(),
+            product_id=product_id,
+            user_id=job.user_id,
+            job_id=job.job_uuid,
+        )
+        result = agent.execute(agent_input)
 
         queue_service.update_progress(job_id, 85.0, "Storing assessment...")
 
