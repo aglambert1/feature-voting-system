@@ -79,7 +79,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 
-async def get_current_user(
+# Deliberately a plain `def`: FastAPI runs it in the thread pool. As `async def`
+# its blocking DB lookup ran on the event loop, so a drained connection pool
+# (30s checkout wait) froze every request, /health included.
+def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ) -> User:
