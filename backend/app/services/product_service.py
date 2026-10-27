@@ -200,14 +200,9 @@ class ProductService:
         ):
             return None
 
-        product = self.db.query(CIProduct).filter(
+        return self.db.query(CIProduct).filter(
             CIProduct.id == product_id
         ).first()
-
-        if product:
-            print(f"[ProductService] get_product({product_id}) returning description: {product.product_description[:100]}...")
-
-        return product
 
     def update_product(
         self,
