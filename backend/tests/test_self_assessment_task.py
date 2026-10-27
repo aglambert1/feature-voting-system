@@ -189,6 +189,17 @@ class TestSelfAssessmentTask:
             product_id, owner_id, job_uuid
         )
 
+    def test_output_budget_exceeds_the_agent_default(
+        self, db_session, product, job_map, queued_job
+    ):
+        # A 12-job map overran the 4000-token default in prod, and this agent has no
+        # concise-recovery prompt, so truncation fails the whole task.
+        from app.config import settings
+
+        _, execute = _run_task(db_session, queued_job.id)
+
+        assert execute.call_args.kwargs["max_tokens"] > settings.max_tokens_default
+
     def test_competitor_positions_are_refreshed(
         self, db_session, product, job_map, audited_competitor, queued_job
     ):
