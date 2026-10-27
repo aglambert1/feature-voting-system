@@ -338,7 +338,9 @@ def self_assessment_task(self, job_id: int) -> Dict[str, Any]:
             user_id=job.user_id,
             job_id=job.job_uuid,
         )
-        result = agent.execute(agent_input)
+        # One assessment per job with rationale, features and outcome coverage: a
+        # 12-job map overran the 4000-token default and the agent has no concise recovery.
+        result = agent.execute(agent_input, max_tokens=16000)
 
         queue_service.update_progress(job_id, 85.0, "Storing assessment...")
 
