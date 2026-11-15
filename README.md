@@ -1,5 +1,7 @@
 # Feature-IQ
 
+> **Frozen reference implementation.** This repo is no longer developed. It is kept as the record of what was built, tagged [`v1-reference`](https://github.com/aglambert1/feature-voting-system/releases/tag/v1-reference). The work continues as a fresh build in a new repo.
+
 A competitive product intelligence platform built around **Jobs-to-be-Done**. Define the jobs your customers are trying to do, run automated competitor audits and synthesis, and surface prioritized opportunities — grounded in those jobs.
 
 Three pillars:
